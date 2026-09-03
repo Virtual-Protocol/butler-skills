@@ -1,0 +1,14 @@
+{
+  "_comment": "Names a skill directory may never use. The bevo- prefix itself is maintainer-only (pass --maintainer to scripts/validate.py or set MAINTAINER=1 to publish one); everything listed here is an entrypoint-written or bundled dir name that a hub-installed skill would collide with.",
+  "reserved": [
+    "bevo-onchain",
+    "bevo-automation-creator",
+    "web-checkout",
+    "bevo-skill-creator",
+    "bevo-service-creator",
+    "openclaw-acp",
+    "acp-cli",
+    "bevo-hub",
+    "clawhub"
+  ]
+}

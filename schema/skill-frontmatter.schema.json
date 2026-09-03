@@ -1,0 +1,181 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/Virtual-Protocol/butler-skills/main/schema/skill-frontmatter.schema.json",
+  "title": "Butler skill frontmatter",
+  "description": "Schema for the parsed SKILL.md frontmatter (name/description/version/metadata/user-invocable).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "description", "version", "metadata"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,63}$"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "user-invocable": {
+      "type": "boolean"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bevo"],
+      "properties": {
+        "openclaw": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "emoji": { "type": "string" },
+            "homepage": { "type": "string" },
+            "requires": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "bins": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "bevo": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tier", "modes", "moneyMoving"],
+          "properties": {
+            "tier": { "type": "string", "enum": ["core", "on-demand"] },
+            "modes": {
+              "type": "array",
+              "items": { "type": "string", "enum": ["one-off", "duty"] },
+              "minItems": 1
+            },
+            "moneyMoving": { "type": "boolean" },
+            "keywords": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "params": {
+              "type": "array",
+              "items": { "$ref": "#/definitions/param" }
+            },
+            "requires": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "routes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^(GET|POST|PATCH|DELETE) /butler-(read|exec)/[A-Za-z0-9/_:.-]+$"
+                  }
+                },
+                "features": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
+                "gates": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": ["canPerp", "canSwap", "canStock", "canFiat", "canOnramp"]
+                  }
+                },
+                "bins": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                }
+              }
+            },
+            "web3": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "chains": {
+                  "type": "array",
+                  "items": { "type": "integer" }
+                },
+                "contracts": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["name", "chainId", "address", "functions"],
+                    "properties": {
+                      "name": { "type": "string" },
+                      "chainId": { "type": "integer" },
+                      "address": { "type": "string" },
+                      "functions": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": ["signature", "selector"],
+                          "properties": {
+                            "signature": { "type": "string" },
+                            "selector": {
+                              "type": "string",
+                              "pattern": "^0x[0-9a-f]{8}$"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "dutyTemplate": { "type": "string" }
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "param": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]*$"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "usd",
+            "number",
+            "int",
+            "enum",
+            "chainIds",
+            "chainId",
+            "address",
+            "principalId",
+            "wallet",
+            "principalId|wallet",
+            "string",
+            "bool"
+          ]
+        },
+        "default": {},
+        "min": { "type": "number" },
+        "max": { "type": "number" },
+        "values": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "required": { "type": "boolean" },
+        "ask": { "type": "string" },
+        "help": { "type": "string" }
+      }
+    }
+  }
+}

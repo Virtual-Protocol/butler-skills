@@ -1,0 +1,66 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/Virtual-Protocol/butler-skills/main/schema/index.schema.json",
+  "title": "Butler skill hub index",
+  "description": "Schema for dist/<channel>/index.json produced by scripts/build_index.py.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "channel", "repoTag", "builtAt", "baseUrl", "skills"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "enum": [1] },
+    "channel": { "type": "string", "enum": ["stable", "canary"] },
+    "repoTag": { "type": "string" },
+    "builtAt": { "type": "string", "format": "date-time" },
+    "baseUrl": { "type": "string" },
+    "signature": { "type": ["string", "null"] },
+    "skills": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "version", "description", "tier", "modes", "moneyMoving", "yanked", "files"],
+        "properties": {
+          "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,63}$" },
+          "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+          "description": { "type": "string", "maxLength": 160 },
+          "tier": { "type": "string", "enum": ["core", "on-demand"] },
+          "modes": {
+            "type": "array",
+            "items": { "type": "string", "enum": ["one-off", "duty"] }
+          },
+          "moneyMoving": { "type": "boolean" },
+          "keywords": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "params": {
+            "type": "array"
+          },
+          "requires": {
+            "type": "object",
+            "properties": {
+              "routes": { "type": "array", "items": { "type": "string" } },
+              "features": { "type": "array", "items": { "type": "string" } },
+              "gates": { "type": "array", "items": { "type": "string" } },
+              "bins": { "type": "array", "items": { "type": "string" } }
+            }
+          },
+          "yanked": { "type": "boolean" },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "sha256", "bytes"],
+              "properties": {
+                "path": { "type": "string" },
+                "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                "bytes": { "type": "integer", "minimum": 0 }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

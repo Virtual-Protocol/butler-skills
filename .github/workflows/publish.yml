@@ -1,0 +1,68 @@
+name: publish
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Determine channel
+        id: channel
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            echo "channel=stable" >> "$GITHUB_OUTPUT"
+            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "channel=canary" >> "$GITHUB_OUTPUT"
+            echo "tag=main-${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout previously published gh-pages content
+        # Immutable per-version publishing: keep every previously published
+        # skills/<name>/<version>/ dir by seeding dist/ from the live site
+        # before build_index.py writes this run's channel + any new versions.
+        run: |
+          mkdir -p dist
+          git fetch origin gh-pages 2>/dev/null && \
+            git worktree add /tmp/gh-pages gh-pages 2>/dev/null && \
+            cp -R /tmp/gh-pages/. dist/ || echo "no existing gh-pages branch yet — first publish"
+
+      - name: Build index + copy skill files
+        run: python3 scripts/build_index.py --channel ${{ steps.channel.outputs.channel }} --repo-tag ${{ steps.channel.outputs.tag }}
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

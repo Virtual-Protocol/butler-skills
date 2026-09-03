@@ -1,0 +1,57 @@
+name: validate
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install viem for selector checks
+        run: |
+          mkdir -p /tmp/viem-check
+          cd /tmp/viem-check
+          npm init -y >/dev/null
+          npm i viem@2 >/dev/null
+          echo "NODE_PATH=/tmp/viem-check/node_modules" >> "$GITHUB_ENV"
+
+      - name: Install pytest
+        run: pip install --quiet pytest
+
+      - name: DCO sign-off check
+        run: python3 scripts/check_dco.py --base origin/${{ github.base_ref }} --head HEAD
+
+      - name: Validate all skills
+        # The bevo- prefix is maintainer-only. author_association is a trusted GitHub
+        # Actions context value (OWNER/MEMBER/COLLABORATOR for people with write access to
+        # this repo) — external, non-maintainer PRs run the strict, non-maintainer check.
+        env:
+          AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
+        run: |
+          if [[ "$AUTHOR_ASSOCIATION" == "OWNER" || "$AUTHOR_ASSOCIATION" == "MEMBER" || "$AUTHOR_ASSOCIATION" == "COLLABORATOR" ]]; then
+            python3 scripts/validate.py --all --maintainer
+          else
+            python3 scripts/validate.py --all
+          fi
+
+      - name: Unit + fixture tests
+        run: python3 -m pytest tests -q
+
+      - name: build_index dry run
+        run: python3 scripts/build_index.py --dry-run --channel canary

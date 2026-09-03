@@ -1,0 +1,213 @@
+#!/usr/bin/env python3
+"""build_index.py — build dist/<channel>/index.json plus immutable per-version
+skill files, and regenerate CATALOG.md.
+
+Usage:
+    scripts/build_index.py --channel stable|canary [--dry-run] [--repo-tag <tag>]
+
+Reads every skills/<name>/ (excluding _template), cross-references
+yanked.json, writes:
+    dist/<channel>/index.json
+    dist/skills/<name>/<version>/{SKILL.md,duty.py,CHANGELOG.md}
+and regenerates CATALOG.md at the repo root.
+
+Refuses to overwrite an existing dist/skills/<name>/<version>/ directory
+unless its contents are byte-identical to what would be written (immutable
+publishing). --dry-run performs every check and prints what would be
+written without touching disk.
+
+Python 3.11 stdlib only.
+"""
+from __future__ import annotations
+
+import argparse
+import filecmp
+import hashlib
+import json
+import re
+import shutil
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+SKILLS_DIR = REPO_ROOT / "skills"
+YANKED_PATH = REPO_ROOT / "yanked.json"
+CATALOG_PATH = REPO_ROOT / "CATALOG.md"
+
+BASE_URL_TEMPLATE = "https://virtual-protocol.github.io/butler-skills"
+
+
+def parse_frontmatter_light(text: str) -> dict:
+    """Minimal frontmatter reader shared in spirit with validate.py's parser,
+    kept intentionally independent (build_index must never depend on the
+    validator's internal issue-reporting state)."""
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        raise ValueError("missing frontmatter fence")
+    end = None
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "---":
+            end = i
+            break
+    if end is None:
+        raise ValueError("missing closing frontmatter fence")
+    fm: dict = {}
+    i = 1
+    while i < end:
+        line = lines[i]
+        if not line.strip():
+            i += 1
+            continue
+        m = re.match(r"^([A-Za-z0-9_-]+):\s*(.*)$", line)
+        if m:
+            key, value = m.group(1), m.group(2)
+            if key == "metadata":
+                fm["metadata"] = json.loads(value)
+            else:
+                fm[key] = value.strip()
+        i += 1
+    fm["_body"] = "\n".join(lines[end + 1:])
+    return fm
+
+
+def sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    h.update(path.read_bytes())
+    return h.hexdigest()
+
+
+def load_yanked() -> set[str]:
+    if not YANKED_PATH.exists():
+        return set()
+    data = json.loads(YANKED_PATH.read_text())
+    return set(data.get("yanked", []))
+
+
+def render_contracts_section(web3: dict) -> str:
+    if not web3 or not web3.get("contracts"):
+        return ""
+    rows = ["| Contract | Chain | Function | Selector |", "| --- | --- | --- | --- |"]
+    for c in web3.get("contracts", []):
+        for fn in c.get("functions", []):
+            rows.append(f"| {c.get('name')} ({c.get('address')}) | {c.get('chainId')} | `{fn.get('signature')}` | `{fn.get('selector')}` |")
+    return "\n".join(rows)
+
+
+def collect_skill(skill_dir: Path, yanked: set[str]) -> dict:
+    skill_md = skill_dir / "SKILL.md"
+    text = skill_md.read_text()
+    fm = parse_frontmatter_light(text)
+    bevo = fm.get("metadata", {}).get("bevo", {})
+    name = fm["name"]
+    version = fm["version"]
+    files = []
+    for f in sorted(skill_dir.iterdir()):
+        if f.is_file() and f.name in ("SKILL.md", "duty.py", "CHANGELOG.md"):
+            files.append({"path": f.name, "sha256": sha256_file(f), "bytes": f.stat().st_size})
+    entry = {
+        "name": name,
+        "version": version,
+        "description": fm.get("description", ""),
+        "tier": bevo.get("tier", "on-demand"),
+        "modes": bevo.get("modes", []),
+        "moneyMoving": bool(bevo.get("moneyMoving", False)),
+        "keywords": bevo.get("keywords", []),
+        "params": bevo.get("params", []),
+        "requires": bevo.get("requires", {}),
+        "yanked": f"{name}@{version}" in yanked,
+        "files": files,
+    }
+    return entry
+
+
+def write_dist_files(skill_dir: Path, name: str, version: str, dist_root: Path, dry_run: bool) -> None:
+    version_dir = dist_root / "skills" / name / version
+    src_files = [f for f in skill_dir.iterdir() if f.is_file() and f.name in ("SKILL.md", "duty.py", "CHANGELOG.md")]
+    if version_dir.exists():
+        # immutable: refuse unless identical
+        for f in src_files:
+            dst = version_dir / f.name
+            if not dst.exists() or not filecmp.cmp(f, dst, shallow=False):
+                raise SystemExit(
+                    f"refusing to overwrite existing published version {name}@{version}: "
+                    f"{dst} differs from {f} (bump the version instead)"
+                )
+        return
+    if dry_run:
+        return
+    version_dir.mkdir(parents=True, exist_ok=True)
+    for f in src_files:
+        shutil.copy2(f, version_dir / f.name)
+
+
+def regenerate_catalog(entries: list[dict]) -> str:
+    lines = [
+        "# Catalog",
+        "",
+        "Generated by `scripts/build_index.py`. Do not edit by hand.",
+        "",
+        "| Skill | Version | Tier | Modes | Money-moving | Description |",
+        "| --- | --- | --- | --- | --- | --- |",
+    ]
+    for e in sorted(entries, key=lambda x: x["name"]):
+        yank_marker = " (yanked)" if e["yanked"] else ""
+        lines.append(
+            f"| `{e['name']}`{yank_marker} | {e['version']} | {e['tier']} | {', '.join(e['modes'])} | "
+            f"{'yes' if e['moneyMoving'] else 'no'} | {e['description']} |"
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Build dist/<channel>/index.json and CATALOG.md")
+    parser.add_argument("--channel", choices=["stable", "canary"], default="canary")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--repo-tag", default="dev")
+    args = parser.parse_args()
+
+    yanked = load_yanked()
+    skill_dirs = [d for d in sorted(SKILLS_DIR.iterdir()) if d.is_dir() and d.name != "_template" and (d / "SKILL.md").exists()]
+
+    entries = []
+    for d in skill_dirs:
+        entries.append(collect_skill(d, yanked))
+
+    index = {
+        "schemaVersion": 1,
+        "channel": args.channel,
+        "repoTag": args.repo_tag,
+        "builtAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "baseUrl": BASE_URL_TEMPLATE,
+        "signature": None,
+        "skills": entries,
+    }
+
+    dist_root = REPO_ROOT / "dist"
+    for d in skill_dirs:
+        fm = parse_frontmatter_light((d / "SKILL.md").read_text())
+        write_dist_files(d, fm["name"], fm["version"], dist_root, args.dry_run)
+
+    index_path = dist_root / args.channel / "index.json"
+    if args.dry_run:
+        print(f"[dry-run] would write {index_path}")
+        print(json.dumps(index, indent=2)[:2000])
+    else:
+        index_path.parent.mkdir(parents=True, exist_ok=True)
+        index_path.write_text(json.dumps(index, indent=2) + "\n")
+        print(f"wrote {index_path}")
+
+    catalog = regenerate_catalog(entries)
+    if args.dry_run:
+        print(f"[dry-run] would write {CATALOG_PATH} ({len(catalog)} chars)")
+    else:
+        CATALOG_PATH.write_text(catalog)
+        print(f"wrote {CATALOG_PATH}")
+
+    print(f"{len(entries)} skill(s) indexed for channel={args.channel}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
