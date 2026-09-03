@@ -21,8 +21,11 @@ def main() -> int:
     parser.add_argument("--head", default="HEAD")
     args = parser.parse_args()
 
+    # --no-merges: on a pull_request run, HEAD may be GitHub's synthetic merge
+    # commit (refs/pull/N/merge), which never carries a sign-off and is not a
+    # commit the author wrote. Only the author's own commits are checked.
     out = subprocess.run(
-        ["git", "log", f"{args.base}..{args.head}", "--pretty=format:%H"],
+        ["git", "log", "--no-merges", f"{args.base}..{args.head}", "--pretty=format:%H"],
         capture_output=True, text=True, check=True,
     )
     shas = [s for s in out.stdout.splitlines() if s.strip()]

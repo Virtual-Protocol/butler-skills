@@ -38,7 +38,8 @@ jobs:
         run: pip install --quiet pytest
 
       - name: DCO sign-off check
-        run: python3 scripts/check_dco.py --base origin/${{ github.base_ref }} --head HEAD
+        # The PR's real head, not the synthetic merge commit actions/checkout puts at HEAD.
+        run: python3 scripts/check_dco.py --base origin/${{ github.base_ref }} --head ${{ github.event.pull_request.head.sha || 'HEAD' }}
 
       - name: Submodule pins
         # For every skills/<name> submodule: (a) the pinned commit carries tag
