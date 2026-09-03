@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -26,29 +27,29 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Determine channel
-        id: channel
+      # A Pages deploy replaces the WHOLE site and there is no gh-pages branch to
+      # seed from, so every run must produce both channels itself:
+      #   stable = the latest v* tag's tree, canary = this commit's tree.
+      # build_index.py refuses to overwrite a published version dir with
+      # different bytes, so a skill changed without a version bump fails here
+      # instead of silently republishing 1.0.0 with new content.
+      - name: Build stable (latest v* tag)
         run: |
-          if [[ "${{ github.ref_type }}" == "tag" ]]; then
-            echo "channel=stable" >> "$GITHUB_OUTPUT"
-            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "channel=canary" >> "$GITHUB_OUTPUT"
-            echo "tag=main-${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          set -eu
+          git fetch --tags --force
+          TAG="$(git tag -l 'v*' --sort=-v:refname | head -n 1)"
+          if [ -z "$TAG" ]; then
+            echo "no v* tag yet — stable channel not published"
+            exit 0
           fi
-
-      - name: Checkout previously published gh-pages content
-        # Immutable per-version publishing: keep every previously published
-        # skills/<name>/<version>/ dir by seeding dist/ from the live site
-        # before build_index.py writes this run's channel + any new versions.
-        run: |
+          git worktree add /tmp/stable "$TAG"
+          ( cd /tmp/stable && python3 scripts/build_index.py --channel stable --repo-tag "$TAG" )
           mkdir -p dist
-          git fetch origin gh-pages 2>/dev/null && \
-            git worktree add /tmp/gh-pages gh-pages 2>/dev/null && \
-            cp -R /tmp/gh-pages/. dist/ || echo "no existing gh-pages branch yet — first publish"
+          cp -R /tmp/stable/dist/. dist/
+          echo "stable = $TAG"
 
-      - name: Build index + copy skill files
-        run: python3 scripts/build_index.py --channel ${{ steps.channel.outputs.channel }} --repo-tag ${{ steps.channel.outputs.tag }}
+      - name: Build canary (this commit)
+        run: python3 scripts/build_index.py --channel canary --repo-tag "main-${{ github.sha }}"
 
       - uses: actions/configure-pages@v5
 
