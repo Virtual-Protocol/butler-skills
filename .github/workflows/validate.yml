@@ -27,12 +27,9 @@ jobs:
           node-version: "20"
 
       - name: Install viem for selector checks
-        run: |
-          mkdir -p /tmp/viem-check
-          cd /tmp/viem-check
-          npm init -y >/dev/null
-          npm i viem@2 >/dev/null
-          echo "NODE_PATH=/tmp/viem-check/node_modules" >> "$GITHUB_ENV"
+        # Installed at the repo root so scripts/check_selectors.mjs (an ES module,
+        # which ignores NODE_PATH) resolves `import "viem"` from ./node_modules.
+        run: npm i --no-save --no-audit --no-fund viem@2 >/dev/null
 
       - name: Install pytest
         run: pip install --quiet pytest
@@ -56,8 +53,13 @@ jobs:
         # this repo) — external, non-maintainer PRs run the strict, non-maintainer check.
         env:
           AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
+          # A branch that lives in THIS repo can only have been pushed by someone
+          # with write access — that is the maintainer signal; forks are community.
+          # author_association alone reports CONTRIBUTOR for members whose org
+          # membership is private, so it is an OR, not the sole test.
+          HEAD_IN_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
         run: |
-          if [[ "$AUTHOR_ASSOCIATION" == "OWNER" || "$AUTHOR_ASSOCIATION" == "MEMBER" || "$AUTHOR_ASSOCIATION" == "COLLABORATOR" ]]; then
+          if [[ "$HEAD_IN_REPO" == "true" || "$AUTHOR_ASSOCIATION" == "OWNER" || "$AUTHOR_ASSOCIATION" == "MEMBER" || "$AUTHOR_ASSOCIATION" == "COLLABORATOR" ]]; then
             python3 scripts/validate.py --all --maintainer
           else
             python3 scripts/validate.py --all
