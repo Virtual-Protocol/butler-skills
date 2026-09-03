@@ -11,9 +11,12 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
+      # Skills are git submodules pinned at a tagged commit of their own repo;
+      # every check below runs against that pinned checkout.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          submodules: recursive
 
       - uses: actions/setup-python@v5
         with:
@@ -37,6 +40,15 @@ jobs:
       - name: DCO sign-off check
         run: python3 scripts/check_dco.py --base origin/${{ github.base_ref }} --head HEAD
 
+      - name: Submodule pins
+        # For every skills/<name> submodule: (a) the pinned commit carries tag
+        # v<version> of that repo (`git -C skills/<name> tag --points-at HEAD`),
+        # (b) the URL is https://github.com/<owner>/<repo>, (c) the checkout has no
+        # symlinks and no nested submodules/repositories. This is the trust
+        # boundary: what a PR pins is what Butler clones, and a later force-push to
+        # the skill repo cannot change it.
+        run: python3 scripts/check_pins.py
+
       - name: Validate all skills
         # The bevo- prefix is maintainer-only. author_association is a trusted GitHub
         # Actions context value (OWNER/MEMBER/COLLABORATOR for people with write access to
@@ -55,3 +67,6 @@ jobs:
 
       - name: build_index dry run
         run: python3 scripts/build_index.py --dry-run --channel canary
+
+      - name: README worked example in sync with the pinned skill
+        run: python3 scripts/sync_readme.py --check

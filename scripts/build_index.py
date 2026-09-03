@@ -5,18 +5,28 @@ skill files, and regenerate CATALOG.md.
 Usage:
     scripts/build_index.py --channel stable|canary [--dry-run] [--repo-tag <tag>]
 
-Reads every skills/<name>/ (excluding _template), cross-references
+Reads every skills/<name>/ submodule declared in .gitmodules (they must be
+initialised: `git submodule update --init --recursive`), cross-references
 yanked.json, writes:
     dist/<channel>/index.json
     dist/skills/<name>/<version>/{SKILL.md,duty.py,CHANGELOG.md}
 and regenerates CATALOG.md at the repo root.
 
+Every index entry carries, next to the Pages-served files[] + sha256, an
+additive "source" block naming the skill's git repository and the exact commit
+the registry pins:
+    "source": {"repo": "https://github.com/...", "commit": "<40-hex>", "ref": "v<version>"}
+`schemaVersion` stays 1 — the deployed container client rejects any other
+value and ignores keys it does not know, so a v1 client keeps installing from
+files[] while a git-aware one clones source.commit and falls back to files[].
+
 Refuses to overwrite an existing dist/skills/<name>/<version>/ directory
 unless its contents are byte-identical to what would be written (immutable
 publishing). --dry-run performs every check and prints what would be
-written without touching disk.
+written without touching disk or the network (the pinned commit is read from
+the local submodule checkout with `git rev-parse HEAD`).
 
-Python 3.11 stdlib only.
+Python 3.11 stdlib only (plus the `git` binary for the pinned commit).
 """
 from __future__ import annotations
 
@@ -26,6 +36,7 @@ import hashlib
 import json
 import re
 import shutil
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -34,8 +45,78 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SKILLS_DIR = REPO_ROOT / "skills"
 YANKED_PATH = REPO_ROOT / "yanked.json"
 CATALOG_PATH = REPO_ROOT / "CATALOG.md"
+GITMODULES_PATH = REPO_ROOT / ".gitmodules"
 
 BASE_URL_TEMPLATE = "https://virtual-protocol.github.io/butler-skills"
+
+COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+
+
+def parse_gitmodules(path: Path = GITMODULES_PATH) -> dict[str, dict]:
+    """Minimal .gitmodules reader: {path: {"name": ..., "url": ...}}. Same
+    shape as validate.py's copy; kept independent on purpose (see below)."""
+    entries: dict[str, dict] = {}
+    if not path.exists():
+        return entries
+    current: dict | None = None
+    for raw in path.read_text().splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or line.startswith(";"):
+            continue
+        m = re.match(r'^\[submodule\s+"(.+)"\]$', line)
+        if m:
+            current = {"name": m.group(1)}
+            continue
+        m = re.match(r"^([A-Za-z][A-Za-z0-9-]*)\s*=\s*(.*)$", line)
+        if m and current is not None:
+            current[m.group(1)] = m.group(2).strip()
+            if m.group(1) == "path":
+                entries[current["path"]] = current
+    return entries
+
+
+def list_skill_dirs(repo_root: Path = REPO_ROOT) -> list[Path]:
+    """The skills/<name> submodules declared in .gitmodules, sorted by path.
+    Fails loudly on an uninitialised one — an index built from a registry
+    with a missing checkout would silently drop a published skill."""
+    entries = parse_gitmodules(repo_root / ".gitmodules")
+    dirs = []
+    for rel in sorted(entries):
+        if not rel.startswith("skills/"):
+            continue
+        d = repo_root / rel
+        if not (d / "SKILL.md").exists():
+            raise SystemExit(f"{rel} is declared in .gitmodules but has no SKILL.md — run `git submodule update --init --recursive`")
+        dirs.append(d)
+    return dirs
+
+
+def pinned_commit(skill_dir: Path) -> str:
+    """The commit the registry pins for this submodule: HEAD of its checkout.
+    Local only — no fetch, so --dry-run works offline."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(skill_dir), "rev-parse", "HEAD"],
+            capture_output=True, text=True, check=True, timeout=30,
+        )
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        raise SystemExit(f"cannot read the pinned commit of {skill_dir}: {e}")
+    commit = out.stdout.strip()
+    if not COMMIT_RE.match(commit):
+        raise SystemExit(f"unexpected `git rev-parse HEAD` output for {skill_dir}: {commit!r}")
+    return commit
+
+
+def source_block(skill_dir: Path, version: str, gitmodules: dict[str, dict] | None = None) -> dict:
+    """The additive per-entry "source" block: the skill repo, the pinned
+    commit and the tag the registry expects that commit to carry (v<version>;
+    CI asserts the two agree, see scripts/check_pins.py)."""
+    gitmodules = parse_gitmodules() if gitmodules is None else gitmodules
+    rel = skill_dir.resolve().relative_to(REPO_ROOT.resolve()).as_posix()
+    entry = gitmodules.get(rel)
+    if entry is None or not entry.get("url"):
+        raise SystemExit(f"{rel} has no url in .gitmodules — registry skills are git submodules")
+    return {"repo": entry["url"], "commit": pinned_commit(skill_dir), "ref": f"v{version}"}
 
 
 def parse_frontmatter_light(text: str) -> dict:
@@ -94,7 +175,7 @@ def render_contracts_section(web3: dict) -> str:
     return "\n".join(rows)
 
 
-def collect_skill(skill_dir: Path, yanked: set[str]) -> dict:
+def collect_skill(skill_dir: Path, yanked: set[str], gitmodules: dict[str, dict] | None = None) -> dict:
     skill_md = skill_dir / "SKILL.md"
     text = skill_md.read_text()
     fm = parse_frontmatter_light(text)
@@ -117,8 +198,17 @@ def collect_skill(skill_dir: Path, yanked: set[str]) -> dict:
         "requires": bevo.get("requires", {}),
         "yanked": f"{name}@{version}" in yanked,
         "files": files,
+        "source": source_block(skill_dir, version, gitmodules),
     }
     return entry
+
+
+def repo_slug(url: str) -> str:
+    """'https://github.com/owner/repo(.git)' -> 'owner/repo' for the catalog."""
+    slug = url.rstrip("/")
+    if slug.endswith(".git"):
+        slug = slug[: -len(".git")]
+    return slug[len("https://github.com/"):] if slug.startswith("https://github.com/") else slug
 
 
 def write_dist_files(skill_dir: Path, name: str, version: str, dist_root: Path, dry_run: bool) -> None:
@@ -147,13 +237,23 @@ def regenerate_catalog(entries: list[dict]) -> str:
         "",
         "Generated by `scripts/build_index.py`. Do not edit by hand.",
         "",
-        "| Skill | Version | Tier | Modes | Money-moving | Description |",
-        "| --- | --- | --- | --- | --- | --- |",
+        "Each skill is its own git repository, pinned here as a submodule at the commit of its",
+        "`v<version>` tag (the Repo link opens that tag). Butler clones exactly that commit.",
+        "",
+        "| Skill | Version | Repo | Tier | Modes | Money-moving | Description |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
     ]
     for e in sorted(entries, key=lambda x: x["name"]):
         yank_marker = " (yanked)" if e["yanked"] else ""
+        src = e.get("source") or {}
+        repo_cell = "—"
+        if src.get("repo"):
+            repo_url = src["repo"].rstrip("/")
+            if repo_url.endswith(".git"):
+                repo_url = repo_url[: -len(".git")]
+            repo_cell = f"[{repo_slug(src['repo'])}]({repo_url}/tree/{src.get('ref', '')})"
         lines.append(
-            f"| `{e['name']}`{yank_marker} | {e['version']} | {e['tier']} | {', '.join(e['modes'])} | "
+            f"| `{e['name']}`{yank_marker} | {e['version']} | {repo_cell} | {e['tier']} | {', '.join(e['modes'])} | "
             f"{'yes' if e['moneyMoving'] else 'no'} | {e['description']} |"
         )
     lines.append("")
@@ -168,11 +268,12 @@ def main() -> int:
     args = parser.parse_args()
 
     yanked = load_yanked()
-    skill_dirs = [d for d in sorted(SKILLS_DIR.iterdir()) if d.is_dir() and d.name != "_template" and (d / "SKILL.md").exists()]
+    gitmodules = parse_gitmodules()
+    skill_dirs = list_skill_dirs()
 
     entries = []
     for d in skill_dirs:
-        entries.append(collect_skill(d, yanked))
+        entries.append(collect_skill(d, yanked, gitmodules))
 
     index = {
         "schemaVersion": 1,

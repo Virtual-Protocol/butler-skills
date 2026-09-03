@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """sync_readme.py — regenerate README.md's `bevo-copytrade` worked example
-from the real skills/bevo-copytrade/{SKILL.md,duty.py}, so the README can
-never drift from the shipped skill (and a Claude copying the README example
-verbatim copies exactly what CI validates).
+from the real skills/bevo-copytrade/{SKILL.md,duty.py} — the submodule
+checkout of the skill's own repository, pinned at its tagged commit — so the
+README can never drift from the published skill (and a Claude copying the
+README example verbatim copies exactly what CI validates). Run
+`git submodule update --init --recursive` first if that directory is empty.
 
 Usage:
     scripts/sync_readme.py             # rewrite README.md in place
@@ -21,19 +23,46 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 README_PATH = REPO_ROOT / "README.md"
-SKILL_MD_PATH = REPO_ROOT / "skills" / "bevo-copytrade" / "SKILL.md"
-DUTY_PY_PATH = REPO_ROOT / "skills" / "bevo-copytrade" / "duty.py"
+GITMODULES_PATH = REPO_ROOT / ".gitmodules"
+SKILL_SUBMODULE = "skills/bevo-copytrade"
+SKILL_DIR = REPO_ROOT / SKILL_SUBMODULE
+SKILL_MD_PATH = SKILL_DIR / "SKILL.md"
+DUTY_PY_PATH = SKILL_DIR / "duty.py"
 
 BEGIN_MARKER = "<!-- BEGIN GENERATED: bevo-copytrade worked example (scripts/sync_readme.py; do not edit by hand) -->"
 END_MARKER = "<!-- END GENERATED: bevo-copytrade worked example -->"
 
 
+def submodule_url(path: str = SKILL_SUBMODULE) -> str:
+    """The skill repo URL recorded for `path` in .gitmodules (empty if absent)."""
+    if not GITMODULES_PATH.exists():
+        return ""
+    current_path = None
+    entries: dict[str, str] = {}
+    section: dict[str, str] = {}
+    for raw in GITMODULES_PATH.read_text().splitlines():
+        line = raw.strip()
+        if line.startswith("[submodule"):
+            section = {}
+            continue
+        if "=" in line:
+            k, v = (x.strip() for x in line.split("=", 1))
+            section[k] = v
+            if "path" in section and "url" in section:
+                entries[section["path"]] = section["url"]
+    return entries.get(path, "")
+
+
 def build_block() -> str:
+    if not SKILL_MD_PATH.exists():
+        raise SystemExit(f"{SKILL_MD_PATH} missing — run `git submodule update --init --recursive`")
     skill_md = SKILL_MD_PATH.read_text()
     duty_py = DUTY_PY_PATH.read_text()
+    repo = submodule_url()
+    origin = f" (submodule of {repo}, pinned at its tagged commit)" if repo else ""
 
     parts = [
-        "`skills/bevo-copytrade/SKILL.md`:",
+        f"`skills/bevo-copytrade/SKILL.md`{origin}:",
         "",
         "````markdown",
         skill_md.rstrip("\n"),

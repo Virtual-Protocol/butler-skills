@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -66,6 +67,24 @@ def test_replaying_same_page_twice_records_no_new_trades(tmp_path):
     second = run_replay(state_dir)
     second_trades = [a for a in second if a["call"] == "trade"]
     assert second_trades == [], f"expected zero new trades on replay, got {second_trades}"
+
+
+def test_standalone_replay_from_any_directory(tmp_path):
+    """`tests/replay.py --standalone <dir>` is what the template's CI runs from an
+    author's own repo: copy the skill somewhere unrelated (no .git, arbitrary dir
+    name), run from an unrelated cwd, and expect the same three recorded trades."""
+    checkout = tmp_path / "butler-skill-copytrade-checkout"
+    shutil.copytree(SKILL, checkout, ignore=shutil.ignore_patterns(".git", "__pycache__"))
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    cmd = [sys.executable, str(REPLAY), "--standalone", str(checkout), "--fixture", "trade-activity-page", "--state-dir", str(state_dir)]
+    for kv in ENV:
+        cmd += ["--env", kv]
+    proc = subprocess.run(cmd, capture_output=True, text=True, cwd=str(tmp_path))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "# standalone replay of bevo-copytrade from" in proc.stdout
+    actions = json.loads(proc.stdout.split("# ACTIONS_JSON_START\n")[1].split("# ACTIONS_JSON_END")[0])
+    assert len([a for a in actions if a["call"] == "trade"]) == 3
 
 
 def _load_copytrade_duty_module():

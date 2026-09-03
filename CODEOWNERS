@@ -1,4 +1,5 @@
 /skills/**        @Virtual-Protocol/butler-maintainers
+/.gitmodules      @Virtual-Protocol/butler-maintainers
 /schema/**        @Virtual-Protocol/butler-core
 /scripts/**       @Virtual-Protocol/butler-core
 /.github/**       @Virtual-Protocol/butler-core
