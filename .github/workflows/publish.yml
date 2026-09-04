@@ -29,33 +29,26 @@ jobs:
         with:
           python-version: "3.11"
 
-      # ONE channel. A Pages deploy replaces the WHOLE site, so this single run
-      # produces the whole registry: dist/index.json (the moving pointer) plus
-      # dist/skills/<name>/<version>/ (the immutable store). Merging to main IS
-      # the publish action — there is no separate release tag gating it, and no
-      # per-environment view. A container that wants to hold a version pins it
-      # (`bevo-hub install <name>@<version>`), which is the only supported way
+      # ONE channel, one path. A Pages deploy replaces the WHOLE site, so this
+      # single run produces the whole registry: dist/index.json (the moving
+      # pointer) plus dist/skills/<name>/<version>/ (the immutable store).
+      # Merging to main IS the publish action — no release tag gates it, and no
+      # per-environment view exists. A container that wants to hold a version
+      # pins it (`bevo-hub install <name>@<version>`), the only supported way
       # to not move with the index.
+      #
+      # There is deliberately NO /stable/ or /canary/ alias. During the rollout
+      # window a container on the pre-collapse client asks for
+      # /<channel>/index.json and gets a 404 — that pauses its hub SYNC, it does
+      # not break it: installed skills keep running from disk, and a boot falls
+      # back to the cached index or the vendored seed (sync_once(network=False)).
+      # Ship the one-channel image promptly and the window closes.
       #
       # build_index.py refuses to overwrite a published version dir with
       # different bytes, so a skill changed without a version bump fails here
       # instead of silently republishing 1.0.0 with new content.
       - name: Build the index (this commit)
         run: python3 scripts/build_index.py --repo-tag "main-${{ github.sha }}"
-
-      # TRANSITIONAL — delete once every container is on an image whose
-      # bevo_hub/client.py requests /index.json. A container built before the
-      # channel collapse asks for /stable/index.json or /canary/index.json;
-      # without these copies it gets a 404 and its skill sync stops entirely.
-      # This is about the index PATH, not the frontmatter key: it protects any
-      # container not yet redeployed, whatever it reads.
-      - name: Publish legacy channel aliases (transitional)
-        run: |
-          set -eu
-          for legacy in stable canary; do
-            mkdir -p "dist/$legacy"
-            cp dist/index.json "dist/$legacy/index.json"
-          done
 
       # The standalone developer tools, served next to the index so a skill repo never
       # has to clone this registry to validate:
