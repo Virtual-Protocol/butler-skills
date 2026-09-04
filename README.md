@@ -16,17 +16,34 @@ without cloning anything.
 
 ---
 
+## How this registry works (read this once)
+
+**Every skill is its own git repository.** This repo is the curated **registry**: it pins
+each skill as a git submodule at `skills/<name>`, at the commit of the skill repo's
+`v<version>` tag, and publishes an index of those pinned commits. Butler containers clone
+**exactly the pinned commit** (`source.commit` in the index; the Pages-served files are the
+fallback and carry the same bytes). The registry is the trust boundary: what a maintainer
+reviewed and merged is what runs — a later force-push, retag or deletion in a skill repo
+cannot change what is pinned, and moving the pin is a reviewed PR here. Team skills live
+under `Virtual-Protocol/butler-skill-<name>`; community skills live in the author's own
+repo, created from the same template.
+
 ## Building a skill: the 8 steps
 
-1. **Get a checkout and a scaffold.**
+1. **Create your skill repo from the template.**
    ```bash
-   git clone https://github.com/Virtual-Protocol/butler-skills
-   cd butler-skills
-   python3 scripts/new_skill.py bevo-my-skill
+   gh repo create <you>/butler-skill-my-skill --template Virtual-Protocol/butler-skill-template --public --clone
+   cd butler-skill-my-skill
    ```
-   (No git access yet? Fork on GitHub first, then clone your fork.) This copies
-   `skills/_template/` — every required section and `[FIXED]`/`[ADAPT]` marker is already
-   there with a `TODO` the validator rejects until you replace it.
+   (Or click **Use this template** on
+   https://github.com/Virtual-Protocol/butler-skill-template.) The template is the
+   scaffold: `SKILL.md` with every required section and `[FIXED]`/`[ADAPT]` marker
+   pre-filled with a `TODO` the validator rejects until you replace it, `duty.py`,
+   `CHANGELOG.md`, and a CI workflow that runs the hub validator on every push. Set
+   `name:` in the frontmatter to your skill name (`^[a-z0-9][a-z0-9-]{1,63}$`; the `bevo-`
+   prefix is reserved for the Bevo team). `python3 scripts/new_skill.py <name>` in a
+   checkout of this repo prints these exact commands for your name and checks it against
+   the reserved list.
 
 2. **State the task in one sentence and pick the profile.** "Copy another member's buys" /
    "approve and deposit into a vault" / "summarize what a group said about $TICKER" /
@@ -53,17 +70,30 @@ without cloning anything.
    skill has a `duty` mode, `duty.py`. See [§5](#5-make-it-idempotent-by-construction) and
    [§9 web3](#9-web3-actions-building-and-filing-transactions).
 
-7. **Test locally — no Bevo account or container needed:**
+7. **Test locally — no Bevo account or container needed.** From inside your skill repo,
+   with a clone of this registry next to it for the validator and fixtures:
    ```bash
-   python3 scripts/validate.py skills/bevo-my-skill
-   python3 tests/replay.py skills/bevo-my-skill --fixture trade-activity-page
+   git clone --depth 1 https://github.com/Virtual-Protocol/butler-skills /tmp/butler-skills
+   python3 /tmp/butler-skills/scripts/validate.py --standalone .
+   python3 /tmp/butler-skills/tests/replay.py --standalone . --fixture trade-activity-page
    ```
-   Iterate until both exit 0. See [§7](#7-test-locally-with-no-infrastructure).
+   Iterate until both exit 0 (the template's CI runs the same two commands on every
+   push). See [§7](#7-test-locally-with-no-infrastructure).
 
-8. **Ship it.** Bump `version`, add a line to `CHANGELOG.md`, one skill per PR, sign off
-   your commits (`git commit -s`), `gh pr create` from your fork. CI runs the exact same
-   validator; a maintainer reviews (two reviews if `moneyMoving:true`); it lands on
-   `canary`, then a later tag promotes it to `stable`.
+8. **Ship it.** Tag the release in your skill repo (`git tag v1.0.0 && git push origin
+   main --tags` — the tag must be `v` + the frontmatter `version`), then open a PR to this
+   registry that adds your repo as a submodule at that tag:
+   ```bash
+   git submodule add https://github.com/<you>/butler-skill-my-skill skills/my-skill
+   git -C skills/my-skill checkout v1.0.0
+   git add .gitmodules skills/my-skill
+   git commit -s -m "skills: add my-skill 1.0.0"
+   ```
+   CI validates the pinned checkout and asserts the pinned commit carries tag
+   `v<version>`; maintainers review that exact content (two reviews if
+   `moneyMoving:true`); it lands on `canary`, then `stable` on the next hub tag. A new
+   version is a new tag in your repo plus a PR here moving the pointer. See
+   [§8](#8-ship-it).
 
 ---
 
@@ -84,17 +114,23 @@ only for the handful of skills every container needs regardless of what the owne
 in v1 that classification is reserved for future bundled skills; every skill you publish
 here starts **on-demand** (installed only when a search or an explicit ask needs it).
 
-## 2. Start from the scaffold
+## 2. Start from the template repo
 
 ```bash
-python3 scripts/new_skill.py <name>
+gh repo create <you>/butler-skill-<name> --template Virtual-Protocol/butler-skill-template --public --clone
 ```
 
-copies [`skills/_template/`](https://raw.githubusercontent.com/Virtual-Protocol/butler-skills/main/skills/_template/SKILL.md)
-(and its `duty.py`, `CHANGELOG.md`) into `skills/<name>/`. Every section and marker is
-pre-filled with a `TODO:` that `scripts/validate.py` rejects if left in place — you cannot
-accidentally ship an unfinished scaffold. `--maintainer` is required for a `bevo-`-prefixed
-name (that prefix is reserved for the Bevo team, see `schema/reserved-names.json`).
+creates your skill's own repository from
+[`Virtual-Protocol/butler-skill-template`](https://github.com/Virtual-Protocol/butler-skill-template)
+(its [`SKILL.md`](https://raw.githubusercontent.com/Virtual-Protocol/butler-skill-template/main/SKILL.md),
+`duty.py`, `CHANGELOG.md`, and a `validate.yml` workflow). The three skill files sit at the
+**repo root** — there is no `skills/<name>/` inside a skill repo; that path is where the
+registry mounts it. Every section and marker is pre-filled with a `TODO:` that
+`scripts/validate.py` rejects if left in place — you cannot accidentally ship an unfinished
+scaffold. Change `name: _template` to your skill's name. `python3 scripts/new_skill.py
+<name>` (in a checkout of this registry) prints the commands above for your name and
+refuses reserved names; `--maintainer` is required for a `bevo-`-prefixed name (that prefix
+is reserved for the Bevo team, see `schema/reserved-names.json`).
 
 ## 3. Pick the profile, then ground every command before you write it
 
@@ -102,11 +138,13 @@ Five profiles, each with a worked example already in this repo:
 
 - **Trading** — spot/perp/stock, copy-trading, DCA. Toolbox rows: *Trade*, *Other people's
   trades*, *Own history*, *Owner holdings / prices*. Worked example:
-  [`skills/bevo-copytrade/`](https://raw.githubusercontent.com/Virtual-Protocol/butler-skills/main/skills/bevo-copytrade/SKILL.md)
-  (inlined in full below).
+  [`bevo-copytrade`](https://raw.githubusercontent.com/Virtual-Protocol/butler-skill-copytrade/main/SKILL.md)
+  (repo `Virtual-Protocol/butler-skill-copytrade`, pinned here at `skills/bevo-copytrade`;
+  inlined in full below).
 - **Web3** — contract calls, approvals, LP, staking. Toolbox rows: *Read chain state*,
   *Build a transaction*, *Sign and send*. Worked example:
-  [`skills/bevo-contract-call/`](https://raw.githubusercontent.com/Virtual-Protocol/butler-skills/main/skills/bevo-contract-call/SKILL.md) —
+  [`bevo-contract-call`](https://raw.githubusercontent.com/Virtual-Protocol/butler-skill-contract-call/main/SKILL.md)
+  (repo `Virtual-Protocol/butler-skill-contract-call`) —
   see [§9](#9-web3-actions-building-and-filing-transactions) for the full how-to.
 - **Messaging and social** — group members/messages/search, X search, notify, summaries.
   Toolbox rows: *Query group members*, *Query group messages*, *Search X/Twitter*, *Notify
@@ -193,16 +231,25 @@ rather than implying them.
 
 ## 7. Test locally, with no infrastructure
 
+The validator and the replay harness live in this registry, not in your skill repo, so
+clone it once next to your work (`git clone --depth 1
+https://github.com/Virtual-Protocol/butler-skills /tmp/butler-skills`) and run both from
+inside your skill repo:
+
 ```bash
-python3 scripts/validate.py skills/<name>
+python3 /tmp/butler-skills/scripts/validate.py --standalone .
 ```
 
-runs the exact CI job: frontmatter/schema checks, sizes, the command allowlist, the
+runs the exact CI job in **standalone mode** — the skill's name is read from the
+frontmatter (your checkout can be called anything), and every other rule is identical to
+what the registry PR runs: frontmatter/schema checks, sizes, the command allowlist, the
 `duty.py` AST guard, selector recomputation (when `node`+`viem` are resolvable — otherwise a
-warning, never a silent pass), and prints the skill's prompt cost.
+warning, never a silent pass), the tree rules (no symlinks, no nested submodules, at most
+50 files / 1 MB — the container refuses a clone that breaks them), and prints the skill's
+prompt cost.
 
 ```bash
-python3 tests/replay.py skills/<name> --fixture trade-activity-page
+python3 /tmp/butler-skills/tests/replay.py --standalone . --fixture trade-activity-page
 ```
 
 runs `duty.py` with [`tests/stub_bevo.py`](https://raw.githubusercontent.com/Virtual-Protocol/butler-skills/main/tests/stub_bevo.py)
@@ -214,19 +261,43 @@ recorded trade per leader buy on an allowed chain, each with a distinct key, and
 for the sell row, the null-field row, or a second replay of the same page (the seen-set in
 `state.json` prevents it — that is a regression test, not a coincidence).
 
+The template repo ships a `.github/workflows/validate.yml` that runs exactly these two
+commands on every push, so a green check on your own repo means the registry PR's
+validator step will be green too.
+
 What you cannot test offline — a real Approvals card, a real live feed — is what a
 maintainer checks on staging after the PR lands on `canary`.
 
 ## 8. Ship it
 
-Bump `version` (semver), add a line to `CHANGELOG.md`, one skill per PR, sign every commit
-(`git commit -s` — DCO). `moneyMoving:true` skills need **two** maintainer reviews, not
-one. External (non-maintainer) PRs always land on `canary` first regardless of review
-count; a maintainer promotes to `stable` by tagging `vYYYY.MM.DD[.N]` once it has soaked.
-Publishing is immutable — a merge to a version that already published different bytes is
-refused; fix forward with a new version. A broken or unsafe published version is disabled
-fleet-wide by adding it to `yanked.json` (see [SECURITY.md](SECURITY.md)) — never by
-renaming or deleting its directory.
+**In your skill repo:** make sure `version` (semver) matches what you are releasing, add a
+line to `CHANGELOG.md`, commit, and tag the release `v<version>` (`git tag v1.0.0 && git
+push origin main --tags`). The tag is the contract: the registry only accepts a pin whose
+commit carries the tag `v` + the frontmatter `version`.
+
+**In this registry:** one skill per PR, from a fork, every commit signed off (`git commit
+-s` — DCO). The PR adds (or, for a new version, moves) the submodule pointer and nothing
+else:
+
+```bash
+git submodule add https://github.com/<you>/butler-skill-<name> skills/<name>   # first release only
+git -C skills/<name> fetch --tags && git -C skills/<name> checkout v1.2.0         # every release
+git add .gitmodules skills/<name>
+git commit -s -m "skills: <name> 1.2.0"
+```
+
+CI checks out the pinned commit (`submodules: recursive`) and runs the same validator, plus
+the pin rules: the pinned commit carries tag `v<version>` in your repo, the submodule URL is
+`https://github.com/<owner>/<repo>`, the checkout has no symlinks or nested submodules.
+`moneyMoving:true` skills need **two** maintainer reviews, not one; the review is of the
+pinned content, which is what Butler will clone. External (non-maintainer) PRs always land
+on `canary` first regardless of review count; a maintainer promotes to `stable` by tagging
+this registry `vYYYY.MM.DD[.N]` once it has soaked. Publishing is immutable — a pin that
+would republish an already-published `name@version` with different bytes is refused; fix
+forward with a new version (new tag, new PR). A broken or unsafe published version is
+disabled fleet-wide by adding it to `yanked.json` (see [SECURITY.md](SECURITY.md)) — never
+by deleting the submodule or retagging the skill repo (retagging cannot change a pin
+anyway, and Butler keeps installing the pinned commit until the registry says otherwise).
 
 ---
 
@@ -345,7 +416,7 @@ with both a one-off and a duty mode.
 
 <!-- BEGIN GENERATED: bevo-copytrade worked example (scripts/sync_readme.py; do not edit by hand) -->
 
-`skills/bevo-copytrade/SKILL.md`:
+`skills/bevo-copytrade/SKILL.md` (submodule of https://github.com/Virtual-Protocol/butler-skill-copytrade, pinned at its tagged commit):
 
 ````markdown
 ---
@@ -612,19 +683,24 @@ if __name__ == "__main__":
 
 <!-- END GENERATED: bevo-copytrade worked example -->
 
-The full files (kept in sync with the source of truth as the skill evolves) are here:
-[`SKILL.md`](https://raw.githubusercontent.com/Virtual-Protocol/butler-skills/main/skills/bevo-copytrade/SKILL.md),
-[`duty.py`](https://raw.githubusercontent.com/Virtual-Protocol/butler-skills/main/skills/bevo-copytrade/duty.py).
+The block above is generated from the pinned submodule checkout (`scripts/sync_readme.py`;
+CI fails if it drifts). The skill's own repository, with its full history and tags, is
+[`Virtual-Protocol/butler-skill-copytrade`](https://github.com/Virtual-Protocol/butler-skill-copytrade):
+[`SKILL.md`](https://raw.githubusercontent.com/Virtual-Protocol/butler-skill-copytrade/main/SKILL.md),
+[`duty.py`](https://raw.githubusercontent.com/Virtual-Protocol/butler-skill-copytrade/main/duty.py)
+(`main` may be ahead of what the registry pins — [CATALOG.md](CATALOG.md) links the pinned
+tag).
 
 ### `bevo-contract-call` — web3, the generic build → dry-run → file pattern
 
 The pattern every DeFi/LP/staking/approval skill copies: the owner names a contract,
 function and arguments; the skill echoes them back, reads any precondition, encodes the
 call, dry-runs it, files exactly one leg with a key, and reports the `approvalId`. Read the
-full annotated file:
-[`skills/bevo-contract-call/SKILL.md`](https://raw.githubusercontent.com/Virtual-Protocol/butler-skills/main/skills/bevo-contract-call/SKILL.md)
+full annotated file from its repo
+[`Virtual-Protocol/butler-skill-contract-call`](https://github.com/Virtual-Protocol/butler-skill-contract-call):
+[`SKILL.md`](https://raw.githubusercontent.com/Virtual-Protocol/butler-skill-contract-call/main/SKILL.md)
 and its timer-triggered duty variant:
-[`skills/bevo-contract-call/duty.py`](https://raw.githubusercontent.com/Virtual-Protocol/butler-skills/main/skills/bevo-contract-call/duty.py) —
+[`duty.py`](https://raw.githubusercontent.com/Virtual-Protocol/butler-skill-contract-call/main/duty.py) —
 walk through [§9](#9-web3-actions-building-and-filing-transactions) above alongside it.
 
 ---
@@ -696,25 +772,35 @@ vs judgment vs hybrid).
 
 ## Local testing, no infrastructure
 
-`python3 scripts/validate.py skills/<name>` — the exact CI job. `python3 tests/replay.py
-skills/<name> --fixture <name>` — runs `duty.py` against a captured page with
-`tests/stub_bevo.py` standing in for the real SDK and prints what it would have done. See
+From your skill repo: `python3 <butler-skills>/scripts/validate.py --standalone .` — the
+exact CI job, name taken from the frontmatter. `python3 <butler-skills>/tests/replay.py
+--standalone . --fixture <name>` — runs `duty.py` against a captured page with
+`tests/stub_bevo.py` standing in for the real SDK and prints what it would have done. (In
+a registry checkout the same tools take `skills/<name>` and `--all`.) See
 [§7](#7-test-locally-with-no-infrastructure) above for the pass criteria.
 
 ## Shipping / PR flow
 
-See [§8](#8-ship-it) above and [CONTRIBUTING.md](CONTRIBUTING.md) for the full review
-process, DCO requirement, and the two-review rule for `moneyMoving:true` skills.
+Tag `v<version>` in your skill repo, then a PR here that adds/moves the `skills/<name>`
+submodule pointer to that tag. See [§8](#8-ship-it) above and
+[CONTRIBUTING.md](CONTRIBUTING.md) for the full review process, the tag rule, the DCO
+requirement, and the two-review rule for `moneyMoving:true` skills.
 
 ## Reference
 
 - [SKILL_STANDARD.md](SKILL_STANDARD.md) — the exact rules `scripts/validate.py` enforces.
-- [CONTRIBUTING.md](CONTRIBUTING.md) — process, DCO, review rules, the yank rule.
+- [CONTRIBUTING.md](CONTRIBUTING.md) — process, the submodule/tag rule, DCO, review rules,
+  the yank rule.
 - [SECURITY.md](SECURITY.md) — reporting a vulnerability, what is in scope.
-- [CATALOG.md](CATALOG.md) — the generated table of published skills (this file stays a
-  guide, not a catalog).
-- `schema/skill-frontmatter.schema.json`, `schema/index.schema.json`,
-  `schema/reserved-names.json` — the machine-checkable contracts.
+- [CATALOG.md](CATALOG.md) — the generated table of published skills with a link to each
+  skill's repo at its pinned tag (this file stays a guide, not a catalog).
+- [`Virtual-Protocol/butler-skill-template`](https://github.com/Virtual-Protocol/butler-skill-template)
+  — the scaffold every skill repo starts from.
+- `schema/skill-frontmatter.schema.json`, `schema/index.schema.json` (each entry's
+  `source` block = repo + pinned commit + tag), `schema/reserved-names.json` — the
+  machine-checkable contracts.
+- `scripts/check_pins.py` — the CI pin rules (tag `v<version>` at the pinned commit, https
+  GitHub URL, no symlinks/nested submodules).
 - The generated in-container `bevo-hub` skill carries a two-line `## Authoring` block
   pointing back at this README, so a Butler asked "could you write a skill for X?" answers
   "skills are published through https://github.com/Virtual-Protocol/butler-skills — hand

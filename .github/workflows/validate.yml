@@ -11,9 +11,12 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
+      # Skills are git submodules pinned at a tagged commit of their own repo;
+      # every check below runs against that pinned checkout.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          submodules: recursive
 
       - uses: actions/setup-python@v5
         with:
@@ -24,18 +27,25 @@ jobs:
           node-version: "20"
 
       - name: Install viem for selector checks
-        run: |
-          mkdir -p /tmp/viem-check
-          cd /tmp/viem-check
-          npm init -y >/dev/null
-          npm i viem@2 >/dev/null
-          echo "NODE_PATH=/tmp/viem-check/node_modules" >> "$GITHUB_ENV"
+        # Installed at the repo root so scripts/check_selectors.mjs (an ES module,
+        # which ignores NODE_PATH) resolves `import "viem"` from ./node_modules.
+        run: npm i --no-save --no-audit --no-fund viem@2 >/dev/null
 
       - name: Install pytest
         run: pip install --quiet pytest
 
       - name: DCO sign-off check
-        run: python3 scripts/check_dco.py --base origin/${{ github.base_ref }} --head HEAD
+        # The PR's real head, not the synthetic merge commit actions/checkout puts at HEAD.
+        run: python3 scripts/check_dco.py --base origin/${{ github.base_ref }} --head ${{ github.event.pull_request.head.sha || 'HEAD' }}
+
+      - name: Submodule pins
+        # For every skills/<name> submodule: (a) the pinned commit carries tag
+        # v<version> of that repo (`git -C skills/<name> tag --points-at HEAD`),
+        # (b) the URL is https://github.com/<owner>/<repo>, (c) the checkout has no
+        # symlinks and no nested submodules/repositories. This is the trust
+        # boundary: what a PR pins is what Butler clones, and a later force-push to
+        # the skill repo cannot change it.
+        run: python3 scripts/check_pins.py
 
       - name: Validate all skills
         # The bevo- prefix is maintainer-only. author_association is a trusted GitHub
@@ -43,8 +53,13 @@ jobs:
         # this repo) — external, non-maintainer PRs run the strict, non-maintainer check.
         env:
           AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
+          # A branch that lives in THIS repo can only have been pushed by someone
+          # with write access — that is the maintainer signal; forks are community.
+          # author_association alone reports CONTRIBUTOR for members whose org
+          # membership is private, so it is an OR, not the sole test.
+          HEAD_IN_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
         run: |
-          if [[ "$AUTHOR_ASSOCIATION" == "OWNER" || "$AUTHOR_ASSOCIATION" == "MEMBER" || "$AUTHOR_ASSOCIATION" == "COLLABORATOR" ]]; then
+          if [[ "$HEAD_IN_REPO" == "true" || "$AUTHOR_ASSOCIATION" == "OWNER" || "$AUTHOR_ASSOCIATION" == "MEMBER" || "$AUTHOR_ASSOCIATION" == "COLLABORATOR" ]]; then
             python3 scripts/validate.py --all --maintainer
           else
             python3 scripts/validate.py --all
@@ -55,3 +70,6 @@ jobs:
 
       - name: build_index dry run
         run: python3 scripts/build_index.py --dry-run --channel canary
+
+      - name: README worked example in sync with the pinned skill
+        run: python3 scripts/sync_readme.py --check

@@ -5,11 +5,38 @@ the code is right. See [README.md](README.md) for the how-to; this is the checkl
 
 ## Layout
 
+A skill is its own git repository (start from `Virtual-Protocol/butler-skill-template`),
+with the skill files at the **repository root**:
+
 ```
-skills/<name>/SKILL.md        required
-skills/<name>/duty.py         optional (required when modes includes "duty")
-skills/<name>/CHANGELOG.md    required
+SKILL.md        required
+duty.py         optional (required when modes includes "duty")
+CHANGELOG.md    required
 ```
+
+The registry pins that repository as a git submodule at `skills/<name>`, at the commit of
+its `v<version>` tag, so inside a registry checkout the same files appear as
+`skills/<name>/SKILL.md` etc. The validator runs on either: `scripts/validate.py
+--standalone <dir>` on a skill repo checkout (name from the frontmatter), `scripts/validate.py
+skills/<name>` / `--all` on the registry's pinned submodules.
+
+### Tree rules (enforced on both sides — the container refuses a clone that breaks them)
+
+| Rule | Limit |
+| --- | --- |
+| Regular files in the tree | <= 50 (`.git` and `__pycache__` excluded) |
+| Total bytes | <= 1 MB (and the 200 KB bundle rule below) |
+| Symlinks | none, anywhere |
+| Nested repositories / submodules | none — no `.gitmodules`, no `.git` below the top level |
+
+### Pin rules (registry only — `scripts/check_pins.py`, run by CI)
+
+| Rule | Check |
+| --- | --- |
+| Submodule path | exactly `skills/<frontmatter name>` |
+| Submodule URL | `https://github.com/<owner>/<repo>` — never ssh, another host, or a local path |
+| Pinned commit | carries tag `v<version>` in the skill repo (`git -C skills/<name> tag --points-at HEAD`) |
+| Initialised | the checkout is present (`git submodule update --init --recursive`) |
 
 ## Frontmatter
 
@@ -27,9 +54,9 @@ metadata: {"openclaw":{"emoji":"🪞","requires":{"bins":["acp","bevo-read","bev
 
 | Field | Rule |
 | --- | --- |
-| `name` | `^[a-z0-9][a-z0-9-]{1,63}$`, equals the directory name, not in `schema/reserved-names.json`, `bevo-` prefix is maintainer-only |
+| `name` | `^[a-z0-9][a-z0-9-]{1,63}$`, not in `schema/reserved-names.json`, `bevo-` prefix is maintainer-only. Registry mode: equals the submodule directory name `skills/<name>`; `--standalone` mode: the pattern alone (the directory can be anything) |
 | `description` | required, <= 160 chars, no wallet addresses, no override-phrase language |
-| `version` | semver `X.Y.Z`, bumped whenever the directory changes |
+| `version` | semver `X.Y.Z`, bumped whenever the skill changes; the skill repo is tagged `v<version>` and the registry pins that tag's commit |
 | `metadata.openclaw` | only `emoji`, `homepage`, `requires.bins` allowed — no `always`, `install`, `requires.env`, `primaryEnv`, `os`, `disable-model-invocation` |
 | `metadata.bevo.tier` | `core` \| `on-demand` |
 | `metadata.bevo.modes` | subset of `["one-off","duty"]`, non-empty |
@@ -49,8 +76,9 @@ metadata: {"openclaw":{"emoji":"🪞","requires":{"bins":["acp","bevo-read","bev
 Web3 skills additionally carry a `## Contracts` section (rendered from `metadata.bevo.web3`
 so the constants cannot drift from the frontmatter).
 
-Body <= 12,000 chars total. Bundle (all files in the skill directory) <= 200 KB, no binary
-files.
+Body <= 12,000 chars total. Bundle (all files in the skill directory, `.git` and
+`__pycache__` excluded) <= 200 KB, no binary files; plus the tree rules above (<= 50
+files, <= 1 MB, no symlinks, no nested submodules).
 
 ## Params
 
@@ -104,8 +132,11 @@ subcommand list; `acp <area>` subcommands are checked against the real `acp` are
 - No URLs except `{API_BASE}` and `github.com/Virtual-Protocol` / `raw.githubusercontent.com/Virtual-Protocol` links.
 - No override-phrase language ("ignore", "override", "SOUL.md", "do not tell", a raw wallet
   address in `description`).
-- `scripts/build_index.py --dry-run` must succeed for the whole repo.
-- DCO sign-off required on every commit in the PR.
+- Every `.gitmodules` URL in the registry is an `https://github.com/<owner>/<repo>` URL
+  (`tests/test_gitmodules.py`, `scripts/check_pins.py`).
+- `scripts/build_index.py --dry-run` must succeed for the whole repo (every entry gets a
+  `source` block: repo URL, the 40-hex pinned commit, `ref: v<version>`).
+- DCO sign-off required on every commit in the registry PR.
 
 ## The Butler toolbox
 

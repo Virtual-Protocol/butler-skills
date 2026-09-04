@@ -23,12 +23,17 @@ critical.
 
 ## What is in scope
 
-- `scripts/validate.py`, `scripts/build_index.py`, `scripts/check_selectors.mjs`,
-  `scripts/new_skill.py` — the CI gate itself.
+- `scripts/validate.py`, `scripts/check_pins.py`, `scripts/build_index.py`,
+  `scripts/check_selectors.mjs`, `scripts/new_skill.py` — the CI gate itself.
 - `schema/*.json` — the frontmatter and index contracts.
 - `.github/workflows/*.yml` — the publish pipeline (GitHub Pages, tokens, permissions).
-- Any published skill under `skills/**` that could move funds without an owner approval,
-  reuse an idempotency key unsafely, or exfiltrate data via a URL not on the allowlist.
+- `.gitmodules` and the `skills/<name>` pins — the trust boundary. Butler clones the pinned
+  commit, so a way to make the registry pin a commit that was not reviewed (a non-https
+  URL, a pin that does not carry its `v<version>` tag, a symlink or nested submodule that
+  smuggles content past the validator) is a security bug here, not in the skill repo.
+- Any published skill pinned under `skills/**` that could move funds without an owner
+  approval, reuse an idempotency key unsafely, or exfiltrate data via a URL not on the
+  allowlist.
 
 ## What is out of scope
 

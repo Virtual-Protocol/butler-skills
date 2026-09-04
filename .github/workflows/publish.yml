@@ -19,9 +19,12 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      # Skills are git submodules pinned at a tagged commit of their own repo;
+      # the index (files[] + sha256 + source.commit) is built from that checkout.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          submodules: recursive
 
       - uses: actions/setup-python@v5
         with:
@@ -33,6 +36,8 @@ jobs:
       # build_index.py refuses to overwrite a published version dir with
       # different bytes, so a skill changed without a version bump fails here
       # instead of silently republishing 1.0.0 with new content.
+      # The tag's tree carries its own .gitmodules pointers, so the worktree
+      # needs its own `git submodule update --init --recursive` before building.
       - name: Build stable (latest v* tag)
         run: |
           set -eu
@@ -43,7 +48,7 @@ jobs:
             exit 0
           fi
           git worktree add /tmp/stable "$TAG"
-          ( cd /tmp/stable && python3 scripts/build_index.py --channel stable --repo-tag "$TAG" )
+          ( cd /tmp/stable && git submodule update --init --recursive && python3 scripts/build_index.py --channel stable --repo-tag "$TAG" )
           mkdir -p dist
           cp -R /tmp/stable/dist/. dist/
           echo "stable = $TAG"

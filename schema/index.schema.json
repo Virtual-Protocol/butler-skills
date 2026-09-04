@@ -46,6 +46,17 @@
             }
           },
           "yanked": { "type": "boolean" },
+          "source": {
+            "type": "object",
+            "description": "Additive (git-backed registry): the skill's own repository and the exact commit butler-skills pins it at — a submodule at the commit of tag `ref`. Git-aware clients clone `commit`; v1 clients ignore this and install from files[].",
+            "additionalProperties": false,
+            "required": ["repo", "commit", "ref"],
+            "properties": {
+              "repo": { "type": "string", "pattern": "^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+              "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+              "ref": { "type": "string", "pattern": "^v\\d+\\.\\d+\\.\\d+$" }
+            }
+          },
           "files": {
             "type": "array",
             "items": {

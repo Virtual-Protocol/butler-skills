@@ -2,10 +2,22 @@
 """validate.py — the butler-skills CI validator.
 
 Usage:
-    scripts/validate.py skills/<name> [skills/<name> ...]
-    scripts/validate.py --all
+    scripts/validate.py skills/<name> [skills/<name> ...]   # registry mode
+    scripts/validate.py --all                               # every submodule in .gitmodules
     scripts/validate.py --all --maintainer      # allow the bevo- prefix / reserved-adjacent names
     scripts/validate.py skills/<name> --json     # machine-readable output
+    scripts/validate.py --standalone <dir>       # any directory holding one skill (a skill repo)
+
+Two modes:
+
+  registry (default) — the directory is `skills/<name>` inside this repo, i.e. a
+  git submodule pinned by .gitmodules. The frontmatter `name` must equal the
+  directory name and the submodule URL must be an https://github.com/ URL.
+
+  --standalone — the directory is a skill repository (created from
+  Virtual-Protocol/butler-skill-template) checked out anywhere. The name comes
+  from the frontmatter alone (it only has to be a valid skill name); every other
+  rule is identical, so a skill that passes here passes the registry PR.
 
 Python 3.11 stdlib only. No network access. Exits 1 on any failing check and
 prints one field-by-field message per failure. This script is the source of
@@ -28,10 +40,21 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SKILLS_DIR = REPO_ROOT / "skills"
 SCHEMA_PATH = REPO_ROOT / "schema" / "skill-frontmatter.schema.json"
 RESERVED_PATH = REPO_ROOT / "schema" / "reserved-names.json"
+GITMODULES_PATH = REPO_ROOT / ".gitmodules"
 
 MAX_DESCRIPTION = 160
 MAX_BODY_CHARS = 12000
 MAX_BUNDLE_BYTES = 200 * 1024
+
+# Tree rules, mirrored by the container's git clone path (bevo-hub refuses a
+# checkout that breaks any of these before copying a single file).
+MAX_TREE_FILES = 50
+MAX_TREE_BYTES = 1024 * 1024
+# Never part of a skill's tree: the submodule gitlink / an author's .git dir,
+# and local bytecode caches.
+TREE_SKIP_NAMES = {".git", "__pycache__"}
+
+SUBMODULE_URL_RE = re.compile(r"^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?(?:\.git)?/?$")
 
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,63}$")
 PARAM_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
@@ -296,9 +319,118 @@ def validate_schema(fm: dict, issues: Issues) -> None:
 
 
 def check_name_matches_dir(fm: dict, skill_dir: Path, issues: Issues) -> None:
+    """Registry mode only: the submodule is mounted at skills/<name>, so the
+    directory name is the name Butler installs the skill under and must equal
+    the frontmatter. In --standalone mode the directory is whatever the author
+    cloned their repo as, so only the frontmatter pattern (validate_schema) applies."""
     name = fm.get("name")
     if name and name != skill_dir.name:
         issues.error("name", f"frontmatter name {name!r} must equal directory name {skill_dir.name!r}")
+
+
+def parse_gitmodules(path: Path | None = None) -> dict[str, dict]:
+    """Minimal .gitmodules reader: returns {path: {"name": ..., "url": ...}}.
+    Deliberately not configparser (it treats git's indented keys as
+    continuation lines) and not `git config` (keeps this script git-free)."""
+    path = GITMODULES_PATH if path is None else path
+    entries: dict[str, dict] = {}
+    if not path.exists():
+        return entries
+    current: dict | None = None
+    for raw in path.read_text().splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or line.startswith(";"):
+            continue
+        m = re.match(r'^\[submodule\s+"(.+)"\]$', line)
+        if m:
+            current = {"name": m.group(1)}
+            continue
+        m = re.match(r"^([A-Za-z][A-Za-z0-9-]*)\s*=\s*(.*)$", line)
+        if m and current is not None:
+            current[m.group(1)] = m.group(2).strip()
+            if m.group(1) == "path":
+                entries[current["path"]] = current
+    return entries
+
+
+def check_registry_pin(skill_dir: Path, issues: Issues) -> None:
+    """Registry mode: skills/<name> must be a submodule declared in .gitmodules
+    with an https://github.com/ URL, and must be initialised (SKILL.md present is
+    checked by the caller). A plain directory under skills/ is refused — the
+    registry pins git repos, it no longer vendors files."""
+    try:
+        rel = skill_dir.resolve().relative_to(SKILLS_DIR.resolve())
+    except ValueError:
+        return  # not under skills/ (fixtures, tmp dirs) — nothing to pin
+    rel_path = f"skills/{rel.as_posix()}"
+    entry = parse_gitmodules().get(rel_path)
+    if entry is None:
+        issues.error("submodule", f"{rel_path} is not declared in .gitmodules — registry skills are git submodules (README §8)")
+        return
+    url = entry.get("url", "")
+    if not SUBMODULE_URL_RE.match(url):
+        issues.error("submodule", f"{rel_path} url {url!r} must be an https://github.com/<owner>/<repo> URL")
+    if not (skill_dir / ".git").exists():
+        issues.error("submodule", f"{rel_path} is not initialised — run `git submodule update --init --recursive`")
+
+
+def iter_tree(skill_dir: Path):
+    """Yield (path, relative-posix-path) for every entry below skill_dir,
+    skipping TREE_SKIP_NAMES at the top level only. Symlinks are yielded (not
+    followed) so check_tree can refuse them; nested .git entries are yielded so
+    it can refuse nested repositories."""
+    for root, dirs, files in os.walk(skill_dir, followlinks=False):
+        root_path = Path(root)
+        top = root_path == skill_dir
+        keep: list[str] = []
+        for d in dirs:
+            p = root_path / d
+            if top and d in TREE_SKIP_NAMES:
+                continue  # the submodule gitlink / author's .git, local caches
+            if d == "__pycache__":
+                continue
+            if p.is_symlink():
+                # os.walk lists a symlink-to-dir under dirs but never descends
+                # (followlinks=False); surface it so the symlink rule can refuse it.
+                yield p, p.relative_to(skill_dir).as_posix()
+                continue
+            if d == ".git":
+                # nested repository: surface it, never walk into it
+                yield p, p.relative_to(skill_dir).as_posix()
+                continue
+            keep.append(d)
+        dirs[:] = keep
+        for f in files:
+            if top and f in TREE_SKIP_NAMES:
+                continue
+            p = root_path / f
+            yield p, p.relative_to(skill_dir).as_posix()
+
+
+def check_tree(skill_dir: Path, issues: Issues) -> None:
+    """The tree rules the container also enforces on clone: no symlinks, no
+    nested repositories/submodules, at most MAX_TREE_FILES regular files and
+    MAX_TREE_BYTES in total."""
+    count = 0
+    total = 0
+    for p, rel in iter_tree(skill_dir):
+        if p.is_symlink():
+            issues.error("tree", f"symlink not allowed: {rel}")
+            continue
+        base = p.name
+        if base == ".gitmodules":
+            issues.error("tree", f"nested submodules not allowed: {rel}")
+            continue
+        if base == ".git":
+            issues.error("tree", f"nested git repository not allowed: {rel}")
+            continue
+        if p.is_file():
+            count += 1
+            total += p.stat().st_size
+    if count > MAX_TREE_FILES:
+        issues.error("tree", f"{count} files, must be <= {MAX_TREE_FILES}")
+    if total > MAX_TREE_BYTES:
+        issues.error("tree", f"{total} bytes in total, must be <= {MAX_TREE_BYTES}")
 
 
 def check_reserved(fm: dict, reserved: set[str], maintainer: bool, issues: Issues) -> None:
@@ -459,11 +591,11 @@ def check_numbered_steps(body: str, moneymoving: bool, issues: Issues) -> None:
 
 def check_bundle_size(skill_dir: Path, issues: Issues) -> None:
     total = 0
-    for f in skill_dir.rglob("*"):
-        if f.is_file():
+    for f, rel in iter_tree(skill_dir):
+        if f.is_file() and not f.is_symlink():
             total += f.stat().st_size
             if f.suffix in (".png", ".jpg", ".jpeg", ".gif", ".zip", ".tar", ".exe", ".bin", ".so", ".dylib"):
-                issues.error("no-binaries", f"binary file not allowed: {f}")
+                issues.error("no-binaries", f"binary file not allowed: {rel}")
     if total > MAX_BUNDLE_BYTES:
         issues.error("bundle-size", f"bundle is {total} bytes, must be <= {MAX_BUNDLE_BYTES}")
 
@@ -637,11 +769,19 @@ def check_changelog(skill_dir: Path, issues: Issues) -> None:
         issues.error("CHANGELOG.md", "missing")
 
 
-def validate_skill(skill_dir: Path, reserved: set[str], maintainer: bool, json_mode: bool) -> tuple[bool, dict]:
+def validate_skill(
+    skill_dir: Path, reserved: set[str], maintainer: bool, json_mode: bool, standalone: bool = False
+) -> tuple[bool, dict]:
+    """Validate one skill directory. `standalone=True` is the skill-repo mode:
+    the name is taken from the frontmatter and nothing is assumed about where
+    the directory sits; otherwise the directory is a registry submodule at
+    skills/<name>."""
     issues = Issues()
     skill_md = skill_dir / "SKILL.md"
     if not skill_md.exists():
         issues.error("SKILL.md", "missing")
+        if not standalone:
+            check_registry_pin(skill_dir, issues)
         return False, {"skill": skill_dir.name, "errors": issues.errors, "warnings": issues.warnings}
 
     text = skill_md.read_text()
@@ -650,10 +790,16 @@ def validate_skill(skill_dir: Path, reserved: set[str], maintainer: bool, json_m
         return False, {"skill": skill_dir.name, "errors": issues.errors, "warnings": issues.warnings}
 
     body = fm.get("_body", "")
+    skill_name = fm.get("name") or skill_dir.name
 
     validate_schema(fm, issues)
-    check_name_matches_dir(fm, skill_dir, issues)
+    if not standalone:
+        # --standalone: the name only has to be a valid skill name (validate_schema);
+        # the registry PR is what mounts it at skills/<name>.
+        check_name_matches_dir(fm, skill_dir, issues)
+        check_registry_pin(skill_dir, issues)
     check_reserved(fm, reserved, maintainer, issues)
+    check_tree(skill_dir, issues)
 
     if len(body) > MAX_BODY_CHARS:
         issues.error("body", f"body is {len(body)} chars, must be <= {MAX_BODY_CHARS}")
@@ -680,16 +826,30 @@ def validate_skill(skill_dir: Path, reserved: set[str], maintainer: bool, json_m
     if "TODO" in text:
         issues.error("scaffold", "unresolved TODO placeholder found (scaffold not filled in)")
 
-    cost = prompt_cost(fm.get("name", ""), fm.get("description", ""), f"skills/{skill_dir.name}/SKILL.md")
+    cost = prompt_cost(fm.get("name", ""), fm.get("description", ""), f"skills/{skill_name}/SKILL.md")
     if not json_mode:
         print(f"  prompt cost (~97 + name + description + path): {cost} chars")
 
     return issues.ok, {
-        "skill": skill_dir.name,
+        "skill": skill_name if standalone else skill_dir.name,
         "errors": issues.errors,
         "warnings": issues.warnings,
         "promptCost": cost,
     }
+
+
+def registry_skill_dirs() -> list[Path]:
+    """Every skills/<name> submodule declared in .gitmodules, sorted. A plain
+    directory under skills/ that is not a submodule is returned too so that
+    validate_skill can refuse it (check_registry_pin) instead of silently
+    skipping a vendored skill."""
+    declared = [Path(p) for p in parse_gitmodules() if p.startswith("skills/")]
+    dirs = {REPO_ROOT / p for p in declared}
+    if SKILLS_DIR.exists():
+        for d in SKILLS_DIR.iterdir():
+            if d.is_dir() and not d.name.startswith(".") and d.name != "__pycache__":
+                dirs.add(d)
+    return sorted(dirs)
 
 
 def load_reserved() -> set[str]:
@@ -699,32 +859,38 @@ def load_reserved() -> set[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate one or more butler-skills skill directories.")
-    parser.add_argument("skills", nargs="*", help="skills/<name> paths to validate")
-    parser.add_argument("--all", action="store_true", help="validate every skill under skills/ (excluding _template)")
+    parser.add_argument("skills", nargs="*", help="skills/<name> paths (registry mode) or any skill directory (--standalone)")
+    parser.add_argument("--all", action="store_true", help="validate every skills/<name> submodule declared in .gitmodules")
+    parser.add_argument(
+        "--standalone",
+        action="store_true",
+        help="treat each path as a skill repository checkout: the name comes from the frontmatter, not the directory",
+    )
     parser.add_argument("--maintainer", action="store_true", help="allow the bevo- prefix and reserved-adjacent names")
     parser.add_argument("--json", action="store_true", help="print machine-readable JSON output")
     args = parser.parse_args()
+
+    if args.all and args.standalone:
+        parser.error("--all is registry mode; it cannot be combined with --standalone")
 
     maintainer = args.maintainer or os.environ.get("MAINTAINER") == "1"
     reserved = load_reserved()
 
     targets: list[Path] = []
     if args.all:
-        for d in sorted(SKILLS_DIR.iterdir()):
-            if d.is_dir() and d.name != "_template" and (d / "SKILL.md").exists():
-                targets.append(d)
+        targets.extend(registry_skill_dirs())
     for s in args.skills:
         targets.append(Path(s).resolve())
 
     if not targets:
-        parser.error("no skills given; pass a path or --all")
+        parser.error("no skills given; pass a path, --standalone <dir>, or --all")
 
     results = []
     all_ok = True
     for t in targets:
         if not args.json:
             print(f"validating {t.relative_to(REPO_ROOT) if t.is_relative_to(REPO_ROOT) else t} ...")
-        ok, result = validate_skill(t, reserved, maintainer, args.json)
+        ok, result = validate_skill(t, reserved, maintainer, args.json, standalone=args.standalone)
         all_ok = all_ok and ok
         results.append(result)
         if not args.json:
