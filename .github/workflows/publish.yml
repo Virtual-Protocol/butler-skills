@@ -56,6 +56,14 @@ jobs:
       - name: Build canary (this commit)
         run: python3 scripts/build_index.py --channel canary --repo-tag "main-${{ github.sha }}"
 
+      # The standalone developer tools, served next to the channels so a skill repo never
+      # has to clone this registry to validate:
+      #   tools/validate.py, tools/replay.py, tools/stub_bevo.py, tools/check_selectors.mjs,
+      #   tools/fixtures/<every file under tests/fixtures/>
+      # replay.py downloads stub_bevo.py + fixtures from here when they are not beside it.
+      - name: Publish the standalone tools
+        run: python3 scripts/publish_tools.py
+
       - uses: actions/configure-pages@v5
 
       - uses: actions/upload-pages-artifact@v3

@@ -4,9 +4,21 @@
 Usage:
     scripts/validate.py skills/<name> [skills/<name> ...]   # registry mode
     scripts/validate.py --all                               # every submodule in .gitmodules
-    scripts/validate.py --all --maintainer      # allow the bevo- prefix / reserved-adjacent names
+    scripts/validate.py --all --maintainer      # allow the butler- prefix / reserved-adjacent names
     scripts/validate.py skills/<name> --json     # machine-readable output
     scripts/validate.py --standalone <dir>       # any directory holding one skill (a skill repo)
+
+Standalone copy (no registry checkout needed — publish.yml puts this exact file on the
+Pages site; a skill author runs it from their own repo):
+
+    curl -sSLO https://virtual-protocol.github.io/butler-skills/tools/validate.py
+    python3 validate.py --standalone .
+
+This file is therefore a single-file tool: Python 3.11 stdlib only, no imports from the
+other scripts, and the reserved-name list is embedded (schema/reserved-names.json is read
+when it exists next to a registry checkout; tests assert the two agree). Selector
+recomputation uses check_selectors.mjs + viem when both are resolvable next to this file
+(or under scripts/ in a registry checkout) and degrades to a warning otherwise.
 
 Two modes:
 
@@ -55,6 +67,33 @@ MAX_TREE_BYTES = 1024 * 1024
 TREE_SKIP_NAMES = {".git", "__pycache__"}
 
 SUBMODULE_URL_RE = re.compile(r"^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?(?:\.git)?/?$")
+
+# Name prefixes. `butler-` is the Butler team's namespace for skills published through
+# this hub (maintainer-only: --maintainer / MAINTAINER=1). `bevo-` is the container's
+# own bundled-skill namespace (bevo-hub, bevo-onchain, bevo-automation-creator, ... are
+# written by the entrypoint every boot) and is refused outright — a hub skill with that
+# prefix would collide with, or masquerade as, a bundled one.
+MAINTAINER_PREFIX = "butler-"
+CONTAINER_PREFIX = "bevo-"
+
+# Mirror of schema/reserved-names.json (the source of truth in a registry checkout),
+# embedded so the standalone copy of this file needs nothing beside it.
+# tests/test_validate.py fails if the two drift.
+RESERVED_NAMES_BUILTIN = frozenset({
+    "bevo-onchain",
+    "bevo-automation-creator",
+    "web-checkout",
+    "bevo-skill-creator",
+    "bevo-service-creator",
+    "openclaw-acp",
+    "acp-cli",
+    "bevo-hub",
+    "clawhub",
+})
+
+# Hub tooling a skill author downloads next to SKILL.md to validate locally; it must never
+# be committed into the skill (the template's .gitignore lists it) — warn when seen.
+TOOLING_FILES = ("validate.py", "replay.py", "stub_bevo.py", "check_selectors.mjs")
 
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,63}$")
 PARAM_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
@@ -431,6 +470,9 @@ def check_tree(skill_dir: Path, issues: Issues) -> None:
         issues.error("tree", f"{count} files, must be <= {MAX_TREE_FILES}")
     if total > MAX_TREE_BYTES:
         issues.error("tree", f"{total} bytes in total, must be <= {MAX_TREE_BYTES}")
+    for tool in TOOLING_FILES:
+        if (skill_dir / tool).is_file():
+            issues.warn("tree", f"{tool} looks like downloaded hub tooling — keep it out of the commit (the template's .gitignore lists it)")
 
 
 def check_reserved(fm: dict, reserved: set[str], maintainer: bool, issues: Issues) -> None:
@@ -439,8 +481,18 @@ def check_reserved(fm: dict, reserved: set[str], maintainer: bool, issues: Issue
         return
     if name in reserved:
         issues.error("name", f"{name!r} is reserved (schema/reserved-names.json)")
-    if name.startswith("bevo-") and not maintainer:
-        issues.error("name", f"{name!r} uses the maintainer-only 'bevo-' prefix; pass --maintainer or set MAINTAINER=1 to publish it")
+    if name.startswith(CONTAINER_PREFIX):
+        issues.error(
+            "name",
+            f"{name!r} uses the '{CONTAINER_PREFIX}' prefix, which is the container's bundled-skill namespace "
+            "(bevo-hub, bevo-onchain, bevo-automation-creator, ...) — hub skills may never use it; "
+            f"team skills use '{MAINTAINER_PREFIX}'",
+        )
+    elif name.startswith(MAINTAINER_PREFIX) and not maintainer:
+        issues.error(
+            "name",
+            f"{name!r} uses the maintainer-only '{MAINTAINER_PREFIX}' prefix; pass --maintainer or set MAINTAINER=1 to publish it",
+        )
 
 
 def check_secrets_and_urls(full_text: str, issues: Issues) -> None:
@@ -700,10 +752,18 @@ def check_web3(fm: dict, body: str, money_lines: list[str], issues: Issues) -> N
     bevo = fm.get("metadata", {}).get("bevo", {}) if isinstance(fm.get("metadata"), dict) else {}
     has_send_tx = any("send-transaction" in line or "bevo.execute" in line for line in money_lines) or "send-transaction" in body or "bevo.execute(" in body
     web3 = bevo.get("web3")
-    if has_send_tx and not web3:
-        issues.error("web3", "skill files send-transaction / bevo.execute but declares no metadata.bevo.web3 block")
-    if web3:
-        for contract in web3.get("contracts", []):
+    if has_send_tx and not isinstance(web3, dict):
+        issues.error(
+            "web3",
+            "skill files send-transaction / bevo.execute but declares no metadata.bevo.web3 block "
+            '(a generic skill that takes the contract as a param declares {"chains":[...],"contracts":[]})',
+        )
+    if isinstance(web3, dict):
+        contracts = web3.get("contracts") or []
+        if not isinstance(contracts, list):
+            issues.error("web3", "metadata.bevo.web3.contracts must be an array")
+            contracts = []
+        for contract in contracts:
             addr = contract.get("address", "")
             if not (addr.startswith("{{") or re.match(r"^0x[0-9a-fA-F]{40}$", addr)):
                 issues.error("web3", f"contract {contract.get('name')!r} address {addr!r} is not a checksummed 0x40 address or a {{PARAM}} placeholder")
@@ -714,8 +774,8 @@ def check_web3(fm: dict, body: str, money_lines: list[str], issues: Issues) -> N
                     issues.error("web3", f"selector for {sig!r} is {sel!r}, recomputed {recomputed!r}")
                 elif recomputed is None:
                     issues.warn("web3", f"could not recompute selector for {sig!r} (node/viem unavailable) — trust but verify")
-        if "## Contracts" not in body:
-            issues.error("web3", "web3 skill must include a '## Contracts' section")
+        if contracts and "## Contracts" not in body:
+            issues.error("web3", "a web3 skill that lists contracts must include a '## Contracts' section (rendered from them)")
     if "http_poll" in body and re.search(r"bevo-rpc|eth_call|eth_getBalance", body) and "GET only" not in body:
         issues.warn("web3", "if this skill pairs http_poll with an RPC read, note that http_poll is GET-only and cannot hit a node")
     for line in extract_shell_lines(body):
@@ -728,8 +788,19 @@ def check_web3(fm: dict, body: str, money_lines: list[str], issues: Issues) -> N
 _SELECTOR_CACHE: dict[str, str | None] = {}
 
 
+def selector_script() -> Path | None:
+    """check_selectors.mjs next to this file (the published standalone layout,
+    tools/{validate.py,check_selectors.mjs}) or under scripts/ in a registry
+    checkout. `viem` must be resolvable from the script's own directory upward
+    (ESM resolution ignores cwd): `npm i viem@2` beside it."""
+    for candidate in (Path(__file__).resolve().parent / "check_selectors.mjs", REPO_ROOT / "scripts" / "check_selectors.mjs"):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def recompute_selector(signature: str) -> str | None:
-    """Best-effort selector recomputation via scripts/check_selectors.mjs + viem.
+    """Best-effort selector recomputation via check_selectors.mjs + viem.
     Returns None (never fails the build) when node/viem is unavailable."""
     if signature in _SELECTOR_CACHE:
         return _SELECTOR_CACHE[signature]
@@ -737,14 +808,14 @@ def recompute_selector(signature: str) -> str | None:
     if not node:
         _SELECTOR_CACHE[signature] = None
         return None
-    script = REPO_ROOT / "scripts" / "check_selectors.mjs"
-    if not script.exists():
+    script = selector_script()
+    if script is None:
         _SELECTOR_CACHE[signature] = None
         return None
     try:
         out = subprocess.run(
             [node, str(script), "--signature", signature],
-            capture_output=True, text=True, timeout=10, cwd=str(REPO_ROOT),
+            capture_output=True, text=True, timeout=10, cwd=str(script.parent),
         )
         if out.returncode == 0:
             sel = out.stdout.strip().splitlines()[-1].strip()
@@ -853,8 +924,12 @@ def registry_skill_dirs() -> list[Path]:
 
 
 def load_reserved() -> set[str]:
-    data = json.loads(RESERVED_PATH.read_text())
-    return set(data.get("reserved", []))
+    """schema/reserved-names.json when this file runs from a registry checkout,
+    otherwise (the standalone copy) the embedded mirror."""
+    if RESERVED_PATH.exists():
+        data = json.loads(RESERVED_PATH.read_text())
+        return set(data.get("reserved", []))
+    return set(RESERVED_NAMES_BUILTIN)
 
 
 def main() -> int:
@@ -866,7 +941,7 @@ def main() -> int:
         action="store_true",
         help="treat each path as a skill repository checkout: the name comes from the frontmatter, not the directory",
     )
-    parser.add_argument("--maintainer", action="store_true", help="allow the bevo- prefix and reserved-adjacent names")
+    parser.add_argument("--maintainer", action="store_true", help="allow the maintainer-only butler- prefix (bevo- is always refused)")
     parser.add_argument("--json", action="store_true", help="print machine-readable JSON output")
     args = parser.parse_args()
 

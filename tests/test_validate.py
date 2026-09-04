@@ -82,11 +82,11 @@ def test_unmarked_step_fails():
 
 
 def test_reserved_name_rejected(tmp_path):
-    reserved = {"bevo-onchain"}
-    skill_dir = tmp_path / "bevo-onchain"
+    reserved = {"web-checkout"}
+    skill_dir = tmp_path / "web-checkout"
     skill_dir.mkdir()
     (skill_dir / "SKILL.md").write_text(
-        '---\nname: bevo-onchain\ndescription: x\nversion: 1.0.0\n'
+        '---\nname: web-checkout\ndescription: x\nversion: 1.0.0\n'
         'metadata: {"bevo":{"tier":"on-demand","modes":["one-off"],"moneyMoving":false}}\n---\n\n'
         "## When to use\nx\n## Before you start\nx\n## Customize\nx\n"
         "## One-off procedure\n1. [FIXED] x\n## Failure handling\n|a|b|\n|-|-|\n## Limits\nx\n"
@@ -98,22 +98,97 @@ def test_reserved_name_rejected(tmp_path):
     assert any("reserved" in e for e in result["errors"])
 
 
-def test_bevo_prefix_requires_maintainer(tmp_path):
+def test_butler_prefix_requires_maintainer(tmp_path):
     reserved: set[str] = set()
+    skill_dir = tmp_path / "butler-new-thing"
+    _write_minimal_skill(skill_dir, "butler-new-thing")
+    ok, result = validate.validate_skill(skill_dir, reserved, maintainer=False, json_mode=True)
+    assert not ok
+    assert any("maintainer-only 'butler-' prefix" in e for e in result["errors"])
+    ok2, _ = validate.validate_skill(skill_dir, reserved, maintainer=True, json_mode=True)
+    assert ok2
+
+
+def test_bevo_prefix_is_refused_even_for_maintainers(tmp_path):
+    # bevo-* is the container's bundled-skill namespace (bevo-hub, bevo-onchain, ...).
     skill_dir = tmp_path / "bevo-new-thing"
-    skill_dir.mkdir()
+    _write_minimal_skill(skill_dir, "bevo-new-thing")
+    for maintainer in (False, True):
+        ok, result = validate.validate_skill(skill_dir, set(), maintainer=maintainer, json_mode=True)
+        assert not ok
+        assert any(e.startswith("name:") and "bundled-skill namespace" in e for e in result["errors"]), result["errors"]
+        assert not any("maintainer-only" in e for e in result["errors"])
+
+
+def test_embedded_reserved_list_matches_schema_json():
+    # validate.py is published as a single standalone file, so it carries a mirror of
+    # schema/reserved-names.json; this is the only thing keeping the two in sync.
+    import json
+
+    on_disk = set(json.loads((REPO_ROOT / "schema" / "reserved-names.json").read_text())["reserved"])
+    assert set(validate.RESERVED_NAMES_BUILTIN) == on_disk
+    assert validate.load_reserved() == on_disk
+
+
+def test_load_reserved_falls_back_to_embedded_list_without_schema_dir(tmp_path, monkeypatch):
+    monkeypatch.setattr(validate, "RESERVED_PATH", tmp_path / "does-not-exist.json")
+    assert validate.load_reserved() == set(validate.RESERVED_NAMES_BUILTIN)
+
+
+def _write_web3_skill(skill_dir: Path, contracts_json: str, with_contracts_section: bool) -> None:
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    section = "## Contracts\n|a|b|\n|-|-|\n" if with_contracts_section else ""
     (skill_dir / "SKILL.md").write_text(
-        '---\nname: bevo-new-thing\ndescription: x\nversion: 1.0.0\n'
-        'metadata: {"bevo":{"tier":"on-demand","modes":["one-off"],"moneyMoving":false}}\n---\n\n'
-        "## When to use\nx\n## Before you start\nx\n## Customize\nx\n"
-        "## One-off procedure\n1. [FIXED] x\n## Failure handling\n|a|b|\n|-|-|\n## Limits\nx\n"
+        "---\nname: foo\ndescription: x\nversion: 1.0.0\n"
+        'metadata: {"bevo":{"tier":"on-demand","modes":["one-off"],"moneyMoving":true,'
+        '"web3":{"chains":[8453],"contracts":' + contracts_json + "}}}\n---\n\n"
+        "## When to use\nx\n## Before you start\nx\n## Customize\nx\n" + section +
+        "## One-off procedure\n1. [FIXED] x\n\n   ```bash\n   acp wallet send-transaction --chain-id 8453 --to 0x --data 0x --idempotency-key k\n   ```\n\n"
+        "## Idempotency and retries\ndo not re-run\n## Failure handling\n|a|b|\n|-|-|\n## Limits\nx\n"
         "## Say to the owner\nx\n"
     )
     (skill_dir / "CHANGELOG.md").write_text("# Changelog\n")
-    ok, _ = validate.validate_skill(skill_dir, reserved, maintainer=False, json_mode=True)
+
+
+def test_web3_skill_with_empty_contracts_needs_no_contracts_section(tmp_path):
+    # A generic contract-call skill takes the contract as a param: contracts: [] is fine.
+    skill_dir = tmp_path / "foo"
+    _write_web3_skill(skill_dir, "[]", with_contracts_section=False)
+    ok, result = validate.validate_skill(skill_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    assert ok, result["errors"]
+
+
+def test_web3_skill_with_listed_contracts_still_needs_contracts_section(tmp_path):
+    skill_dir = tmp_path / "foo"
+    contracts = '[{"name":"USDC","chainId":8453,"address":"0x833589fCD6eDb6e08f4c7C32D4f71b54bdA02913","functions":[]}]'
+    _write_web3_skill(skill_dir, contracts, with_contracts_section=False)
+    ok, result = validate.validate_skill(skill_dir, set(), maintainer=False, json_mode=True, standalone=True)
     assert not ok
-    ok2, _ = validate.validate_skill(skill_dir, reserved, maintainer=True, json_mode=True)
-    assert ok2
+    assert any(e.startswith("web3:") and "## Contracts" in e for e in result["errors"])
+    _write_web3_skill(skill_dir, contracts, with_contracts_section=True)
+    ok2, result2 = validate.validate_skill(skill_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    assert ok2, result2["errors"]
+
+
+def test_send_transaction_without_any_web3_block_is_still_refused(tmp_path):
+    skill_dir = tmp_path / "foo"
+    _write_web3_skill(skill_dir, "[]", with_contracts_section=False)
+    text = (skill_dir / "SKILL.md").read_text().replace(',"web3":{"chains":[8453],"contracts":[]}', "")
+    (skill_dir / "SKILL.md").write_text(text)
+    ok, result = validate.validate_skill(skill_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    assert not ok
+    assert any(e.startswith("web3:") and "declares no metadata.bevo.web3 block" in e for e in result["errors"])
+
+
+def test_downloaded_tooling_in_the_tree_is_a_warning_not_an_error(tmp_path):
+    skill_dir = tmp_path / "foo"
+    _write_minimal_skill(skill_dir, "foo")
+    (skill_dir / "validate.py").write_text("# downloaded\n")
+    (skill_dir / "replay.py").write_text("# downloaded\n")
+    ok, result = validate.validate_skill(skill_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    assert ok, result["errors"]
+    assert any("validate.py looks like downloaded hub tooling" in w for w in result["warnings"])
+    assert any("replay.py looks like downloaded hub tooling" in w for w in result["warnings"])
 
 
 # --- git-backed registry: --standalone mode, tree rules, pin rules -----------------

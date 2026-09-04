@@ -23,6 +23,7 @@ checks. If the two ever disagree, the validator is right and `SKILL_STANDARD.md`
 | Community skills | the author's own GitHub repo |
 | The pin | this repo: `.gitmodules` + the `skills/<name>` gitlink, always at a tagged commit |
 | The published index | GitHub Pages, built by `scripts/build_index.py` from the pinned checkouts |
+| The standalone tools (`validate.py`, `replay.py`, `stub_bevo.py`, `check_selectors.mjs`, fixtures) | GitHub Pages `tools/`, laid out by `scripts/publish_tools.py`; skill-repo CI is the composite action `.github/actions/validate` |
 
 Nothing under `skills/` is ever edited in a PR to this repo — a change to a skill is a
 commit and a tag in the skill repo, then a PR here that moves the pointer.
@@ -55,16 +56,21 @@ commit and a tag in the skill repo, then a PR here that moves the pointer.
 
 ## Before you open a PR
 
-In your skill repo (the template's CI runs exactly these):
+In your skill repo — no registry checkout; the hub publishes its validator and replay
+harness as standalone files, and the template's CI runs the same two checks through
+`uses: Virtual-Protocol/butler-skills/.github/actions/validate@main`:
 
 ```bash
-git clone --depth 1 https://github.com/Virtual-Protocol/butler-skills /tmp/butler-skills
-python3 /tmp/butler-skills/scripts/validate.py --standalone .
-python3 /tmp/butler-skills/tests/replay.py --standalone . --fixture trade-activity-page
+curl -sSLO https://virtual-protocol.github.io/butler-skills/tools/validate.py
+curl -sSLO https://virtual-protocol.github.io/butler-skills/tools/replay.py
+python3 validate.py --standalone .
+python3 replay.py --standalone . --fixture trade-activity-page
 ```
 
-Both must exit 0 with no infrastructure and no Bevo account — see README.md §7 for what
-each checks. Then tag: `git tag v<version> && git push origin main --tags`.
+Both must exit 0 with no infrastructure and no Butler account — see README.md §7 for what
+each checks (`replay.py` fetches `stub_bevo.py` and fixtures from the same site when they
+are not beside it; keep the downloaded files out of the commit). Then tag:
+`git tag v<version> && git push origin main --tags`.
 
 In your fork of this registry:
 
@@ -74,7 +80,7 @@ git -C skills/<name> fetch --tags && git -C skills/<name> checkout v<version>   
 git add .gitmodules skills/<name>
 git commit -s -m "skills: <name> <version>"
 python3 scripts/check_pins.py            # the pin rules CI will run
-python3 scripts/validate.py --all        # add --maintainer for a bevo- skill
+python3 scripts/validate.py --all        # add --maintainer for a butler- skill (bevo- is refused)
 python3 -m pytest tests -q               # the full local suite
 ```
 

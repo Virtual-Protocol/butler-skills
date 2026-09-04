@@ -1,5 +1,5 @@
 {
-  "_comment": "Names a skill directory may never use. The bevo- prefix itself is maintainer-only (pass --maintainer to scripts/validate.py or set MAINTAINER=1 to publish one); everything listed here is an entrypoint-written or bundled dir name that a hub-installed skill would collide with.",
+  "_comment": "Names a skill may never use. Two prefix rules live in scripts/validate.py: `butler-` is the Butler team's namespace and is maintainer-only (pass --maintainer or set MAINTAINER=1 to publish one); `bevo-` is the container's own bundled-skill namespace (bevo-hub, bevo-onchain, bevo-automation-creator, ... are written by the entrypoint every boot) and is refused outright. Everything listed here is an entrypoint-written or bundled dir name a hub-installed skill would collide with; scripts/validate.py embeds a mirror of this list so its standalone copy needs nothing beside it (tests/test_validate.py asserts they agree).",
   "reserved": [
     "bevo-onchain",
     "bevo-automation-creator",

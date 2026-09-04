@@ -1,6 +1,6 @@
-[submodule "skills/bevo-copytrade"]
-	path = skills/bevo-copytrade
+[submodule "skills/butler-copytrade"]
+	path = skills/butler-copytrade
 	url = https://github.com/Virtual-Protocol/butler-skill-copytrade
-[submodule "skills/bevo-contract-call"]
-	path = skills/bevo-contract-call
+[submodule "skills/butler-contract-call"]
+	path = skills/butler-contract-call
 	url = https://github.com/Virtual-Protocol/butler-skill-contract-call

@@ -1,8 +1,8 @@
 # butler-skills
 
-Public, versioned playbooks (`SKILL.md`) that a Bevo Butler container reads and follows.
+Public, versioned playbooks (`SKILL.md`) that a Butler container reads and follows.
 This file is written for a developer's Claude session that has **only this URL** — no
-checkout, no Bevo account, no container. Hand it this:
+checkout, no Butler account, no container. Hand it this:
 
 > Read https://raw.githubusercontent.com/Virtual-Protocol/butler-skills/main/README.md —
 > now I want to build this skill: copy trading …
@@ -39,11 +39,12 @@ repo, created from the same template.
    https://github.com/Virtual-Protocol/butler-skill-template.) The template is the
    scaffold: `SKILL.md` with every required section and `[FIXED]`/`[ADAPT]` marker
    pre-filled with a `TODO` the validator rejects until you replace it, `duty.py`,
-   `CHANGELOG.md`, and a CI workflow that runs the hub validator on every push. Set
-   `name:` in the frontmatter to your skill name (`^[a-z0-9][a-z0-9-]{1,63}$`; the `bevo-`
-   prefix is reserved for the Bevo team). `python3 scripts/new_skill.py <name>` in a
-   checkout of this repo prints these exact commands for your name and checks it against
-   the reserved list.
+   `CHANGELOG.md`, and a one-step CI workflow (this registry's `validate` action). Set
+   `name:` in the frontmatter to your skill name (`^[a-z0-9][a-z0-9-]{1,63}$`; the
+   `butler-` prefix is reserved for the Butler team, and `bevo-` names are refused — that
+   prefix is the container's own bundled-skill namespace). `python3 scripts/new_skill.py
+   <name>` in a checkout of this repo prints these exact commands for your name and checks
+   it against the reserved list.
 
 2. **State the task in one sentence and pick the profile.** "Copy another member's buys" /
    "approve and deposit into a vault" / "summarize what a group said about $TICKER" /
@@ -70,15 +71,18 @@ repo, created from the same template.
    skill has a `duty` mode, `duty.py`. See [§5](#5-make-it-idempotent-by-construction) and
    [§9 web3](#9-web3-actions-building-and-filing-transactions).
 
-7. **Test locally — no Bevo account or container needed.** From inside your skill repo,
-   with a clone of this registry next to it for the validator and fixtures:
+7. **Test locally — no Butler account, container or registry checkout needed.** The
+   validator and the replay harness are published as standalone files; from inside your
+   skill repo:
    ```bash
-   git clone --depth 1 https://github.com/Virtual-Protocol/butler-skills /tmp/butler-skills
-   python3 /tmp/butler-skills/scripts/validate.py --standalone .
-   python3 /tmp/butler-skills/tests/replay.py --standalone . --fixture trade-activity-page
+   curl -sSLO https://virtual-protocol.github.io/butler-skills/tools/validate.py
+   curl -sSLO https://virtual-protocol.github.io/butler-skills/tools/replay.py
+   python3 validate.py --standalone .
+   python3 replay.py --standalone . --fixture trade-activity-page
    ```
-   Iterate until both exit 0 (the template's CI runs the same two commands on every
-   push). See [§7](#7-test-locally-with-no-infrastructure).
+   Iterate until both exit 0 (the template's CI runs the same two checks on every push
+   through `uses: Virtual-Protocol/butler-skills/.github/actions/validate@main`). See
+   [§7](#7-test-locally-with-no-infrastructure).
 
 8. **Ship it.** Tag the release in your skill repo (`git tag v1.0.0 && git push origin
    main --tags` — the tag must be `v` + the frontmatter `version`), then open a PR to this
@@ -109,7 +113,10 @@ skill; "be generally helpful with money" is not). A skill declares two possible 
   the skill's `duty.py` becomes the duty's code stage.
 
 A skill needs both modes when the same task is reasonable to do once *and* to repeat
-(copy-trading is the canonical example). A skill is **core** (bundled, always installed)
+(copy-trading is the canonical example). A generic action whose every execution needs an
+owner approval — a raw contract call — is one-off only: a timer duty around it would page
+the owner with an approval card on every tick, so its recurring form is a protocol-specific
+skill (claim, compound, rebalance) built on the same sequence. A skill is **core** (bundled, always installed)
 only for the handful of skills every container needs regardless of what the owner asks —
 in v1 that classification is reserved for future bundled skills; every skill you publish
 here starts **on-demand** (installed only when a search or an explicit ask needs it).
@@ -129,8 +136,10 @@ registry mounts it. Every section and marker is pre-filled with a `TODO:` that
 `scripts/validate.py` rejects if left in place — you cannot accidentally ship an unfinished
 scaffold. Change `name: _template` to your skill's name. `python3 scripts/new_skill.py
 <name>` (in a checkout of this registry) prints the commands above for your name and
-refuses reserved names; `--maintainer` is required for a `bevo-`-prefixed name (that prefix
-is reserved for the Bevo team, see `schema/reserved-names.json`).
+refuses reserved names; `--maintainer` is required for a `butler-`-prefixed name (that
+prefix is reserved for the Butler team), and a `bevo-`-prefixed name is refused outright —
+that prefix is the container's own bundled-skill namespace (`bevo-hub`, `bevo-onchain`,
+`bevo-automation-creator`, …; see `schema/reserved-names.json`).
 
 ## 3. Pick the profile, then ground every command before you write it
 
@@ -138,13 +147,13 @@ Five profiles, each with a worked example already in this repo:
 
 - **Trading** — spot/perp/stock, copy-trading, DCA. Toolbox rows: *Trade*, *Other people's
   trades*, *Own history*, *Owner holdings / prices*. Worked example:
-  [`bevo-copytrade`](https://raw.githubusercontent.com/Virtual-Protocol/butler-skill-copytrade/main/SKILL.md)
-  (repo `Virtual-Protocol/butler-skill-copytrade`, pinned here at `skills/bevo-copytrade`;
+  [`butler-copytrade`](https://raw.githubusercontent.com/Virtual-Protocol/butler-skill-copytrade/main/SKILL.md)
+  (repo `Virtual-Protocol/butler-skill-copytrade`, pinned here at `skills/butler-copytrade`;
   inlined in full below).
 - **Web3** — contract calls, approvals, LP, staking. Toolbox rows: *Read chain state*,
   *Build a transaction*, *Sign and send*. Worked example:
-  [`bevo-contract-call`](https://raw.githubusercontent.com/Virtual-Protocol/butler-skill-contract-call/main/SKILL.md)
-  (repo `Virtual-Protocol/butler-skill-contract-call`) —
+  [`butler-contract-call`](https://raw.githubusercontent.com/Virtual-Protocol/butler-skill-contract-call/main/SKILL.md)
+  (repo `Virtual-Protocol/butler-skill-contract-call`, one-off only) —
   see [§9](#9-web3-actions-building-and-filing-transactions) for the full how-to.
 - **Messaging and social** — group members/messages/search, X search, notify, summaries.
   Toolbox rows: *Query group members*, *Query group messages*, *Search X/Twitter*, *Notify
@@ -229,15 +238,26 @@ between a command and the check that follows it. Say what to tell the owner **in
 owner's words**, not in API terms. State limits plainly — "buys only", "perps not copied" —
 rather than implying them.
 
+**A skill is the delta over AGENTS.md.** The container already teaches its agent the
+command grammar, the money and safety invariants, the budgets and the routing (AGENTS.md
+and the bundled skills) — never restate them in a skill. Write only what is specific to
+this task: the reads, the exact command shape with its key, the knobs, this skill's own
+failure rows and limits. The `## Idempotency and retries` section is the key formula plus
+one sentence ("any error or uncertainty: `bevo-read request <key>` first — do not re-run"),
+not a list of the 409 codes the shim already handles; `## Failure handling` carries only
+this skill's rows; `## Limits` is this skill's scope, not the container's global rules. If
+you must point at a container rule, cite the AGENTS.md section rather than paraphrasing
+it. `butler-contract-call` (7.3 KB → 3.8 KB) is what that trim looks like.
+
 ## 7. Test locally, with no infrastructure
 
-The validator and the replay harness live in this registry, not in your skill repo, so
-clone it once next to your work (`git clone --depth 1
-https://github.com/Virtual-Protocol/butler-skills /tmp/butler-skills`) and run both from
-inside your skill repo:
+The validator and the replay harness are published by this registry as standalone files —
+you never clone the registry. From inside your skill repo:
 
 ```bash
-python3 /tmp/butler-skills/scripts/validate.py --standalone .
+curl -sSLO https://virtual-protocol.github.io/butler-skills/tools/validate.py
+curl -sSLO https://virtual-protocol.github.io/butler-skills/tools/replay.py
+python3 validate.py --standalone .
 ```
 
 runs the exact CI job in **standalone mode** — the skill's name is read from the
@@ -246,24 +266,35 @@ what the registry PR runs: frontmatter/schema checks, sizes, the command allowli
 `duty.py` AST guard, selector recomputation (when `node`+`viem` are resolvable — otherwise a
 warning, never a silent pass), the tree rules (no symlinks, no nested submodules, at most
 50 files / 1 MB — the container refuses a clone that breaks them), and prints the skill's
-prompt cost.
+prompt cost. `validate.py` is a single stdlib-only file with the reserved-name list
+embedded; the selector check needs `node` and `viem` resolvable next to a downloaded
+`tools/check_selectors.mjs` (`npm i viem@2` beside it), otherwise it is a warning — the CI
+action runs it for real.
 
 ```bash
-python3 /tmp/butler-skills/tests/replay.py --standalone . --fixture trade-activity-page
+python3 replay.py --standalone . --fixture trade-activity-page
 ```
 
-runs `duty.py` with [`tests/stub_bevo.py`](https://raw.githubusercontent.com/Virtual-Protocol/butler-skills/main/tests/stub_bevo.py)
-standing in for the real SDK: `events()` replays a captured page from `tests/fixtures/`,
+runs `duty.py` with [`stub_bevo.py`](https://virtual-protocol.github.io/butler-skills/tools/stub_bevo.py)
+standing in for the real SDK: `events()` replays a captured page from the hub's fixtures,
 `trade()`/`execute()`/`notify()` **record** their call and key instead of acting, `read()`/
-`rpc()` answer from fixtures. It prints what the duty would have done. For
-`bevo-copytrade` against `trade-activity-page.jsonl`, the expected output is exactly one
-recorded trade per leader buy on an allowed chain, each with a distinct key, and **none**
-for the sell row, the null-field row, or a second replay of the same page (the seen-set in
-`state.json` prevents it — that is a regression test, not a coincidence).
+`rpc()` answer from fixtures. It prints what the duty would have done. `replay.py` looks
+for `stub_bevo.py` and `fixtures/` next to itself and downloads whatever is missing from
+`https://virtual-protocol.github.io/butler-skills/tools/` (`BUTLER_SKILLS_TOOLS_URL`
+overrides the base; `--no-download` forbids it). A skill without a `duty.py` prints
+"nothing to replay" and exits 0. For `butler-copytrade` against
+`trade-activity-page.jsonl`, the expected output is exactly one recorded trade per leader
+buy on an allowed chain, each with a distinct key, and **none** for the sell row, the
+null-field row, or a second replay of the same page (the seen-set in `state.json` prevents
+it — that is a regression test, not a coincidence). The downloaded tooling is never part
+of the skill — the template's `.gitignore` lists it and the validator warns if it sees it.
 
-The template repo ships a `.github/workflows/validate.yml` that runs exactly these two
-commands on every push, so a green check on your own repo means the registry PR's
-validator step will be green too.
+The template repo's `.github/workflows/validate.yml` is a single step,
+`uses: Virtual-Protocol/butler-skills/.github/actions/validate@main` (inputs: `path`,
+default `.`; `standalone`, default `true`; `maintainer`; `fixture`), which checks out your
+repo, fetches this registry at `main` into the runner's temp directory, installs viem and
+runs the same validator + replay — so a green check on your own repo means the registry
+PR's validator step will be green too.
 
 What you cannot test offline — a real Approvals card, a real live feed — is what a
 maintainer checks on staging after the PR lands on `canary`.
@@ -374,8 +405,11 @@ filing — transcription errors are the top failure mode for this profile.
 
 Sources of record: AGENTS.md §10 (the `bevo-rpc` rotation note) and `bevo-docker/CLAUDE.md`
 "On-chain reads happen client-side". See
-[`skills/bevo-contract-call/SKILL.md`](https://raw.githubusercontent.com/Virtual-Protocol/butler-skills/main/skills/bevo-contract-call/SKILL.md)
-for the complete generic pattern every DeFi/LP/staking/approval skill should copy.
+[`butler-contract-call`](https://raw.githubusercontent.com/Virtual-Protocol/butler-skill-contract-call/main/SKILL.md)
+for the complete generic pattern every DeFi/LP/staking/approval skill should copy. A
+generic skill that takes the contract as a param declares `web3: {"chains":[...],
+"contracts":[]}` and needs no `## Contracts` section; a skill with fixed contracts lists
+them (selector recomputed by CI) and renders the section.
 
 ## 10. Anti-patterns
 
@@ -409,28 +443,28 @@ Each of these caused a real failure — do not repeat them.
 
 ## 11. Worked examples
 
-### `bevo-copytrade` — trading, two modes
+### `butler-copytrade` — trading, two modes
 
 The complete, currently published skill. Copy it as a starting point for any trading skill
 with both a one-off and a duty mode.
 
-<!-- BEGIN GENERATED: bevo-copytrade worked example (scripts/sync_readme.py; do not edit by hand) -->
+<!-- BEGIN GENERATED: butler-copytrade worked example (scripts/sync_readme.py; do not edit by hand) -->
 
-`skills/bevo-copytrade/SKILL.md` (submodule of https://github.com/Virtual-Protocol/butler-skill-copytrade, pinned at its tagged commit):
+`skills/butler-copytrade/SKILL.md` (submodule of https://github.com/Virtual-Protocol/butler-skill-copytrade, pinned at its tagged commit):
 
 ````markdown
 ---
-name: bevo-copytrade
+name: butler-copytrade
 description: Copy another member's buys once or as a standing duty, one trade per leader event, never twice. Use for "copy/mirror/follow <@handle or wallet>".
-version: 1.0.0
+version: 1.0.1
 metadata: {"openclaw":{"emoji":"🪞","requires":{"bins":["acp","bevo-read","bevo-automation"]}},"bevo":{"tier":"on-demand","modes":["one-off","duty"],"moneyMoving":true,"keywords":["copy trade","mirror wallet","follow trader"],"requires":{"routes":["GET /butler-read/user","GET /butler-read/trade-activity","POST /butler-exec/trade","POST /butler-exec/services"],"features":["tradeIdempotency","execRequestStatus"],"gates":["canSwap"],"bins":["acp","bevo-read","bevo-automation"]},"params":[{"name":"LEADER","type":"principalId|wallet","required":true,"ask":"who to copy"},{"name":"COPY_USDC_PER_TRADE","type":"usd","default":25,"min":2,"max":10000},{"name":"COPY_MAX_USDC","type":"usd","default":50,"min":2,"max":10000},{"name":"COPY_RATIO","type":"number","default":0,"min":0,"max":1,"help":"share of the leader's USD size; 0 = fixed size"},{"name":"CHAIN_IDS","type":"chainIds","default":[8453]}],"dutyTemplate":"duty.py"}}
 ---
 
 ## When to use
 
-The owner asks to copy, mirror or follow another member's or wallet's buys — a one-time
-"copy their last buy" or a standing "copy every buy they make". Spot buys only in v1; never
-a substitute for a plain trade the owner sizes themselves.
+The owner asks to copy, mirror or follow another member's or wallet's buys — once ("copy
+their last buy") or standing ("copy every buy they make"). Spot buys only; never a
+substitute for a plain trade the owner sizes themselves.
 
 ## Before you start
 
@@ -440,24 +474,18 @@ Resolve the leader:
 bevo-read user <@handle>
 ```
 
-On `user_not_found` (hidden handle or no shared group) ask the owner for a wallet address
-instead and use `wallets:[...]` in the trade-activity read below. Confirm the `canSwap` gate
-is available (the install already checked this). Get the owner's sizing rule in their own
-words (fixed USD per copy, or a ratio of the leader's size, and a daily cap).
+On `user_not_found` ask the owner for a wallet address and use `wallets:[...]` in the
+trade-activity read instead. Get the sizing rule in the owner's own words (fixed USD per
+copy or a ratio of the leader's size, plus a daily cap).
 
 ## Customize
 
 - `LEADER` (required, asked as "who should I copy?") — the principalId or wallet to mirror.
 - `COPY_USDC_PER_TRADE` (default $25) — fixed USD size per copy when `COPY_RATIO` is 0.
 - `COPY_MAX_USDC` (default $50) — hard per-trade ceiling regardless of ratio.
-- `COPY_RATIO` (default 0) — when > 0, size = leader's USD size * ratio, clamped to
+- `COPY_RATIO` (default 0) — when > 0, size = leader's USD size × ratio, clamped to
   `COPY_MAX_USDC`.
 - `CHAIN_IDS` (default `[8453]`) — only leader buys on one of these chains are copied.
-
-`[ADAPT]` steps: which event the owner meant, the sizing rule in the owner's words, an
-optional `judgment` filter, notification wording. `[FIXED]` steps: leader resolution, the
-newest-first read, null-field skips, the exact trade command shape, the idempotency key, the
-report to the owner.
 
 ## One-off procedure
 
@@ -467,92 +495,71 @@ report to the owner.
    bevo-read trade-activity --principal-ids <leaderPrincipalId> --limit 20
    ```
 
-2. [ADAPT] Pick the event the owner meant — default to the newest event with
-   `direction:"buy"`.
-3. [FIXED] Skip the event if `direction`, `chainId`, `tokenOutAddress` or `usdValue` is null,
-   or if `chainId` (cast to int) is not in `CHAIN_IDS` — pick the next candidate instead.
-4. [ADAPT] Compute your size from `COPY_USDC_PER_TRADE` / `COPY_RATIO`, clamped to
-   `COPY_MAX_USDC`.
-5. [FIXED] Echo back to the owner: token address, chain, the leader's size, and your size,
-   before filing anything.
-6. [FIXED] File the trade with a key derived from the event id — token is always the
-   address, never a symbol; this is a buy so `--chain-out`, never `--chain-in`:
+2. [ADAPT] Pick the event the owner meant — default: the newest `direction:"buy"`.
+3. [FIXED] Skip it if `direction`, `chainId`, `tokenOutAddress` or `usdValue` is null, or if
+   `chainId` (cast to int) is not in `CHAIN_IDS` — take the next candidate.
+4. [ADAPT] Size from `COPY_USDC_PER_TRADE` / `COPY_RATIO`, clamped to `COPY_MAX_USDC`.
+5. [FIXED] Echo token address, chain, the leader's size and your size to the owner before
+   filing anything.
+6. [FIXED] File it — token by address, a buy so `--chain-out`, key from the event id:
 
    ```bash
    acp trade --token-in usdc --amount-in <usd> --token-out <tokenOutAddress> --chain-out <chainId> --idempotency-key copytrade:chat:<eventId>
    ```
 
-7. [FIXED] On `accepted` or `manual_signing_required`, stop and report. On a network error
-   or timeout, follow "Idempotency and retries" below — do not re-issue the command
-   yourself.
+7. [FIXED] On `accepted` or `manual_signing_required`, stop and report; on anything else,
+   see "Idempotency and retries".
 
 ## Duty procedure
 
 1. [ADAPT] Confirm the trigger is what the owner meant: every buy by `LEADER`, on the
    allowed chains, sized by the params above.
 2. [FIXED] Trigger JSON: `{"kind":"trade","principalIds":["<leaderPrincipalId>"],"direction":"buy"}`.
-3. [FIXED] `env` = the six params above (skill defaults, then any `bevo-hub set` prefs the
-   owner saved, then this ask's own values).
+3. [FIXED] `env` = the params above (skill defaults, then the owner's saved `bevo-hub set`
+   prefs, then this ask's own values).
 4. [ADAPT] `requestedDailyLimitUsdc` = the owner's stated daily cap; `yardstick` = "Every buy
    by LEADER is mirrored once, within a minute, for $COPY_USDC_PER_TRADE, never twice."
-5. [FIXED] Create it — never hand-write the duty's code yourself, the shim loads `duty.py`
-   from this skill:
+5. [FIXED] Create it — never hand-write the duty's code, the shim loads this skill's `duty.py`:
 
    ```bash
-   bevo-automation create --from-skill bevo-copytrade@1.0.0 '<json>'
+   bevo-automation create --from-skill butler-copytrade@1.0.1 '<json>'
    ```
 
-6. [FIXED] Say to the owner: "Created, pending — arm it in Approvals; the card proposes
-   $requestedDailyLimitUsdc/day as its pocket; nothing runs until then; inside the pocket
-   copies run hands-free, above it they become signing requests."
+6. [FIXED] Report as in "Say to the owner".
 
 ## Idempotency and retries
 
-Key formula: `copytrade:chat:<eventId>` for a one-off, `copytrade:{SERVICE_ID}:<eventId>` for
-a duty (see `duty.py`). Pass the key on every `acp trade` / `bevo.trade(...)` call for this
-skill, never derive it from a timestamp.
-
-- `accepted` — the trade filed; report it and stop. Do not re-run it.
-- Network error / timeout before a response — do not re-run; poll
-  `bevo-read request <key>` first; only resend if it reports nothing was claimed.
-- `IDEMPOTENT_IN_FLIGHT` — the SDK/shim already polls status for you; do not re-issue the
-  command.
-- `IDEMPOTENCY_KEY_REUSED` — a different set of params already used this exact key; log it
-  and do not trade.
-- `IDEMPOTENT_UNKNOWN_OUTCOME` — log it, tell the owner the outcome is unknown, and do not
-  re-run — this is the one outcome that never resolves itself.
+Key: `copytrade:chat:<eventId>` (one-off), `copytrade:{SERVICE_ID}:<eventId>` (duty, see
+`duty.py`) — one key per leader event, never a timestamp. Any error or uncertainty:
+`bevo-read request <key>` first — do not re-run.
 
 ## Failure handling
 
 | Outcome | What to do |
 | --- | --- |
+| `user_not_found` on the leader | Ask for a wallet address; read by `wallets` instead. |
+| Leader event has a null field or an off-list chain | Skip it; take the next candidate. |
 | `accepted` | Done — report token, chain and size. |
 | `manual_signing_required` | Notify the owner once; do not poll in a loop. |
-| `IDEMPOTENCY_KEY_REUSED` | Log only, do not trade — another run already handled this event. |
-| `IDEMPOTENT_IN_FLIGHT` | Wait for the status poll; do not resend. |
-| `IDEMPOTENT_UNKNOWN_OUTCOME` | Log; never retry; tell the owner status is unknown. |
-| 4xx refusal | Log the code; do not resize and retry on your own judgment. |
-| Pocket short | The server files a top-up card; continue, do not cancel the flow. |
 
 ## Limits
 
-Buys only in v1. Sells are not mirrored in this version. Perps are never copied. Yanking
-this skill from the hub does not stop a duty already created from it — the duty keeps its
-own copy of `duty.py`.
+Buys only in v1 — sells and perps are never mirrored. Yanking this skill does not stop a
+duty already created from it (the duty keeps its own copy of `duty.py`).
 
 ## Say to the owner
 
 One-off: "Copied LEADER's buy of `<amount>` USD into `<token>` on chain `<chainId>`. Sells
-are not mirrored in this version." Duty creation: "Created, pending — arm it in Approvals;
-the card proposes the daily cap as its pocket; nothing runs until then."
+are not mirrored in this version." Duty: "Created, pending — arm it in Approvals; the card
+proposes your daily cap as its pocket; nothing runs until then."
 ````
 
-`skills/bevo-copytrade/duty.py`:
+`skills/butler-copytrade/duty.py`:
 
 ```python
-"""bevo-copytrade duty — mirrors LEADER's spot buys, one trade per leader
+"""butler-copytrade duty — mirrors LEADER's spot buys, one trade per leader
 event, never twice. Sells are not mirrored in this version. See
-skills/bevo-copytrade/SKILL.md for the full procedure this code implements.
+skills/butler-copytrade/SKILL.md for the full procedure this code implements.
 """
 import json
 import os
@@ -681,7 +688,7 @@ if __name__ == "__main__":
     main()
 ```
 
-<!-- END GENERATED: bevo-copytrade worked example -->
+<!-- END GENERATED: butler-copytrade worked example -->
 
 The block above is generated from the pinned submodule checkout (`scripts/sync_readme.py`;
 CI fails if it drifts). The skill's own repository, with its full history and tags, is
@@ -691,16 +698,17 @@ CI fails if it drifts). The skill's own repository, with its full history and ta
 (`main` may be ahead of what the registry pins — [CATALOG.md](CATALOG.md) links the pinned
 tag).
 
-### `bevo-contract-call` — web3, the generic build → dry-run → file pattern
+### `butler-contract-call` — web3, the generic build → dry-run → file pattern
 
 The pattern every DeFi/LP/staking/approval skill copies: the owner names a contract,
 function and arguments; the skill echoes them back, reads any precondition, encodes the
-call, dry-runs it, files exactly one leg with a key, and reports the `approvalId`. Read the
-full annotated file from its repo
+call, dry-runs it, files exactly one leg with a key, and reports the `approvalId`. It is
+**one-off only** — every execution is an approval card, so a timer duty around it would
+page the owner every tick; a recurring interaction (claim, compound, rebalance) is its own
+skill built on the same sequence. It is also the reference for the "delta over AGENTS.md"
+trim: under 4 KB, nothing the container already knows. Read the file from its repo
 [`Virtual-Protocol/butler-skill-contract-call`](https://github.com/Virtual-Protocol/butler-skill-contract-call):
-[`SKILL.md`](https://raw.githubusercontent.com/Virtual-Protocol/butler-skill-contract-call/main/SKILL.md)
-and its timer-triggered duty variant:
-[`duty.py`](https://raw.githubusercontent.com/Virtual-Protocol/butler-skill-contract-call/main/duty.py) —
+[`SKILL.md`](https://raw.githubusercontent.com/Virtual-Protocol/butler-skill-contract-call/main/SKILL.md) —
 walk through [§9](#9-web3-actions-building-and-filing-transactions) above alongside it.
 
 ---
@@ -772,12 +780,16 @@ vs judgment vs hybrid).
 
 ## Local testing, no infrastructure
 
-From your skill repo: `python3 <butler-skills>/scripts/validate.py --standalone .` — the
-exact CI job, name taken from the frontmatter. `python3 <butler-skills>/tests/replay.py
---standalone . --fixture <name>` — runs `duty.py` against a captured page with
-`tests/stub_bevo.py` standing in for the real SDK and prints what it would have done. (In
-a registry checkout the same tools take `skills/<name>` and `--all`.) See
-[§7](#7-test-locally-with-no-infrastructure) above for the pass criteria.
+From your skill repo, with the two standalone files
+(`curl -sSLO https://virtual-protocol.github.io/butler-skills/tools/validate.py` and
+`.../tools/replay.py`): `python3 validate.py --standalone .` — the exact CI job, name taken
+from the frontmatter. `python3 replay.py --standalone . --fixture <name>` — runs `duty.py`
+against a captured page with `stub_bevo.py` standing in for the real SDK (both fetched on
+demand from the same site) and prints what it would have done. In CI:
+`uses: Virtual-Protocol/butler-skills/.github/actions/validate@main`. (In a registry
+checkout the same tools are `scripts/validate.py` / `tests/replay.py` and take
+`skills/<name>` and `--all`.) See [§7](#7-test-locally-with-no-infrastructure) above for
+the pass criteria.
 
 ## Shipping / PR flow
 
@@ -801,6 +813,10 @@ requirement, and the two-review rule for `moneyMoving:true` skills.
   machine-checkable contracts.
 - `scripts/check_pins.py` — the CI pin rules (tag `v<version>` at the pinned commit, https
   GitHub URL, no symlinks/nested submodules).
+- `https://virtual-protocol.github.io/butler-skills/tools/` — the standalone `validate.py`,
+  `replay.py`, `stub_bevo.py`, `check_selectors.mjs` and `fixtures/` (`scripts/publish_tools.py`
+  lays them out on every publish); `.github/actions/validate` — the composite action a
+  skill repo's CI uses.
 - The generated in-container `bevo-hub` skill carries a two-line `## Authoring` block
   pointing back at this README, so a Butler asked "could you write a skill for X?" answers
   "skills are published through https://github.com/Virtual-Protocol/butler-skills — hand

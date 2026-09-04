@@ -24,10 +24,10 @@ def _load_build_index_module():
 build_index = _load_build_index_module()
 
 
-def test_collect_skill_bevo_copytrade():
-    entry = build_index.collect_skill(REPO_ROOT / "skills" / "bevo-copytrade", yanked=set())
-    assert entry["name"] == "bevo-copytrade"
-    assert entry["version"] == "1.0.0"
+def test_collect_skill_butler_copytrade():
+    entry = build_index.collect_skill(REPO_ROOT / "skills" / "butler-copytrade", yanked=set())
+    assert entry["name"] == "butler-copytrade"
+    assert entry["version"] == "1.0.1"
     assert entry["tier"] == "on-demand"
     assert "one-off" in entry["modes"] and "duty" in entry["modes"]
     assert entry["moneyMoving"] is True
@@ -41,7 +41,7 @@ def test_collect_skill_bevo_copytrade():
 
 def test_collect_skill_respects_yanked():
     entry = build_index.collect_skill(
-        REPO_ROOT / "skills" / "bevo-copytrade", yanked={"bevo-copytrade@1.0.0"}
+        REPO_ROOT / "skills" / "butler-copytrade", yanked={"butler-copytrade@1.0.1"}
     )
     assert entry["yanked"] is True
 
@@ -88,10 +88,14 @@ def test_source_block_has_repo_40hex_commit_and_tag_ref():
 
 
 def test_source_block_is_additive_files_and_sha256_unchanged():
-    entry = build_index.collect_skill(REPO_ROOT / "skills" / "bevo-copytrade", yanked=set())
+    entry = build_index.collect_skill(REPO_ROOT / "skills" / "butler-copytrade", yanked=set())
     assert {f["path"] for f in entry["files"]} == {"SKILL.md", "duty.py", "CHANGELOG.md"}
+    # a one-off-only skill has no duty.py and the index simply lists what exists
+    one_off = build_index.collect_skill(REPO_ROOT / "skills" / "butler-contract-call", yanked=set())
+    assert one_off["modes"] == ["one-off"]
+    assert {f["path"] for f in one_off["files"]} == {"SKILL.md", "CHANGELOG.md"}
     for f in entry["files"]:
-        assert f["sha256"] == build_index.sha256_file(REPO_ROOT / "skills" / "bevo-copytrade" / f["path"])
+        assert f["sha256"] == build_index.sha256_file(REPO_ROOT / "skills" / "butler-copytrade" / f["path"])
 
 
 def test_uninitialised_submodule_fails_loudly(tmp_path):

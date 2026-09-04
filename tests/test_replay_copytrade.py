@@ -1,4 +1,4 @@
-"""test_replay_copytrade.py — replay bevo-copytrade's duty.py against the
+"""test_replay_copytrade.py — replay butler-copytrade's duty.py against the
 captured trade-activity-page fixture and assert: exactly one recorded
 trade per leader buy on an allowed chain, with distinct keys, and none for
 the sell / null-field / off-chain rows; a second run against the same
@@ -15,7 +15,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 REPLAY = REPO_ROOT / "tests" / "replay.py"
-SKILL = REPO_ROOT / "skills" / "bevo-copytrade"
+SKILL = REPO_ROOT / "skills" / "butler-copytrade"
 
 ENV = [
     "LEADER=11111111-1111-1111-1111-111111111111",
@@ -82,13 +82,13 @@ def test_standalone_replay_from_any_directory(tmp_path):
         cmd += ["--env", kv]
     proc = subprocess.run(cmd, capture_output=True, text=True, cwd=str(tmp_path))
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert "# standalone replay of bevo-copytrade from" in proc.stdout
+    assert "# standalone replay of butler-copytrade from" in proc.stdout
     actions = json.loads(proc.stdout.split("# ACTIONS_JSON_START\n")[1].split("# ACTIONS_JSON_END")[0])
     assert len([a for a in actions if a["call"] == "trade"]) == 3
 
 
 def _load_copytrade_duty_module():
-    """Import skills/bevo-copytrade/duty.py in-process (with tests/stub_bevo.py
+    """Import skills/butler-copytrade/duty.py in-process (with tests/stub_bevo.py
     standing in for `bevo`) so we can unit-test its SeenSet helper directly,
     independent of the small fixture page (which has nowhere near 2001 events)."""
     stub_spec = importlib.util.spec_from_file_location("bevo", REPO_ROOT / "tests" / "stub_bevo.py")
