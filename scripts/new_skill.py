@@ -5,15 +5,15 @@ Usage:
     scripts/new_skill.py my-skill [--owner <github-user-or-org>] [--maintainer]
 
 Skills are git-backed: each one is its own repository created from the
-GitHub template Virtual-Protocol/butler-skill-template, and this registry pins
-it as a submodule under skills/<name> at a tagged commit. So this script no
+GitHub template Virtual-Protocol/butler-skill-template, and this registry
+lists it in skills.json as a name, a link and a ref. So this script no
 longer scaffolds a directory here — it checks the name (pattern, reserved
 list, the maintainer-only butler- prefix; bevo- is the container's bundled-skill
 namespace and is refused outright) and prints, in order:
 
   1. the `gh repo create ... --template ... --clone` command,
   2. the validator + offline replay commands to run in that checkout,
-  3. the tag + `git submodule add` PR step that lands it in this registry.
+  3. the one-line skills.json PR that lands it in this registry.
 
 Python 3.11 stdlib only.
 """
@@ -64,18 +64,21 @@ curl -sSLO {TOOLS_URL}/replay.py
 python3 validate.py --standalone .
 python3 replay.py --standalone . --fixture trade-activity-page
 
-# 3. Tag the release, then open a PR to {REGISTRY_REPO} that pins it:
-git tag v1.0.0 && git push origin main --tags
-#    in a fork/checkout of {REGISTRY_REPO}:
-git submodule add https://github.com/{owner}/{repo} skills/{name}
-git -C skills/{name} checkout v1.0.0
-git add .gitmodules skills/{name}
-git commit -s -m "skills: add {name} 1.0.0"
-gh pr create --repo {REGISTRY_REPO} --base main --title "skills: add {name} 1.0.0"
-#    CI validates the pinned checkout and asserts the pinned commit carries tag
-#    v<version>; maintainers review that commit (two reviews if moneyMoving:true).
-#    A later version = bump `version`, add a CHANGELOG line, tag vX.Y.Z, and a PR
-#    moving the submodule pointer to that tag.
+# 3. Open a PR to {REGISTRY_REPO} adding one entry to skills.json:
+#    in a fork/checkout of {REGISTRY_REPO}, add to the "skills" list (keep it sorted by name):
+#      {{"name": "{name}", "repo": "https://github.com/{owner}/{repo}", "ref": "main"}}
+#    `ref` is what the registry follows. A branch means every commit you merge
+#    reaches butlers on the next build (hourly) with no review in the registry;
+#    tag your releases and set `ref` to the tag (e.g. "v1.0.0") if you want it to
+#    move only when you say so.
+git commit -s -m "skills: add {name}"
+gh pr create --repo {REGISTRY_REPO} --base main --title "skills: add {name}"
+#    CI checks the listing (name, https GitHub URL, the ref resolves) and the
+#    publish build clones your ref, hashes every file and records the resolved
+#    commit in the index. Maintainers review the entry (two reviews if
+#    moneyMoving:true). After that, a new version is a release in YOUR repo —
+#    bump `version`, add a CHANGELOG line, merge (or tag, if `ref` is a tag).
+#    You never open another PR here unless the skill is removed.
 """
 
 

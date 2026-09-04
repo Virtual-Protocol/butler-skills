@@ -1,5 +1,6 @@
 """test_new_skill.py — scripts/new_skill.py prints the git-backed flow (it no
-longer scaffolds a directory in this repo) and keeps the reserved-name gate."""
+longer scaffolds a directory in this repo; step 3 is one skills.json entry, not
+a submodule pin) and keeps the reserved-name gate."""
 from __future__ import annotations
 
 import subprocess
@@ -14,7 +15,7 @@ def run(*args: str):
     return subprocess.run([sys.executable, str(SCRIPT), *args], capture_output=True, text=True, cwd=str(REPO_ROOT))
 
 
-def test_prints_template_create_validate_and_submodule_steps():
+def test_prints_template_create_validate_and_registry_entry_steps():
     proc = run("my-dca", "--owner", "alice")
     assert proc.returncode == 0, proc.stderr
     out = proc.stdout
@@ -25,18 +26,22 @@ def test_prints_template_create_validate_and_submodule_steps():
     assert "python3 replay.py --standalone . --fixture trade-activity-page" in out
     assert "git clone" not in out  # nobody is told to clone the registry
     assert "uses: Virtual-Protocol/butler-skills/.github/actions/validate@main" in out
-    assert "git tag v1.0.0" in out
-    assert "git submodule add https://github.com/alice/butler-skill-my-dca skills/my-dca" in out
-    assert "git -C skills/my-dca checkout v1.0.0" in out
+    # Step 3 is one line in skills.json, not a submodule pin.
+    assert '{"name": "my-dca", "repo": "https://github.com/alice/butler-skill-my-dca", "ref": "main"}' in out
     assert "gh pr create --repo Virtual-Protocol/butler-skills --base main" in out
-    assert not (REPO_ROOT / "skills" / "my-dca").exists()  # nothing scaffolded here
+    assert "submodule" not in out
+    # The ref tradeoff is stated where an author chooses it.
+    assert "with no review in the registry" in out
+    # A later version ships from the author's own repo — no second PR here.
+    assert "You never open another PR here unless the skill is removed." in out
+    assert not (REPO_ROOT / "skills").exists()  # nothing is checked out in this repo
 
 
 def test_butler_prefix_strips_to_repo_name_with_maintainer():
     proc = run("butler-thing", "--maintainer")
     assert proc.returncode == 0, proc.stderr
     assert "butler-skill-thing" in proc.stdout
-    assert "skills/butler-thing" in proc.stdout
+    assert '"name": "butler-thing"' in proc.stdout
 
 
 def test_reserved_name_and_prefixes_are_refused():
