@@ -152,7 +152,11 @@ BEVO_AUTOMATION_SUBCOMMANDS = {
     "logs",
 }
 
-BEVO_HUB_SUBCOMMANDS = {"search", "show", "install", "update", "list", "remove", "set", "unset"}
+# Mirrors api/scripts/bevo-hub-shim.py COMMANDS. `fork` shipped with the
+# forking feature: a skill that almost fits is the owner's to copy and edit,
+# so a SKILL.md may legitimately tell Butler to fork itself.
+BEVO_HUB_SUBCOMMANDS = {"search", "show", "install", "fork", "update", "list", "remove",
+                        "set", "unset"}
 
 ACP_SUBCOMMANDS = {
     "trade",
