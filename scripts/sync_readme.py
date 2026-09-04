@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""sync_readme.py — regenerate README.md's `bevo-copytrade` worked example
-from the real skills/bevo-copytrade/{SKILL.md,duty.py} — the submodule
+"""sync_readme.py — regenerate README.md's `butler-copytrade` worked example
+from the real skills/butler-copytrade/{SKILL.md,duty.py} — the submodule
 checkout of the skill's own repository, pinned at its tagged commit — so the
 README can never drift from the published skill (and a Claude copying the
 README example verbatim copies exactly what CI validates). Run
@@ -11,9 +11,9 @@ Usage:
     scripts/sync_readme.py --check     # exit 1 if README.md is out of sync, change nothing
 
 The generated region is delimited by two HTML comments in README.md:
-    <!-- BEGIN GENERATED: bevo-copytrade worked example (scripts/sync_readme.py; do not edit by hand) -->
+    <!-- BEGIN GENERATED: butler-copytrade worked example (scripts/sync_readme.py; do not edit by hand) -->
     ...
-    <!-- END GENERATED: bevo-copytrade worked example -->
+    <!-- END GENERATED: butler-copytrade worked example -->
 """
 from __future__ import annotations
 
@@ -24,13 +24,13 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 README_PATH = REPO_ROOT / "README.md"
 GITMODULES_PATH = REPO_ROOT / ".gitmodules"
-SKILL_SUBMODULE = "skills/bevo-copytrade"
+SKILL_SUBMODULE = "skills/butler-copytrade"
 SKILL_DIR = REPO_ROOT / SKILL_SUBMODULE
 SKILL_MD_PATH = SKILL_DIR / "SKILL.md"
 DUTY_PY_PATH = SKILL_DIR / "duty.py"
 
-BEGIN_MARKER = "<!-- BEGIN GENERATED: bevo-copytrade worked example (scripts/sync_readme.py; do not edit by hand) -->"
-END_MARKER = "<!-- END GENERATED: bevo-copytrade worked example -->"
+BEGIN_MARKER = "<!-- BEGIN GENERATED: butler-copytrade worked example (scripts/sync_readme.py; do not edit by hand) -->"
+END_MARKER = "<!-- END GENERATED: butler-copytrade worked example -->"
 
 
 def submodule_url(path: str = SKILL_SUBMODULE) -> str:
@@ -62,13 +62,13 @@ def build_block() -> str:
     origin = f" (submodule of {repo}, pinned at its tagged commit)" if repo else ""
 
     parts = [
-        f"`skills/bevo-copytrade/SKILL.md`{origin}:",
+        f"`skills/butler-copytrade/SKILL.md`{origin}:",
         "",
         "````markdown",
         skill_md.rstrip("\n"),
         "````",
         "",
-        "`skills/bevo-copytrade/duty.py`:",
+        "`skills/butler-copytrade/duty.py`:",
         "",
         "```python",
         duty_py.rstrip("\n"),
@@ -85,7 +85,7 @@ def main() -> int:
 
     readme = README_PATH.read_text()
     if BEGIN_MARKER not in readme or END_MARKER not in readme:
-        print("README.md is missing the BEGIN/END GENERATED markers for the bevo-copytrade worked example")
+        print("README.md is missing the BEGIN/END GENERATED markers for the butler-copytrade worked example")
         return 1
 
     before, rest = readme.split(BEGIN_MARKER, 1)
@@ -96,7 +96,7 @@ def main() -> int:
 
     if args.check:
         if new_readme != readme:
-            print("README.md's bevo-copytrade worked example is out of sync with skills/bevo-copytrade/. Run scripts/sync_readme.py.")
+            print("README.md's butler-copytrade worked example is out of sync with skills/butler-copytrade/. Run scripts/sync_readme.py.")
             return 1
         print("README.md is in sync")
         return 0

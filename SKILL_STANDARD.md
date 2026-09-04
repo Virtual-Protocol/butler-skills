@@ -45,16 +45,16 @@ JSON (the openclaw parser reads line-oriented, not a YAML block).
 
 ```yaml
 ---
-name: bevo-copytrade
+name: butler-copytrade
 description: Copy another member's buys once or as a standing duty, one trade per leader event, never twice. Use for "copy/mirror/follow <@handle or wallet>".
-version: 1.0.0
+version: 1.0.1
 metadata: {"openclaw":{"emoji":"🪞","requires":{"bins":["acp","bevo-read","bevo-automation"]}},"bevo":{"tier":"on-demand","modes":["one-off","duty"],"moneyMoving":true,"keywords":["copy trade","mirror wallet","follow trader"],"requires":{"routes":["GET /butler-read/user","GET /butler-read/trade-activity","POST /butler-exec/trade","POST /butler-exec/services"],"features":["tradeIdempotency","execRequestStatus"],"gates":["canSwap"],"bins":["acp","bevo-read","bevo-automation"]},"params":[{"name":"LEADER","type":"principalId|wallet","required":true,"ask":"who to copy"},{"name":"COPY_USDC_PER_TRADE","type":"usd","default":25,"min":2,"max":10000}],"dutyTemplate":"duty.py"}}
 ---
 ```
 
 | Field | Rule |
 | --- | --- |
-| `name` | `^[a-z0-9][a-z0-9-]{1,63}$`, not in `schema/reserved-names.json`, `bevo-` prefix is maintainer-only. Registry mode: equals the submodule directory name `skills/<name>`; `--standalone` mode: the pattern alone (the directory can be anything) |
+| `name` | `^[a-z0-9][a-z0-9-]{1,63}$`, not in `schema/reserved-names.json`. The `butler-` prefix is maintainer-only (`--maintainer` / `MAINTAINER=1`); the `bevo-` prefix is **refused** — it is the container's bundled-skill namespace (`bevo-hub`, `bevo-onchain`, `bevo-automation-creator`, …). Registry mode: equals the submodule directory name `skills/<name>`; `--standalone` mode: the pattern alone (the directory can be anything) |
 | `description` | required, <= 160 chars, no wallet addresses, no override-phrase language |
 | `version` | semver `X.Y.Z`, bumped whenever the skill changes; the skill repo is tagged `v<version>` and the registry pins that tag's commit |
 | `metadata.openclaw` | only `emoji`, `homepage`, `requires.bins` allowed — no `always`, `install`, `requires.env`, `primaryEnv`, `os`, `disable-model-invocation` |
@@ -64,7 +64,7 @@ metadata: {"openclaw":{"emoji":"🪞","requires":{"bins":["acp","bevo-read","bev
 | `metadata.bevo.params` | see Params below |
 | `metadata.bevo.requires.routes` | each matches `^(GET\|POST\|PATCH\|DELETE) /butler-(read\|exec)/[A-Za-z0-9/_:.-]+$` |
 | `metadata.bevo.requires.gates` | subset of `canPerp, canSwap, canStock, canFiat, canOnramp` |
-| `metadata.bevo.web3` | required when the body contains a `send-transaction` / `bevo.execute` line |
+| `metadata.bevo.web3` | required when the body contains a `send-transaction` / `bevo.execute` line; `contracts` may be `[]` or omitted for a generic skill that takes the contract as a param (then no `## Contracts` section is needed) |
 
 ## Body sections, in this exact order
 
@@ -73,8 +73,19 @@ metadata: {"openclaw":{"emoji":"🪞","requires":{"bins":["acp","bevo-read","bev
 (**mandatory when `moneyMoving:true`**, must contain the phrase "do not re-run") ·
 `## Failure handling` · `## Limits` · `## Say to the owner`.
 
-Web3 skills additionally carry a `## Contracts` section (rendered from `metadata.bevo.web3`
-so the constants cannot drift from the frontmatter).
+Web3 skills that list `metadata.bevo.web3.contracts` additionally carry a `## Contracts`
+section (rendered from that block so the constants cannot drift from the frontmatter); an
+empty `contracts` list needs none.
+
+**A skill is the delta over AGENTS.md.** The container already teaches its agent the
+command grammar, the money/safety invariants, the budgets and the routing (AGENTS.md and
+the bundled skills). Never restate them in a skill — write only what is specific to this
+task: the reads, the exact command shape with its key, the knobs, the skill's own failure
+rows and limits. If you must point at a container rule, cite the AGENTS.md section rather
+than paraphrasing it. `## Idempotency and retries` is the key formula plus "any error or
+uncertainty: `bevo-read request <key>` first — do not re-run"; `## Failure handling` holds
+only this skill's rows; `## Limits` is this skill's scope, never the container's global
+rules.
 
 Body <= 12,000 chars total. Bundle (all files in the skill directory, `.git` and
 `__pycache__` excluded) <= 200 KB, no binary files; plus the tree rules above (<= 50
@@ -115,8 +126,9 @@ subcommand list; `acp <area>` subcommands are checked against the real `acp` are
 
 ## Web3 rules
 
-- Every `metadata.bevo.web3.contracts[].functions[].selector` is recomputed from its
-  `signature` with viem (`scripts/check_selectors.mjs`) and must match.
+- Every listed `metadata.bevo.web3.contracts[].functions[].selector` is recomputed from its
+  `signature` with viem (`scripts/check_selectors.mjs`) and must match (nothing to check
+  when `contracts` is empty).
 - Contract `address` is a checksummed `0x` + 40 hex chars, or a `{{PARAM}}` placeholder of
   type `address`.
 - Every `acp wallet send-transaction` line carries `--chain-id`, `--to`, `--data`, and
@@ -137,6 +149,26 @@ subcommand list; `acp <area>` subcommands are checked against the real `acp` are
 - `scripts/build_index.py --dry-run` must succeed for the whole repo (every entry gets a
   `source` block: repo URL, the 40-hex pinned commit, `ref: v<version>`).
 - DCO sign-off required on every commit in the registry PR.
+- Hub tooling downloaded for local validation (`validate.py`, `replay.py`, `stub_bevo.py`,
+  `check_selectors.mjs`) is never part of a skill; the validator warns when it sees one in
+  the tree (the template's `.gitignore` lists them).
+
+## Local validation
+
+`scripts/validate.py` is a single-file, stdlib-only tool and is published, with the replay
+harness, at `https://virtual-protocol.github.io/butler-skills/tools/` (`scripts/publish_tools.py`
+lays it out). A skill repo needs no registry checkout:
+
+```bash
+curl -sSLO https://virtual-protocol.github.io/butler-skills/tools/validate.py
+curl -sSLO https://virtual-protocol.github.io/butler-skills/tools/replay.py
+python3 validate.py --standalone .
+python3 replay.py --standalone . --fixture trade-activity-page
+```
+
+`replay.py` downloads `stub_bevo.py` and any fixture it needs from the same site when they
+are not beside it. In CI the same two checks are the composite action
+`uses: Virtual-Protocol/butler-skills/.github/actions/validate@main`.
 
 ## The Butler toolbox
 

@@ -48,7 +48,7 @@ jobs:
         run: python3 scripts/check_pins.py
 
       - name: Validate all skills
-        # The bevo- prefix is maintainer-only. author_association is a trusted GitHub
+        # The butler- prefix is maintainer-only (bevo- is always refused). author_association is a trusted GitHub
         # Actions context value (OWNER/MEMBER/COLLABORATOR for people with write access to
         # this repo) — external, non-maintainer PRs run the strict, non-maintainer check.
         env:
