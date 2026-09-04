@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
-"""build_index.py — build dist/<channel>/index.json plus immutable per-version
-skill files, and regenerate CATALOG.md.
+"""build_index.py — build dist/index.json plus immutable per-version skill
+files, and regenerate CATALOG.md.
+
+ONE channel. The registry publishes a single index, the way npm serves one
+registry: `dist/skills/<name>/<version>/` is the immutable store, and
+`dist/index.json` is the moving pointer at the current version of each skill.
+An environment does not get its own view — a container that wants to hold a
+version pins it (`bevo-hub install <name>@<version>`, which never auto-updates).
 
 Usage:
-    scripts/build_index.py --channel stable|canary [--dry-run] [--repo-tag <tag>]
+    scripts/build_index.py [--dry-run] [--repo-tag <tag>]
 
 Reads every skills/<name>/ submodule declared in .gitmodules (they must be
 initialised: `git submodule update --init --recursive`), cross-references
 yanked.json, writes:
-    dist/<channel>/index.json
+    dist/index.json
     dist/skills/<name>/<version>/{SKILL.md,duty.py,CHANGELOG.md}
 and regenerates CATALOG.md at the repo root.
 
@@ -301,8 +307,7 @@ def regenerate_catalog(entries: list[dict]) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Build dist/<channel>/index.json and CATALOG.md")
-    parser.add_argument("--channel", choices=["stable", "canary"], default="canary")
+    parser = argparse.ArgumentParser(description="Build dist/index.json and CATALOG.md")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--repo-tag", default="dev")
     args = parser.parse_args()
@@ -319,7 +324,6 @@ def main() -> int:
 
     index = {
         "schemaVersion": 1,
-        "channel": args.channel,
         "repoTag": args.repo_tag,
         "builtAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "baseUrl": BASE_URL_TEMPLATE,
@@ -332,7 +336,7 @@ def main() -> int:
         fm = parse_frontmatter_light((d / "SKILL.md").read_text())
         write_dist_files(d, fm["name"], fm["version"], dist_root, args.dry_run)
 
-    index_path = dist_root / args.channel / "index.json"
+    index_path = dist_root / "index.json"
     if args.dry_run:
         print(f"[dry-run] would write {index_path}")
         print(json.dumps(index, indent=2)[:2000])
@@ -348,7 +352,7 @@ def main() -> int:
         CATALOG_PATH.write_text(catalog)
         print(f"wrote {CATALOG_PATH}")
 
-    summary = f"{len(entries) - len(tombstones)} skill(s) indexed for channel={args.channel}"
+    summary = f"{len(entries) - len(tombstones)} skill(s) indexed"
     if tombstones:
         summary += f", plus {len(tombstones)} yanked tombstone(s)"
     print(summary)

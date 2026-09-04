@@ -3,7 +3,6 @@ name: publish
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
@@ -30,33 +29,35 @@ jobs:
         with:
           python-version: "3.11"
 
-      # A Pages deploy replaces the WHOLE site and there is no gh-pages branch to
-      # seed from, so every run must produce both channels itself:
-      #   stable = the latest v* tag's tree, canary = this commit's tree.
+      # ONE channel. A Pages deploy replaces the WHOLE site, so this single run
+      # produces the whole registry: dist/index.json (the moving pointer) plus
+      # dist/skills/<name>/<version>/ (the immutable store). Merging to main IS
+      # the publish action — there is no separate release tag gating it, and no
+      # per-environment view. A container that wants to hold a version pins it
+      # (`bevo-hub install <name>@<version>`), which is the only supported way
+      # to not move with the index.
+      #
       # build_index.py refuses to overwrite a published version dir with
       # different bytes, so a skill changed without a version bump fails here
       # instead of silently republishing 1.0.0 with new content.
-      # The tag's tree carries its own .gitmodules pointers, so the worktree
-      # needs its own `git submodule update --init --recursive` before building.
-      - name: Build stable (latest v* tag)
+      - name: Build the index (this commit)
+        run: python3 scripts/build_index.py --repo-tag "main-${{ github.sha }}"
+
+      # TRANSITIONAL — delete once every container is on an image whose
+      # bevo_hub/client.py requests /index.json. A container built before the
+      # channel collapse asks for /stable/index.json or /canary/index.json;
+      # without these copies it gets a 404 and its skill sync stops entirely.
+      # This is about the index PATH, not the frontmatter key: it protects any
+      # container not yet redeployed, whatever it reads.
+      - name: Publish legacy channel aliases (transitional)
         run: |
           set -eu
-          git fetch --tags --force
-          TAG="$(git tag -l 'v*' --sort=-v:refname | head -n 1)"
-          if [ -z "$TAG" ]; then
-            echo "no v* tag yet — stable channel not published"
-            exit 0
-          fi
-          git worktree add /tmp/stable "$TAG"
-          ( cd /tmp/stable && git submodule update --init --recursive && python3 scripts/build_index.py --channel stable --repo-tag "$TAG" )
-          mkdir -p dist
-          cp -R /tmp/stable/dist/. dist/
-          echo "stable = $TAG"
+          for legacy in stable canary; do
+            mkdir -p "dist/$legacy"
+            cp dist/index.json "dist/$legacy/index.json"
+          done
 
-      - name: Build canary (this commit)
-        run: python3 scripts/build_index.py --channel canary --repo-tag "main-${{ github.sha }}"
-
-      # The standalone developer tools, served next to the channels so a skill repo never
+      # The standalone developer tools, served next to the index so a skill repo never
       # has to clone this registry to validate:
       #   tools/validate.py, tools/replay.py, tools/stub_bevo.py, tools/check_selectors.mjs,
       #   tools/fixtures/<every file under tests/fixtures/>

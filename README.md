@@ -95,7 +95,7 @@ repo, created from the same template.
    ```
    CI validates the pinned checkout and asserts the pinned commit carries tag
    `v<version>`; maintainers review that exact content (two reviews if
-   `moneyMoving:true`); it lands on `canary`, then `stable` on the next hub tag. A new
+   `moneyMoving:true`); merging to `main` publishes it to every Butler at once. A new
    version is a new tag in your repo plus a PR here moving the pointer. See
    [§8](#8-ship-it).
 
@@ -298,7 +298,7 @@ runs the same validator + replay — so a green check on your own repo means the
 PR's validator step will be green too.
 
 What you cannot test offline — a real Approvals card, a real live feed — is what a
-maintainer checks on staging after the PR lands on `canary`.
+maintainer checks on staging before the PR is merged — merging publishes to everyone.
 
 ## 8. Ship it
 
@@ -322,9 +322,9 @@ CI checks out the pinned commit (`submodules: recursive`) and runs the same vali
 the pin rules: the pinned commit carries tag `v<version>` in your repo, the submodule URL is
 `https://github.com/<owner>/<repo>`, the checkout has no symlinks or nested submodules.
 `moneyMoving:true` skills need **two** maintainer reviews, not one; the review is of the
-pinned content, which is what Butler will clone. External (non-maintainer) PRs always land
-on `canary` first regardless of review count; a maintainer promotes to `stable` by tagging
-this registry `vYYYY.MM.DD[.N]` once it has soaked. Publishing is immutable — a pin that
+pinned content, which is what Butler will clone. The registry publishes ONE index, so a
+merge reaches every Butler immediately — review is the only gate, and there is no soak
+channel. Publishing is immutable — a pin that
 would republish an already-published `name@version` with different bytes is refused; fix
 forward with a new version (new tag, new PR). A broken or unsafe published version is
 disabled fleet-wide by adding it to `yanked.json` (see [SECURITY.md](SECURITY.md)) — never

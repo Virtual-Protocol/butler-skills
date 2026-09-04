@@ -51,8 +51,8 @@ commit and a tag in the skill repo, then a PR here that moves the pointer.
 - **DCO sign-off is required** on every commit in the registry PR (`git commit -s`). CI
   checks this on every PR.
 - **Money-moving skills (`moneyMoving: true`) need two maintainer reviews**, not one.
-  External (non-maintainer) contributions land on the `canary` channel first regardless of
-  review count, and promote to `stable` on the next hub tag.
+  Review is the only gate: the registry publishes ONE index, so a merge to `main` reaches
+  every Butler. There is no soak channel to land on first.
 
 ## Before you open a PR
 
@@ -94,10 +94,9 @@ python3 -m pytest tests -q               # the full local suite
    the DCO check — it must be green before a human looks at the diff.
 3. A `@Virtual-Protocol/butler-maintainers` review (two for `moneyMoving:true`) of the
    **pinned content** — the reviewer reads the skill repo at that commit, which is exactly
-   what Butler will clone — merges to `main`, which republishes the `canary` channel
-   immediately.
-4. A maintainer promotes to `stable` by tagging this registry `vYYYY.MM.DD[.N]` once the
-   change has soaked on `canary`.
+   what Butler will clone — merges to `main`, which republishes the index immediately.
+   Merging IS publishing: there is no second promotion step, and no per-environment view.
+   An owner who wants to hold a version pins it (`bevo-hub install <name>@<version>`).
 
 ## The trust boundary
 

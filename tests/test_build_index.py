@@ -158,12 +158,12 @@ def test_uninitialised_submodule_fails_loudly(tmp_path):
 def test_dry_run_full_repo_schema_version_stays_1(tmp_path, monkeypatch):
     monkeypatch.chdir(REPO_ROOT)
     proc = subprocess.run(
-        [sys.executable, str(REPO_ROOT / "scripts" / "build_index.py"), "--dry-run", "--channel", "canary"],
+        [sys.executable, str(REPO_ROOT / "scripts" / "build_index.py"), "--dry-run"],
         capture_output=True,
         text=True,
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert "skill(s) indexed for channel=canary" in proc.stdout
+    assert "skill(s) indexed" in proc.stdout
     assert '"schemaVersion": 1,' in proc.stdout
 
 
