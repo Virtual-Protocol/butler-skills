@@ -90,12 +90,57 @@ def test_source_block_has_repo_40hex_commit_and_tag_ref():
 def test_source_block_is_additive_files_and_sha256_unchanged():
     entry = build_index.collect_skill(REPO_ROOT / "skills" / "butler-copytrade", yanked=set())
     assert {f["path"] for f in entry["files"]} == {"SKILL.md", "duty.py", "CHANGELOG.md"}
-    # a one-off-only skill has no duty.py and the index simply lists what exists
-    one_off = build_index.collect_skill(REPO_ROOT / "skills" / "butler-contract-call", yanked=set())
-    assert one_off["modes"] == ["one-off"]
-    assert {f["path"] for f in one_off["files"]} == {"SKILL.md", "CHANGELOG.md"}
     for f in entry["files"]:
         assert f["sha256"] == build_index.sha256_file(REPO_ROOT / "skills" / "butler-copytrade" / f["path"])
+
+
+def _live_entries() -> list[dict]:
+    gitmodules = build_index.parse_gitmodules()
+    return [build_index.collect_skill(d, yanked=set(), gitmodules=gitmodules) for d in build_index.list_skill_dirs()]
+
+
+def test_yanked_version_without_a_submodule_is_published_as_a_tombstone():
+    """Removing a skill's submodule must not silently drop its yank: the container's hub
+    client only disables a skill on an index entry carrying yanked:true, and never
+    installs one, so the tombstone needs no files[] and no source."""
+    live = _live_entries()
+    schema = json.loads((REPO_ROOT / "schema" / "index.schema.json").read_text())
+    entry_schema = schema["properties"]["skills"]["items"]
+    tombstones = build_index.tombstone_entries({"gone-skill@1.1.0", "gone-skill@1.0.0"}, live)
+    assert [(t["name"], t["version"]) for t in tombstones] == [("gone-skill", "1.0.0"), ("gone-skill", "1.1.0")]
+    for t in tombstones:
+        assert t["yanked"] is True
+        assert t["files"] == [] and "source" not in t
+        assert set(entry_schema["required"]) <= set(t) <= set(entry_schema["properties"])
+        assert len(t["description"]) <= entry_schema["properties"]["description"]["maxLength"]
+        assert t["tier"] in entry_schema["properties"]["tier"]["enum"]
+    # a yanked version of a skill that is still pinned (at any version) is never
+    # tombstoned: its live entry is what un-yanks and updates the container
+    assert build_index.tombstone_entries({f"{live[0]['name']}@0.0.1"}, live) == []
+    assert build_index.tombstone_entries({f"{live[0]['name']}@{live[0]['version']}"}, live) == []
+    assert build_index.tombstone_entries(set(), live) == []
+
+
+def test_malformed_yanked_spec_fails_loudly():
+    for bad in ("gone-skill", "gone-skill@1.0", "Gone@1.0.0", "gone-skill@v1.0.0"):
+        try:
+            build_index.tombstone_entries({bad}, [])
+        except SystemExit as e:
+            assert "yanked.json" in str(e) and bad in str(e)
+        else:
+            raise AssertionError(f"expected SystemExit for {bad!r}")
+
+
+def test_real_yanked_json_entries_without_a_submodule_are_tombstoned():
+    yanked = build_index.load_yanked()
+    live = _live_entries()
+    live_names = {e["name"] for e in live}
+    expected = {spec for spec in yanked if spec.split("@", 1)[0] not in live_names}
+    tombstones = build_index.tombstone_entries(yanked, live)
+    assert {f"{t['name']}@{t['version']}" for t in tombstones} == expected
+    catalog = build_index.regenerate_catalog(live + tombstones)
+    for t in tombstones:
+        assert f"| `{t['name']}` (yanked) | {t['version']} | — |" in catalog
 
 
 def test_uninitialised_submodule_fails_loudly(tmp_path):

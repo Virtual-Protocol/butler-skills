@@ -143,18 +143,19 @@ that prefix is the container's own bundled-skill namespace (`bevo-hub`, `bevo-on
 
 ## 3. Pick the profile, then ground every command before you write it
 
-Five profiles, each with a worked example already in this repo:
+Five profiles; the trading profile has a worked example pinned in this repo:
 
 - **Trading** — spot/perp/stock, copy-trading, DCA. Toolbox rows: *Trade*, *Other people's
   trades*, *Own history*, *Owner holdings / prices*. Worked example:
   [`butler-copytrade`](https://raw.githubusercontent.com/Virtual-Protocol/butler-skill-copytrade/main/SKILL.md)
   (repo `Virtual-Protocol/butler-skill-copytrade`, pinned here at `skills/butler-copytrade`;
   inlined in full below).
-- **Web3** — contract calls, approvals, LP, staking. Toolbox rows: *Read chain state*,
-  *Build a transaction*, *Sign and send*. Worked example:
-  [`butler-contract-call`](https://raw.githubusercontent.com/Virtual-Protocol/butler-skill-contract-call/main/SKILL.md)
-  (repo `Virtual-Protocol/butler-skill-contract-call`, one-off only) —
-  see [§9](#9-web3-actions-building-and-filing-transactions) for the full how-to.
+- **Web3** — protocol-specific contract interactions: approvals, LP, staking, vaults.
+  Toolbox rows: *Read chain state*, *Build a transaction*, *Sign and send*. The generic
+  build → dry-run → file sequence for a contract call is in every Butler's AGENTS.md §10; a
+  hub skill is only for a PROTOCOL-specific interaction (a named vault, staking contract, LP
+  position) and follows the web3 profile below — see
+  [§9](#9-web3-actions-building-and-filing-transactions) for the full how-to.
 - **Messaging and social** — group members/messages/search, X search, notify, summaries.
   Toolbox rows: *Query group members*, *Query group messages*, *Search X/Twitter*, *Notify
   the owner*.
@@ -247,7 +248,7 @@ one sentence ("any error or uncertainty: `bevo-read request <key>` first — do 
 not a list of the 409 codes the shim already handles; `## Failure handling` carries only
 this skill's rows; `## Limits` is this skill's scope, not the container's global rules. If
 you must point at a container rule, cite the AGENTS.md section rather than paraphrasing
-it. `butler-contract-call` (7.3 KB → 3.8 KB) is what that trim looks like.
+it.
 
 ## 7. Test locally, with no infrastructure
 
@@ -404,12 +405,13 @@ contract address from the owner must echo the address, chain and function back b
 filing — transcription errors are the top failure mode for this profile.
 
 Sources of record: AGENTS.md §10 (the `bevo-rpc` rotation note) and `bevo-docker/CLAUDE.md`
-"On-chain reads happen client-side". See
-[`butler-contract-call`](https://raw.githubusercontent.com/Virtual-Protocol/butler-skill-contract-call/main/SKILL.md)
-for the complete generic pattern every DeFi/LP/staking/approval skill should copy. A
-generic skill that takes the contract as a param declares `web3: {"chains":[...],
-"contracts":[]}` and needs no `## Contracts` section; a skill with fixed contracts lists
-them (selector recomputed by CI) and renders the section.
+"On-chain reads happen client-side". The generic build → dry-run → file sequence for a
+contract call is in every Butler's AGENTS.md §10 and is not a hub skill; a hub skill is only
+for a PROTOCOL-specific interaction (a named vault, staking contract, LP position). Such a
+skill lists its fixed contracts in `metadata.bevo.web3.contracts` (selector recomputed by
+CI) and renders the `## Contracts` section; a skill whose contract address is an
+owner-supplied `address` param declares `web3: {"chains":[...],"contracts":[]}` and needs
+no `## Contracts` section.
 
 ## 10. Anti-patterns
 
@@ -698,18 +700,12 @@ CI fails if it drifts). The skill's own repository, with its full history and ta
 (`main` may be ahead of what the registry pins — [CATALOG.md](CATALOG.md) links the pinned
 tag).
 
-### `butler-contract-call` — web3, the generic build → dry-run → file pattern
+### Web3 — protocol-specific skills only
 
-The pattern every DeFi/LP/staking/approval skill copies: the owner names a contract,
-function and arguments; the skill echoes them back, reads any precondition, encodes the
-call, dry-runs it, files exactly one leg with a key, and reports the `approvalId`. It is
-**one-off only** — every execution is an approval card, so a timer duty around it would
-page the owner every tick; a recurring interaction (claim, compound, rebalance) is its own
-skill built on the same sequence. It is also the reference for the "delta over AGENTS.md"
-trim: under 4 KB, nothing the container already knows. Read the file from its repo
-[`Virtual-Protocol/butler-skill-contract-call`](https://github.com/Virtual-Protocol/butler-skill-contract-call):
-[`SKILL.md`](https://raw.githubusercontent.com/Virtual-Protocol/butler-skill-contract-call/main/SKILL.md) —
-walk through [§9](#9-web3-actions-building-and-filing-transactions) above alongside it.
+The generic build → dry-run → file sequence for a contract call is in every Butler's
+AGENTS.md §10; a hub skill is only for a PROTOCOL-specific interaction (a named vault,
+staking contract, LP position) and follows the web3 profile in
+[§9](#9-web3-actions-building-and-filing-transactions) above.
 
 ---
 
@@ -773,7 +769,7 @@ that needs behaviour the knobs cannot express is a new version, not a fork.
 
 ## The five profiles, in one line each
 
-Trading (spot/perp/stock, copy, DCA) · Web3 (contract calls, approvals, LP, staking) ·
+Trading (spot/perp/stock, copy, DCA) · Web3 (protocol-specific approvals, LP, staking, vaults) ·
 Messaging and social (members/messages/search, X search, notify, summaries) · Real-world
 (virtual-card purchases, location) · Standing behaviour (pick the right trigger kind, code
 vs judgment vs hybrid).

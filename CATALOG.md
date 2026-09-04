@@ -7,5 +7,6 @@ Each skill is its own git repository, pinned here as a submodule at the commit o
 
 | Skill | Version | Repo | Tier | Modes | Money-moving | Description |
 | --- | --- | --- | --- | --- | --- | --- |
-| `butler-contract-call` | 1.0.1 | [Virtual-Protocol/butler-skill-contract-call](https://github.com/Virtual-Protocol/butler-skill-contract-call/tree/v1.0.1) | on-demand | one-off | yes | Build, dry-run and file any named contract call (approve/deposit/stake/claim) as one approval transaction. Use for "call/approve/interact with <contract>". |
+| `bevo-contract-call` (yanked) | 1.0.0 | — | on-demand |  | no | Withdrawn by its maintainers (yanked) and removed from the registry; not installable. |
+| `butler-contract-call` (yanked) | 1.0.1 | — | on-demand |  | no | Withdrawn by its maintainers (yanked) and removed from the registry; not installable. |
 | `butler-copytrade` | 1.0.1 | [Virtual-Protocol/butler-skill-copytrade](https://github.com/Virtual-Protocol/butler-skill-copytrade/tree/v1.0.1) | on-demand | one-off, duty | yes | Copy another member's buys once or as a standing duty, one trade per leader event, never twice. Use for "copy/mirror/follow <@handle or wallet>". |

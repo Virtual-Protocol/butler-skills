@@ -112,6 +112,15 @@ access to this repo's `main` on the strength of write access to a skill repo.
 A published, broken or unsafe skill is fixed forward by a new version — publishing is
 immutable, so there is no "delete a version". A skill is pulled from live use by adding
 `"name@version"` to `yanked.json`; see [SECURITY.md](SECURITY.md) for the fast path.
-Yanking never removes the submodule or rewrites the skill repo (a rename would make
-OpenClaw's `discover_skills` treat it as a brand-new, un-yanked skill; retagging changes
-nothing the registry pins).
+Yanking by itself never removes the submodule or rewrites the skill repo (a rename would
+make OpenClaw's `discover_skills` treat it as a brand-new, un-yanked skill; retagging
+changes nothing the registry pins).
+
+Dropping a skill from the registry outright is a separate decision, and it is `git rm` of
+the submodule **plus** every published `name@version` of it in `yanked.json`. The
+container's hub client only disables a skill on an index entry that carries
+`yanked:true` — a skill that merely disappears from the index stays installed and enabled —
+so `scripts/build_index.py` keeps publishing a `yanked:true` tombstone entry (no `files`,
+no `source`) for every yanked version whose skill no longer has a submodule. A yanked
+version superseded by a newer pin of the same skill needs no tombstone: the newer entry
+un-yanks and updates the container.

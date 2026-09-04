@@ -1,6 +1,3 @@
 [submodule "skills/butler-copytrade"]
 	path = skills/butler-copytrade
 	url = https://github.com/Virtual-Protocol/butler-skill-copytrade
-[submodule "skills/butler-contract-call"]
-	path = skills/butler-contract-call
-	url = https://github.com/Virtual-Protocol/butler-skill-contract-call

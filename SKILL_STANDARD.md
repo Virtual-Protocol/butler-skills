@@ -64,7 +64,7 @@ metadata: {"openclaw":{"emoji":"🪞","requires":{"bins":["acp","bevo-read","bev
 | `metadata.bevo.params` | see Params below |
 | `metadata.bevo.requires.routes` | each matches `^(GET\|POST\|PATCH\|DELETE) /butler-(read\|exec)/[A-Za-z0-9/_:.-]+$` |
 | `metadata.bevo.requires.gates` | subset of `canPerp, canSwap, canStock, canFiat, canOnramp` |
-| `metadata.bevo.web3` | required when the body contains a `send-transaction` / `bevo.execute` line; `contracts` may be `[]` or omitted for a generic skill that takes the contract as a param (then no `## Contracts` section is needed) |
+| `metadata.bevo.web3` | required when the body contains a `send-transaction` / `bevo.execute` line; `contracts` may be `[]` or omitted for a skill that takes the contract address as an owner-supplied param (then no `## Contracts` section is needed) |
 
 ## Body sections, in this exact order
 

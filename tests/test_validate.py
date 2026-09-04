@@ -151,7 +151,7 @@ def _write_web3_skill(skill_dir: Path, contracts_json: str, with_contracts_secti
 
 
 def test_web3_skill_with_empty_contracts_needs_no_contracts_section(tmp_path):
-    # A generic contract-call skill takes the contract as a param: contracts: [] is fine.
+    # A skill that takes the contract address as an owner-supplied param: contracts: [] is fine.
     skill_dir = tmp_path / "foo"
     _write_web3_skill(skill_dir, "[]", with_contracts_section=False)
     ok, result = validate.validate_skill(skill_dir, set(), maintainer=False, json_mode=True, standalone=True)
