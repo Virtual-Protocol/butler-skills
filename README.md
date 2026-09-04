@@ -458,8 +458,8 @@ with both a one-off and a duty mode.
 ---
 name: butler-copytrade
 description: Copy another member's buys once or as a standing duty, one trade per leader event, never twice. Use for "copy/mirror/follow <@handle or wallet>".
-version: 1.0.1
-metadata: {"openclaw":{"emoji":"🪞","requires":{"bins":["acp","bevo-read","bevo-automation"]}},"bevo":{"tier":"on-demand","modes":["one-off","duty"],"moneyMoving":true,"keywords":["copy trade","mirror wallet","follow trader"],"requires":{"routes":["GET /butler-read/user","GET /butler-read/trade-activity","POST /butler-exec/trade","POST /butler-exec/services"],"features":["tradeIdempotency","execRequestStatus"],"gates":["canSwap"],"bins":["acp","bevo-read","bevo-automation"]},"params":[{"name":"LEADER","type":"principalId|wallet","required":true,"ask":"who to copy"},{"name":"COPY_USDC_PER_TRADE","type":"usd","default":25,"min":2,"max":10000},{"name":"COPY_MAX_USDC","type":"usd","default":50,"min":2,"max":10000},{"name":"COPY_RATIO","type":"number","default":0,"min":0,"max":1,"help":"share of the leader's USD size; 0 = fixed size"},{"name":"CHAIN_IDS","type":"chainIds","default":[8453]}],"dutyTemplate":"duty.py"}}
+version: 1.1.0
+metadata: {"openclaw":{"emoji":"🪞","requires":{"bins":["acp","bevo-read","bevo-automation"]}},"butler":{"tier":"on-demand","modes":["one-off","duty"],"moneyMoving":true,"keywords":["copy trade","mirror wallet","follow trader"],"requires":{"routes":["GET /butler-read/user","GET /butler-read/trade-activity","POST /butler-exec/trade","POST /butler-exec/services"],"features":["tradeIdempotency","execRequestStatus"],"gates":["canSwap"],"bins":["acp","bevo-read","bevo-automation"]},"params":[{"name":"LEADER","type":"principalId|wallet","required":true,"ask":"who to copy"},{"name":"COPY_USDC_PER_TRADE","type":"usd","default":25,"min":2,"max":10000},{"name":"COPY_MAX_USDC","type":"usd","default":50,"min":2,"max":10000},{"name":"COPY_RATIO","type":"number","default":0,"min":0,"max":1,"help":"share of the leader's USD size; 0 = fixed size"},{"name":"CHAIN_IDS","type":"chainIds","default":[8453]}],"dutyTemplate":"duty.py"}}
 ---
 
 ## When to use
