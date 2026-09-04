@@ -48,5 +48,7 @@ critical.
 A maintainer adds `"name@version"` to `yanked.json` and merges directly to `main`
 (bypassing the normal PR review for a security fix is acceptable here). The next publish
 run marks that version `yanked:true` in `index.json`; every container's hub client disables
-it on its next sync and notifies the owner once. Yanking does not stop a duty a Butler
-already created from that skill's `duty.py` — see each skill's `## Limits` section.
+it on its next sync and notifies the owner once. (A yanked version whose submodule has
+since been removed from the registry is still published, as a `yanked:true` tombstone
+entry, so the yank reaches containers that installed it.) Yanking does not stop a duty a
+Butler already created from that skill's `duty.py` — see each skill's `## Limits` section.

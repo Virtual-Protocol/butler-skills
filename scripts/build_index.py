@@ -20,6 +20,14 @@ the registry pins:
 value and ignores keys it does not know, so a v1 client keeps installing from
 files[] while a git-aware one clones source.commit and falls back to files[].
 
+A yanked "name@version" (yanked.json) whose skill no longer has a submodule is
+still published, as a tombstone entry: yanked:true, no files[], no source. The
+container's hub client only disables a skill on an index entry that carries
+yanked:true — a skill that merely disappears from the index stays installed and
+enabled — and it never installs a yanked entry, so the tombstone needs nothing
+else. A yanked version of a skill that is still pinned (at any version) gets no
+tombstone: the live entry is what un-yanks and updates the container.
+
 Refuses to overwrite an existing dist/skills/<name>/<version>/ directory
 unless its contents are byte-identical to what would be written (immutable
 publishing). --dry-run performs every check and prints what would be
@@ -50,6 +58,8 @@ GITMODULES_PATH = REPO_ROOT / ".gitmodules"
 BASE_URL_TEMPLATE = "https://virtual-protocol.github.io/butler-skills"
 
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+YANKED_SPEC_RE = re.compile(r"^([a-z0-9][a-z0-9-]{1,63})@(\d+\.\d+\.\d+)$")
+TOMBSTONE_DESCRIPTION = "Withdrawn by its maintainers (yanked) and removed from the registry; not installable."
 
 
 def parse_gitmodules(path: Path = GITMODULES_PATH) -> dict[str, dict]:
@@ -165,6 +175,36 @@ def load_yanked() -> set[str]:
     return set(data.get("yanked", []))
 
 
+def tombstone_entries(yanked: set[str], entries: list[dict]) -> list[dict]:
+    """A yanked:true tombstone for every yanked "name@version" whose skill has
+    no live entry (no submodule any more). Sorted by spec so the output is
+    stable. Refuses a malformed spec — a typo in yanked.json must fail the
+    build, not silently yank nothing."""
+    live_names = {e["name"] for e in entries}
+    tombstones: list[dict] = []
+    for spec in sorted(yanked):
+        m = YANKED_SPEC_RE.match(spec)
+        if not m:
+            raise SystemExit(f"yanked.json: {spec!r} is not <name>@<X.Y.Z>")
+        name, version = m.group(1), m.group(2)
+        if name in live_names:
+            continue
+        tombstones.append({
+            "name": name,
+            "version": version,
+            "description": TOMBSTONE_DESCRIPTION,
+            "tier": "on-demand",
+            "modes": [],
+            "moneyMoving": False,
+            "keywords": [],
+            "params": [],
+            "requires": {},
+            "yanked": True,
+            "files": [],
+        })
+    return tombstones
+
+
 def render_contracts_section(web3: dict) -> str:
     if not web3 or not web3.get("contracts"):
         return ""
@@ -274,6 +314,8 @@ def main() -> int:
     entries = []
     for d in skill_dirs:
         entries.append(collect_skill(d, yanked, gitmodules))
+    tombstones = tombstone_entries(yanked, entries)
+    entries.extend(tombstones)
 
     index = {
         "schemaVersion": 1,
@@ -306,7 +348,10 @@ def main() -> int:
         CATALOG_PATH.write_text(catalog)
         print(f"wrote {CATALOG_PATH}")
 
-    print(f"{len(entries)} skill(s) indexed for channel={args.channel}")
+    summary = f"{len(entries) - len(tombstones)} skill(s) indexed for channel={args.channel}"
+    if tombstones:
+        summary += f", plus {len(tombstones)} yanked tombstone(s)"
+    print(summary)
     return 0
 
 

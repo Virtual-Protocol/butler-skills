@@ -20,7 +20,6 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 COPYTRADE = REPO_ROOT / "skills" / "butler-copytrade"
-CONTRACT_CALL = REPO_ROOT / "skills" / "butler-contract-call"
 LEADER_ENV = "LEADER=11111111-1111-1111-1111-111111111111"
 
 
@@ -193,12 +192,13 @@ def test_replay_without_download_fails_loudly_on_a_missing_fixture(tmp_path):
 
 
 def test_replay_is_skipped_cleanly_for_a_one_off_only_skill(tmp_path):
-    """butler-contract-call has no duty.py: replay prints 'nothing to replay', exits 0,
+    """A one-off-only skill ships no duty.py: replay prints 'nothing to replay', exits 0,
     and never needs a stub or a fixture."""
     dev = tmp_path / "dev"
     dev.mkdir()
     shutil.copy2(REPO_ROOT / "tests" / "replay.py", dev / "replay.py")
-    skill = _copy_skill(CONTRACT_CALL, tmp_path / "checkout")
+    skill = _copy_skill(COPYTRADE, tmp_path / "checkout")
+    (skill / "duty.py").unlink()
     assert not (skill / "duty.py").exists()
     r = _run([sys.executable, str(dev / "replay.py"), "--standalone", str(skill), "--fixture", "trade-activity-page", "--no-download"], cwd=tmp_path)
     assert r.returncode == 0, r.stdout + r.stderr
