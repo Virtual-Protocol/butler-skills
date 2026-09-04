@@ -173,7 +173,7 @@ Five profiles; the trading profile has a worked example pinned in this repo:
 container regardless of what a model "remembers" from training. The grammar of record is
 `bevo-docker/entrypoint.py` (`DEFAULT_AGENTS_CONTEXT`) and the shims in
 `bevo-docker/api/scripts/`; the routes of record are `bevo-server/server/routes/
-butlerRead.ts` and `butlerExec.ts` (declare each route you use in `metadata.bevo.requires.
+butlerRead.ts` and `butlerExec.ts` (declare each route you use in `metadata.butler.requires.
 routes`); the duty SDK of record is `bevo-docker/api/bevo_services/sdk.py`; the duty
 payload of record is `bevo-docker/docs/butler-automation-authoring.md`. If you do not have
 access to those repos, the [toolbox table](#the-butler-toolbox) below is the same contract
@@ -408,7 +408,7 @@ Sources of record: AGENTS.md §10 (the `bevo-rpc` rotation note) and `bevo-docke
 "On-chain reads happen client-side". The generic build → dry-run → file sequence for a
 contract call is in every Butler's AGENTS.md §10 and is not a hub skill; a hub skill is only
 for a PROTOCOL-specific interaction (a named vault, staking contract, LP position). Such a
-skill lists its fixed contracts in `metadata.bevo.web3.contracts` (selector recomputed by
+skill lists its fixed contracts in `metadata.butler.web3.contracts` (selector recomputed by
 CI) and renders the `## Contracts` section; a skill whose contract address is an
 owner-supplied `address` param declares `web3: {"chains":[...],"contracts":[]}` and needs
 no `## Contracts` section.

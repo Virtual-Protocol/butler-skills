@@ -278,27 +278,27 @@ def validate_schema(fm: dict, issues: Issues) -> None:
     metadata = fm.get("metadata")
     if not isinstance(metadata, dict):
         return
-    if "bevo" not in metadata:
-        issues.error("metadata.bevo", "required block missing")
+    if "butler" not in metadata:
+        issues.error("metadata.butler", "required block missing")
         return
-    bevo = metadata["bevo"]
-    if not isinstance(bevo, dict):
-        issues.error("metadata.bevo", "must be an object")
+    butler = metadata["butler"]
+    if not isinstance(butler, dict):
+        issues.error("metadata.butler", "must be an object")
         return
     for req in ("tier", "modes", "moneyMoving"):
-        if req not in bevo:
-            issues.error(f"metadata.bevo.{req}", "required field missing")
-    if bevo.get("tier") not in (None, "core", "on-demand"):
-        issues.error("metadata.bevo.tier", f"must be core|on-demand, got {bevo.get('tier')!r}")
-    if "modes" in bevo:
-        if not isinstance(bevo["modes"], list) or not bevo["modes"]:
-            issues.error("metadata.bevo.modes", "must be a non-empty array")
+        if req not in butler:
+            issues.error(f"metadata.butler.{req}", "required field missing")
+    if butler.get("tier") not in (None, "core", "on-demand"):
+        issues.error("metadata.butler.tier", f"must be core|on-demand, got {butler.get('tier')!r}")
+    if "modes" in butler:
+        if not isinstance(butler["modes"], list) or not butler["modes"]:
+            issues.error("metadata.butler.modes", "must be a non-empty array")
         else:
-            for m in bevo["modes"]:
+            for m in butler["modes"]:
                 if m not in ("one-off", "duty"):
-                    issues.error("metadata.bevo.modes", f"unknown mode {m!r}")
-    if "moneyMoving" in bevo and not isinstance(bevo["moneyMoving"], bool):
-        issues.error("metadata.bevo.moneyMoving", "must be a bool")
+                    issues.error("metadata.butler.modes", f"unknown mode {m!r}")
+    if "moneyMoving" in butler and not isinstance(butler["moneyMoving"], bool):
+        issues.error("metadata.butler.moneyMoving", "must be a bool")
 
     # openclaw metadata key allowlist
     openclaw = metadata.get("openclaw")
@@ -315,15 +315,15 @@ def validate_schema(fm: dict, issues: Issues) -> None:
                     issues.error("metadata.openclaw.requires", f"forbidden keys: {sorted(extra2)} (only bins allowed)")
 
     # params
-    params = bevo.get("params", [])
+    params = butler.get("params", [])
     if params:
         seen = set()
         for p in params:
             pname = p.get("name", "")
             if not PARAM_NAME_RE.match(pname):
-                issues.error("metadata.bevo.params", f"{pname!r} must match ^[A-Z][A-Z0-9_]*$")
+                issues.error("metadata.butler.params", f"{pname!r} must match ^[A-Z][A-Z0-9_]*$")
             if pname in seen:
-                issues.error("metadata.bevo.params", f"duplicate param name {pname!r}")
+                issues.error("metadata.butler.params", f"duplicate param name {pname!r}")
             seen.add(pname)
             ptype = p.get("type")
             valid_types = {
@@ -331,30 +331,30 @@ def validate_schema(fm: dict, issues: Issues) -> None:
                 "principalId", "wallet", "principalId|wallet", "string", "bool",
             }
             if ptype not in valid_types:
-                issues.error("metadata.bevo.params", f"{pname}: unknown type {ptype!r}")
+                issues.error("metadata.butler.params", f"{pname}: unknown type {ptype!r}")
             default = p.get("default")
             if default is not None and isinstance(default, (int, float)):
                 if "min" in p and default < p["min"]:
-                    issues.error("metadata.bevo.params", f"{pname}: default {default} < min {p['min']}")
+                    issues.error("metadata.butler.params", f"{pname}: default {default} < min {p['min']}")
                 if "max" in p and default > p["max"]:
-                    issues.error("metadata.bevo.params", f"{pname}: default {default} > max {p['max']}")
+                    issues.error("metadata.butler.params", f"{pname}: default {default} > max {p['max']}")
             if p.get("required") and not p.get("ask"):
-                issues.error("metadata.bevo.params", f"{pname}: required param must declare 'ask'")
+                issues.error("metadata.butler.params", f"{pname}: required param must declare 'ask'")
 
     # requires.routes / gates
-    requires = bevo.get("requires", {})
+    requires = butler.get("requires", {})
     if isinstance(requires, dict):
         for route in requires.get("routes", []):
             if not ROUTE_RE.match(route):
-                issues.error("metadata.bevo.requires.routes", f"{route!r} does not match required pattern")
+                issues.error("metadata.butler.requires.routes", f"{route!r} does not match required pattern")
         for gate in requires.get("gates", []):
             if gate not in GATES:
-                issues.error("metadata.bevo.requires.gates", f"unknown gate {gate!r}")
+                issues.error("metadata.butler.requires.gates", f"unknown gate {gate!r}")
 
     # web3 block
-    web3 = bevo.get("web3")
+    web3 = butler.get("web3")
     if web3 is not None and not isinstance(web3, dict):
-        issues.error("metadata.bevo.web3", "must be an object")
+        issues.error("metadata.butler.web3", "must be an object")
 
 
 def check_name_matches_dir(fm: dict, skill_dir: Path, issues: Issues) -> None:
@@ -749,19 +749,19 @@ def _const_str(node) -> str | None:
 
 
 def check_web3(fm: dict, body: str, money_lines: list[str], issues: Issues) -> None:
-    bevo = fm.get("metadata", {}).get("bevo", {}) if isinstance(fm.get("metadata"), dict) else {}
+    butler = fm.get("metadata", {}).get("butler", {}) if isinstance(fm.get("metadata"), dict) else {}
     has_send_tx = any("send-transaction" in line or "bevo.execute" in line for line in money_lines) or "send-transaction" in body or "bevo.execute(" in body
-    web3 = bevo.get("web3")
+    web3 = butler.get("web3")
     if has_send_tx and not isinstance(web3, dict):
         issues.error(
             "web3",
-            "skill files send-transaction / bevo.execute but declares no metadata.bevo.web3 block "
+            "skill files send-transaction / bevo.execute but declares no metadata.butler.web3 block "
             '(a generic skill that takes the contract as a param declares {"chains":[...],"contracts":[]})',
         )
     if isinstance(web3, dict):
         contracts = web3.get("contracts") or []
         if not isinstance(contracts, list):
-            issues.error("web3", "metadata.bevo.web3.contracts must be an array")
+            issues.error("web3", "metadata.butler.web3.contracts must be an array")
             contracts = []
         for contract in contracts:
             addr = contract.get("address", "")
@@ -878,10 +878,10 @@ def validate_skill(
     check_secrets_and_urls(text, issues)
     check_override_phrases(fm.get("description", ""), body, issues)
 
-    bevo = fm.get("metadata", {}).get("bevo", {}) if isinstance(fm.get("metadata"), dict) else {}
-    moneymoving = bool(bevo.get("moneyMoving"))
-    modes = bevo.get("modes", [])
-    params = bevo.get("params", [])
+    butler = fm.get("metadata", {}).get("butler", {}) if isinstance(fm.get("metadata"), dict) else {}
+    moneymoving = bool(butler.get("moneyMoving"))
+    modes = butler.get("modes", [])
+    params = butler.get("params", [])
 
     money_lines = check_command_allowlist(body, issues)
     check_sections(body, moneymoving, issues)

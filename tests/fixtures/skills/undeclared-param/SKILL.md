@@ -2,7 +2,7 @@
 name: undeclared-param
 description: Fixture whose duty.py reads an environment key that is not declared in params — must fail validation.
 version: 1.0.0
-metadata: {"openclaw":{"emoji":"❓"},"bevo":{"tier":"on-demand","modes":["duty"],"moneyMoving":false,"keywords":["fixture"],"requires":{"routes":[],"features":[],"gates":[],"bins":[]},"params":[{"name":"KNOWN_PARAM","type":"string","default":"x"}]}}
+metadata: {"openclaw":{"emoji":"❓"},"butler":{"tier":"on-demand","modes":["duty"],"moneyMoving":false,"keywords":["fixture"],"requires":{"routes":[],"features":[],"gates":[],"bins":[]},"params":[{"name":"KNOWN_PARAM","type":"string","default":"x"}]}}
 ---
 
 ## When to use

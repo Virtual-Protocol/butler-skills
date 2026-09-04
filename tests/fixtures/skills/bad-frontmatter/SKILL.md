@@ -2,7 +2,7 @@
 name: bad-frontmatter
 description: Fixture with metadata that is not valid single-line JSON — must fail validation.
 version: 1.0.0
-metadata: {"openclaw": {"emoji": "x"}, "bevo": {"tier": "on-demand", "modes": ["one-off"],}}
+metadata: {"openclaw": {"emoji": "x"}, "butler": {"tier": "on-demand", "modes": ["one-off"],}}
 ---
 
 ## When to use

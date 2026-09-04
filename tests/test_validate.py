@@ -81,13 +81,33 @@ def test_unmarked_step_fails():
     assert any(e.startswith("steps") for e in result["errors"])
 
 
+def test_the_pre_rename_bevo_block_is_rejected(tmp_path):
+    """The namespace key is `metadata.butler`. `metadata.bevo` is the
+    pre-rename spelling and is refused outright — this is a hard cut, so a
+    skill carrying the old key must fail here rather than validate and then
+    read as an empty block in the container."""
+    skill_dir = tmp_path / "butler-old-key"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        '---\nname: butler-old-key\ndescription: x\nversion: 1.0.0\n'
+        'metadata: {"bevo":{"tier":"on-demand","modes":["one-off"],"moneyMoving":false}}\n---\n\n'
+        "## When to use\nx\n## Before you start\nx\n## Customize\nx\n"
+        "## One-off procedure\n1. [FIXED] x\n## Failure handling\n|a|b|\n|-|-|\n## Limits\nx\n"
+        "## Say to the owner\nx\n"
+    )
+    (skill_dir / "CHANGELOG.md").write_text("# Changelog\n")
+    ok, result = validate.validate_skill(skill_dir, set(), maintainer=True, json_mode=True)
+    assert not ok
+    assert any(e.startswith("metadata.butler: required block missing") for e in result["errors"])
+
+
 def test_reserved_name_rejected(tmp_path):
     reserved = {"web-checkout"}
     skill_dir = tmp_path / "web-checkout"
     skill_dir.mkdir()
     (skill_dir / "SKILL.md").write_text(
         '---\nname: web-checkout\ndescription: x\nversion: 1.0.0\n'
-        'metadata: {"bevo":{"tier":"on-demand","modes":["one-off"],"moneyMoving":false}}\n---\n\n'
+        'metadata: {"butler":{"tier":"on-demand","modes":["one-off"],"moneyMoving":false}}\n---\n\n'
         "## When to use\nx\n## Before you start\nx\n## Customize\nx\n"
         "## One-off procedure\n1. [FIXED] x\n## Failure handling\n|a|b|\n|-|-|\n## Limits\nx\n"
         "## Say to the owner\nx\n"
@@ -140,7 +160,7 @@ def _write_web3_skill(skill_dir: Path, contracts_json: str, with_contracts_secti
     section = "## Contracts\n|a|b|\n|-|-|\n" if with_contracts_section else ""
     (skill_dir / "SKILL.md").write_text(
         "---\nname: foo\ndescription: x\nversion: 1.0.0\n"
-        'metadata: {"bevo":{"tier":"on-demand","modes":["one-off"],"moneyMoving":true,'
+        'metadata: {"butler":{"tier":"on-demand","modes":["one-off"],"moneyMoving":true,'
         '"web3":{"chains":[8453],"contracts":' + contracts_json + "}}}\n---\n\n"
         "## When to use\nx\n## Before you start\nx\n## Customize\nx\n" + section +
         "## One-off procedure\n1. [FIXED] x\n\n   ```bash\n   acp wallet send-transaction --chain-id 8453 --to 0x --data 0x --idempotency-key k\n   ```\n\n"
@@ -177,7 +197,7 @@ def test_send_transaction_without_any_web3_block_is_still_refused(tmp_path):
     (skill_dir / "SKILL.md").write_text(text)
     ok, result = validate.validate_skill(skill_dir, set(), maintainer=False, json_mode=True, standalone=True)
     assert not ok
-    assert any(e.startswith("web3:") and "declares no metadata.bevo.web3 block" in e for e in result["errors"])
+    assert any(e.startswith("web3:") and "declares no metadata.butler.web3 block" in e for e in result["errors"])
 
 
 def test_downloaded_tooling_in_the_tree_is_a_warning_not_an_error(tmp_path):
@@ -198,7 +218,7 @@ def _write_minimal_skill(skill_dir: Path, name: str) -> None:
     skill_dir.mkdir(parents=True, exist_ok=True)
     (skill_dir / "SKILL.md").write_text(
         f'---\nname: {name}\ndescription: x\nversion: 1.0.0\n'
-        'metadata: {"bevo":{"tier":"on-demand","modes":["one-off"],"moneyMoving":false}}\n---\n\n'
+        'metadata: {"butler":{"tier":"on-demand","modes":["one-off"],"moneyMoving":false}}\n---\n\n'
         "## When to use\nx\n## Before you start\nx\n## Customize\nx\n"
         "## One-off procedure\n1. [FIXED] x\n## Failure handling\n|a|b|\n|-|-|\n## Limits\nx\n"
         "## Say to the owner\nx\n"

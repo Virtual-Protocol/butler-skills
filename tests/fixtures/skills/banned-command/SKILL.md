@@ -2,7 +2,7 @@
 name: banned-command
 description: Fixture whose procedure uses a raw curl and a bare acp --help — must fail the command allowlist check.
 version: 1.0.0
-metadata: {"openclaw":{"emoji":"🚫"},"bevo":{"tier":"on-demand","modes":["one-off"],"moneyMoving":false,"keywords":["fixture"],"requires":{"routes":[],"features":[],"gates":[],"bins":[]},"params":[]}}
+metadata: {"openclaw":{"emoji":"🚫"},"butler":{"tier":"on-demand","modes":["one-off"],"moneyMoving":false,"keywords":["fixture"],"requires":{"routes":[],"features":[],"gates":[],"bins":[]},"params":[]}}
 ---
 
 ## When to use

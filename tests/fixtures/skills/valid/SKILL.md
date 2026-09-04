@@ -2,7 +2,7 @@
 name: valid
 description: A minimal, fully compliant skill fixture used to test that the validator passes clean input.
 version: 1.0.0
-metadata: {"openclaw":{"emoji":"✅","requires":{"bins":["bevo-read"]}},"bevo":{"tier":"on-demand","modes":["one-off"],"moneyMoving":false,"keywords":["fixture"],"requires":{"routes":["GET /butler-read/me"],"features":[],"gates":[],"bins":["bevo-read"]},"params":[{"name":"GREETING","type":"string","default":"hello"}]}}
+metadata: {"openclaw":{"emoji":"✅","requires":{"bins":["bevo-read"]}},"butler":{"tier":"on-demand","modes":["one-off"],"moneyMoving":false,"keywords":["fixture"],"requires":{"routes":["GET /butler-read/me"],"features":[],"gates":[],"bins":["bevo-read"]},"params":[{"name":"GREETING","type":"string","default":"hello"}]}}
 ---
 
 ## When to use

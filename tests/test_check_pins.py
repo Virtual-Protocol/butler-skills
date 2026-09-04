@@ -27,7 +27,7 @@ check_pins = _load_check_pins()
 
 SKILL_MD = (
     "---\nname: foo\ndescription: x\nversion: 1.0.0\n"
-    'metadata: {"bevo":{"tier":"on-demand","modes":["one-off"],"moneyMoving":false}}\n---\n\n'
+    'metadata: {"butler":{"tier":"on-demand","modes":["one-off"],"moneyMoving":false}}\n---\n\n'
     "## When to use\nx\n"
 )
 
