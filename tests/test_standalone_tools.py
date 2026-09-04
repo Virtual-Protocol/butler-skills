@@ -122,7 +122,7 @@ def test_standalone_validate_uses_the_embedded_reserved_list(tmp_path):
     skill.mkdir()
     (skill / "SKILL.md").write_text(
         "---\nname: clawhub\ndescription: x\nversion: 1.0.0\n"
-        'metadata: {"bevo":{"tier":"on-demand","modes":["one-off"],"moneyMoving":false}}\n---\n\n'
+        'metadata: {"butler":{"tier":"on-demand","modes":["one-off"],"moneyMoving":false}}\n---\n\n'
         "## When to use\nx\n## Before you start\nx\n## Customize\nx\n"
         "## One-off procedure\n1. [FIXED] x\n## Failure handling\n|a|b|\n|-|-|\n## Limits\nx\n"
         "## Say to the owner\nx\n"

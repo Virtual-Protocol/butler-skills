@@ -26,7 +26,7 @@
     "metadata": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["bevo"],
+      "required": ["butler"],
       "properties": {
         "openclaw": {
           "type": "object",
@@ -46,7 +46,7 @@
             }
           }
         },
-        "bevo": {
+        "butler": {
           "type": "object",
           "additionalProperties": false,
           "required": ["tier", "modes", "moneyMoving"],

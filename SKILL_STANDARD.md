@@ -48,7 +48,7 @@ JSON (the openclaw parser reads line-oriented, not a YAML block).
 name: butler-copytrade
 description: Copy another member's buys once or as a standing duty, one trade per leader event, never twice. Use for "copy/mirror/follow <@handle or wallet>".
 version: 1.0.1
-metadata: {"openclaw":{"emoji":"🪞","requires":{"bins":["acp","bevo-read","bevo-automation"]}},"bevo":{"tier":"on-demand","modes":["one-off","duty"],"moneyMoving":true,"keywords":["copy trade","mirror wallet","follow trader"],"requires":{"routes":["GET /butler-read/user","GET /butler-read/trade-activity","POST /butler-exec/trade","POST /butler-exec/services"],"features":["tradeIdempotency","execRequestStatus"],"gates":["canSwap"],"bins":["acp","bevo-read","bevo-automation"]},"params":[{"name":"LEADER","type":"principalId|wallet","required":true,"ask":"who to copy"},{"name":"COPY_USDC_PER_TRADE","type":"usd","default":25,"min":2,"max":10000}],"dutyTemplate":"duty.py"}}
+metadata: {"openclaw":{"emoji":"🪞","requires":{"bins":["acp","bevo-read","bevo-automation"]}},"butler":{"tier":"on-demand","modes":["one-off","duty"],"moneyMoving":true,"keywords":["copy trade","mirror wallet","follow trader"],"requires":{"routes":["GET /butler-read/user","GET /butler-read/trade-activity","POST /butler-exec/trade","POST /butler-exec/services"],"features":["tradeIdempotency","execRequestStatus"],"gates":["canSwap"],"bins":["acp","bevo-read","bevo-automation"]},"params":[{"name":"LEADER","type":"principalId|wallet","required":true,"ask":"who to copy"},{"name":"COPY_USDC_PER_TRADE","type":"usd","default":25,"min":2,"max":10000}],"dutyTemplate":"duty.py"}}
 ---
 ```
 
@@ -58,13 +58,13 @@ metadata: {"openclaw":{"emoji":"🪞","requires":{"bins":["acp","bevo-read","bev
 | `description` | required, <= 160 chars, no wallet addresses, no override-phrase language |
 | `version` | semver `X.Y.Z`, bumped whenever the skill changes; the skill repo is tagged `v<version>` and the registry pins that tag's commit |
 | `metadata.openclaw` | only `emoji`, `homepage`, `requires.bins` allowed — no `always`, `install`, `requires.env`, `primaryEnv`, `os`, `disable-model-invocation` |
-| `metadata.bevo.tier` | `core` \| `on-demand` |
-| `metadata.bevo.modes` | subset of `["one-off","duty"]`, non-empty |
-| `metadata.bevo.moneyMoving` | bool |
-| `metadata.bevo.params` | see Params below |
-| `metadata.bevo.requires.routes` | each matches `^(GET\|POST\|PATCH\|DELETE) /butler-(read\|exec)/[A-Za-z0-9/_:.-]+$` |
-| `metadata.bevo.requires.gates` | subset of `canPerp, canSwap, canStock, canFiat, canOnramp` |
-| `metadata.bevo.web3` | required when the body contains a `send-transaction` / `bevo.execute` line; `contracts` may be `[]` or omitted for a skill that takes the contract address as an owner-supplied param (then no `## Contracts` section is needed) |
+| `metadata.butler.tier` | `core` \| `on-demand` |
+| `metadata.butler.modes` | subset of `["one-off","duty"]`, non-empty |
+| `metadata.butler.moneyMoving` | bool |
+| `metadata.butler.params` | see Params below |
+| `metadata.butler.requires.routes` | each matches `^(GET\|POST\|PATCH\|DELETE) /butler-(read\|exec)/[A-Za-z0-9/_:.-]+$` |
+| `metadata.butler.requires.gates` | subset of `canPerp, canSwap, canStock, canFiat, canOnramp` |
+| `metadata.butler.web3` | required when the body contains a `send-transaction` / `bevo.execute` line; `contracts` may be `[]` or omitted for a skill that takes the contract address as an owner-supplied param (then no `## Contracts` section is needed) |
 
 ## Body sections, in this exact order
 
@@ -73,7 +73,7 @@ metadata: {"openclaw":{"emoji":"🪞","requires":{"bins":["acp","bevo-read","bev
 (**mandatory when `moneyMoving:true`**, must contain the phrase "do not re-run") ·
 `## Failure handling` · `## Limits` · `## Say to the owner`.
 
-Web3 skills that list `metadata.bevo.web3.contracts` additionally carry a `## Contracts`
+Web3 skills that list `metadata.butler.web3.contracts` additionally carry a `## Contracts`
 section (rendered from that block so the constants cannot drift from the frontmatter); an
 empty `contracts` list needs none.
 
@@ -126,7 +126,7 @@ subcommand list; `acp <area>` subcommands are checked against the real `acp` are
 
 ## Web3 rules
 
-- Every listed `metadata.bevo.web3.contracts[].functions[].selector` is recomputed from its
+- Every listed `metadata.butler.web3.contracts[].functions[].selector` is recomputed from its
   `signature` with viem (`scripts/check_selectors.mjs`) and must match (nothing to check
   when `contracts` is empty).
 - Contract `address` is a checksummed `0x` + 40 hex chars, or a `{{PARAM}}` placeholder of

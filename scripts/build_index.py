@@ -219,7 +219,7 @@ def collect_skill(skill_dir: Path, yanked: set[str], gitmodules: dict[str, dict]
     skill_md = skill_dir / "SKILL.md"
     text = skill_md.read_text()
     fm = parse_frontmatter_light(text)
-    bevo = fm.get("metadata", {}).get("bevo", {})
+    butler = fm.get("metadata", {}).get("butler", {})
     name = fm["name"]
     version = fm["version"]
     files = []
@@ -230,12 +230,12 @@ def collect_skill(skill_dir: Path, yanked: set[str], gitmodules: dict[str, dict]
         "name": name,
         "version": version,
         "description": fm.get("description", ""),
-        "tier": bevo.get("tier", "on-demand"),
-        "modes": bevo.get("modes", []),
-        "moneyMoving": bool(bevo.get("moneyMoving", False)),
-        "keywords": bevo.get("keywords", []),
-        "params": bevo.get("params", []),
-        "requires": bevo.get("requires", {}),
+        "tier": butler.get("tier", "on-demand"),
+        "modes": butler.get("modes", []),
+        "moneyMoving": bool(butler.get("moneyMoving", False)),
+        "keywords": butler.get("keywords", []),
+        "params": butler.get("params", []),
+        "requires": butler.get("requires", {}),
         "yanked": f"{name}@{version}" in yanked,
         "files": files,
         "source": source_block(skill_dir, version, gitmodules),

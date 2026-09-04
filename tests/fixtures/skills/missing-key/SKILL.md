@@ -2,7 +2,7 @@
 name: missing-key
 description: Fixture with a duty.py that calls bevo.trade without an idempotency_key — must fail validation.
 version: 1.0.0
-metadata: {"openclaw":{"emoji":"❌","requires":{"bins":["acp"]}},"bevo":{"tier":"on-demand","modes":["duty"],"moneyMoving":true,"keywords":["fixture"],"requires":{"routes":["POST /butler-exec/trade"],"features":[],"gates":["canSwap"],"bins":["acp"]},"params":[{"name":"AMOUNT","type":"usd","default":10,"min":2,"max":100}]}}
+metadata: {"openclaw":{"emoji":"❌","requires":{"bins":["acp"]}},"butler":{"tier":"on-demand","modes":["duty"],"moneyMoving":true,"keywords":["fixture"],"requires":{"routes":["POST /butler-exec/trade"],"features":[],"gates":["canSwap"],"bins":["acp"]},"params":[{"name":"AMOUNT","type":"usd","default":10,"min":2,"max":100}]}}
 ---
 
 ## When to use
