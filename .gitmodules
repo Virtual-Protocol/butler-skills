@@ -1,3 +1,6 @@
 [submodule "skills/butler-copytrade"]
 	path = skills/butler-copytrade
 	url = https://github.com/Virtual-Protocol/butler-skill-copytrade
+[submodule "skills/butler-dca"]
+	path = skills/butler-dca
+	url = https://github.com/Virtual-Protocol/butler-skill-dca
