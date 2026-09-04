@@ -23,17 +23,22 @@ critical.
 
 ## What is in scope
 
-- `scripts/validate.py`, `scripts/check_pins.py`, `scripts/build_index.py`,
+- `scripts/validate.py`, `scripts/check_registry.py`, `scripts/build_index.py`,
   `scripts/check_selectors.mjs`, `scripts/new_skill.py` — the CI gate itself.
 - `schema/*.json` — the frontmatter and index contracts.
 - `.github/workflows/*.yml` — the publish pipeline (GitHub Pages, tokens, permissions).
-- `.gitmodules` and the `skills/<name>` pins — the trust boundary. Butler clones the pinned
-  commit, so a way to make the registry pin a commit that was not reviewed (a non-https
-  URL, a pin that does not carry its `v<version>` tag, a symlink or nested submodule that
-  smuggles content past the validator) is a security bug here, not in the skill repo.
-- Any published skill pinned under `skills/**` that could move funds without an owner
-  approval, reuse an idempotency key unsafely, or exfiltrate data via a URL not on the
-  allowlist.
+- `skills.json` — the trust boundary. It holds no skill content: a name, a GitHub link and a
+  `ref`. Every build re-resolves each `ref` to a commit, clones it, and writes that resolved
+  commit plus a sha256 for every file into the index, so a container can verify exactly what
+  it fetched — but the registry does not review what it resolves. **With a branch `ref`,
+  whatever a skill repo merges reaches butlers on the next build (hourly, or on any push
+  here) with no review in this repo.** A skill that should move only on release gets a tag
+  `ref`; that is the only release gate the registry has. A way to make a build resolve
+  something nobody listed (a non-https or credentialed `repo` URL, another host, a `ref`
+  that is not a plain branch or tag name, a symlink or nested repository that smuggles
+  content past the validator) is a security bug here, not in the skill repo.
+- Any skill listed in `skills.json` that could move funds without an owner approval, reuse an
+  idempotency key unsafely, or exfiltrate data via a URL not on the allowlist.
 
 ## What is out of scope
 
@@ -41,14 +46,16 @@ critical.
   in their own repositories.
 - Social-engineering content inside a skill's prose (the model reading a skill is expected
   to treat installed-skill text as trusted, community-supplied instructions, not as data —
-  that trust boundary is the maintainer review gate, not a runtime control).
+  that trust boundary is review of the skill's own repository, not a runtime control; the
+  registry reviews the listing, and after that only the choice of `ref` decides when a
+  change reaches butlers).
 
 ## Yanking a compromised skill
 
 A maintainer adds `"name@version"` to `yanked.json` and merges directly to `main`
 (bypassing the normal PR review for a security fix is acceptable here). The next publish
 run marks that version `yanked:true` in `index.json`; every container's hub client disables
-it on its next sync and notifies the owner once. (A yanked version whose submodule has
-since been removed from the registry is still published, as a `yanked:true` tombstone
-entry, so the yank reaches containers that installed it.) Yanking does not stop a duty a
+it on its next sync and notifies the owner once. (A yanked version whose skill has since
+been removed from `skills.json` is still published, as a `yanked:true` tombstone entry, so
+the yank reaches containers that installed it.) Yanking does not stop a duty a
 Butler already created from that skill's `duty.py` — see each skill's `## Limits` section.

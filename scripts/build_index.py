@@ -11,36 +11,40 @@ version pins it (`bevo-hub install <name>@<version>`, which never auto-updates).
 Usage:
     scripts/build_index.py [--dry-run] [--repo-tag <tag>]
 
-Reads every skills/<name>/ submodule declared in .gitmodules (they must be
-initialised: `git submodule update --init --recursive`), cross-references
-yanked.json, writes:
+Reads skills.json — the registry, one {name, repo, ref} entry per skill —
+shallow-clones every entry at its ref into a throwaway directory, cross-
+references yanked.json, and writes:
     dist/index.json
     dist/skills/<name>/<version>/{SKILL.md,duty.py,CHANGELOG.md}
-and regenerates CATALOG.md at the repo root.
+and regenerates CATALOG.md at the repo root. Nothing about a skill's content
+is stored in this repository; the clones are deleted when the build ends.
 
 Every index entry carries, next to the Pages-served files[] + sha256, an
-additive "source" block naming the skill's git repository and the exact commit
-the registry pins:
-    "source": {"repo": "https://github.com/...", "commit": "<40-hex>", "ref": "v<version>"}
+additive "source" block naming the skill's git repository, the ref the registry
+follows, and the commit that ref resolved to for THIS build:
+    "source": {"repo": "https://github.com/...", "commit": "<40-hex>", "ref": "main"}
+The commit, not the ref, is what pins the entry: with a branch ref the commit
+moves whenever the skill repo merges, and the next build republishes it.
 `schemaVersion` stays 1 — the deployed container client rejects any other
 value and ignores keys it does not know, so a v1 client keeps installing from
 files[] while a git-aware one clones source.commit and falls back to files[].
 
-A yanked "name@version" (yanked.json) whose skill no longer has a submodule is
-still published, as a tombstone entry: yanked:true, no files[], no source. The
-container's hub client only disables a skill on an index entry that carries
-yanked:true — a skill that merely disappears from the index stays installed and
-enabled — and it never installs a yanked entry, so the tombstone needs nothing
-else. A yanked version of a skill that is still pinned (at any version) gets no
-tombstone: the live entry is what un-yanks and updates the container.
+A yanked "name@version" (yanked.json) whose skill is no longer listed in
+skills.json is still published, as a tombstone entry: yanked:true, no files[],
+no source. The container's hub client only disables a skill on an index entry
+that carries yanked:true — a skill that merely disappears from the index stays
+installed and enabled — and it never installs a yanked entry, so the tombstone
+needs nothing else. A yanked version of a skill that is still listed (at any
+version) gets no tombstone: the live entry is what un-yanks and updates the
+container.
 
 Refuses to overwrite an existing dist/skills/<name>/<version>/ directory
 unless its contents are byte-identical to what would be written (immutable
-publishing). --dry-run performs every check and prints what would be
-written without touching disk or the network (the pinned commit is read from
-the local submodule checkout with `git rev-parse HEAD`).
+publishing). --dry-run performs every check and prints what would be written
+without touching disk; it still clones, because the resolved commit and the
+per-file hashes can only come from a real checkout.
 
-Python 3.11 stdlib only (plus the `git` binary for the pinned commit).
+Python 3.11 stdlib only (plus the `git` binary for the clones).
 """
 from __future__ import annotations
 
@@ -52,87 +56,93 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SKILLS_DIR = REPO_ROOT / "skills"
+REGISTRY_PATH = REPO_ROOT / "skills.json"
 YANKED_PATH = REPO_ROOT / "yanked.json"
 CATALOG_PATH = REPO_ROOT / "CATALOG.md"
-GITMODULES_PATH = REPO_ROOT / ".gitmodules"
 
 BASE_URL_TEMPLATE = "https://virtual-protocol.github.io/butler-skills"
+
+PUBLISHED_FILES = ("SKILL.md", "duty.py", "CHANGELOG.md")
 
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 YANKED_SPEC_RE = re.compile(r"^([a-z0-9][a-z0-9-]{1,63})@(\d+\.\d+\.\d+)$")
 TOMBSTONE_DESCRIPTION = "Withdrawn by its maintainers (yanked) and removed from the registry; not installable."
 
 
-def parse_gitmodules(path: Path = GITMODULES_PATH) -> dict[str, dict]:
-    """Minimal .gitmodules reader: {path: {"name": ..., "url": ...}}. Same
-    shape as validate.py's copy; kept independent on purpose (see below)."""
-    entries: dict[str, dict] = {}
-    if not path.exists():
-        return entries
-    current: dict | None = None
-    for raw in path.read_text().splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or line.startswith(";"):
-            continue
-        m = re.match(r'^\[submodule\s+"(.+)"\]$', line)
-        if m:
-            current = {"name": m.group(1)}
-            continue
-        m = re.match(r"^([A-Za-z][A-Za-z0-9-]*)\s*=\s*(.*)$", line)
-        if m and current is not None:
-            current[m.group(1)] = m.group(2).strip()
-            if m.group(1) == "path":
-                entries[current["path"]] = current
-    return entries
+def load_registry(path: Path = REGISTRY_PATH) -> list[dict]:
+    """The registry as written: the `skills` list of skills.json, in file
+    order. Returned verbatim — the listing is checked by
+    scripts/check_registry.py, not filtered or reordered here."""
+    data = json.loads(path.read_text())
+    rows = data.get("skills")
+    if not isinstance(rows, list) or not rows:
+        raise SystemExit(f"{path} has no `skills` list — the registry is empty")
+    return rows
 
 
-def list_skill_dirs(repo_root: Path = REPO_ROOT) -> list[Path]:
-    """The skills/<name> submodules declared in .gitmodules, sorted by path.
-    Fails loudly on an uninitialised one — an index built from a registry
-    with a missing checkout would silently drop a published skill."""
-    entries = parse_gitmodules(repo_root / ".gitmodules")
-    dirs = []
-    for rel in sorted(entries):
-        if not rel.startswith("skills/"):
-            continue
-        d = repo_root / rel
-        if not (d / "SKILL.md").exists():
-            raise SystemExit(f"{rel} is declared in .gitmodules but has no SKILL.md — run `git submodule update --init --recursive`")
-        dirs.append(d)
-    return dirs
+def clone_skill(entry: dict, dest: Path) -> Path:
+    """Shallow-clone one registry entry at its ref into `dest`.
+
+    The ref may be a branch or a tag; `--depth 1 --branch <ref>` resolves
+    either. What the build pins afterwards is the commit this produced, not
+    the ref, so a branch that moves changes the index on the next build."""
+    repo, ref = entry["repo"], entry.get("ref") or "main"
+    try:
+        subprocess.run(
+            ["git", "clone", "--quiet", "--depth", "1", "--branch", ref, repo, str(dest)],
+            capture_output=True, text=True, check=True, timeout=300,
+        )
+    except subprocess.CalledProcessError as e:
+        raise SystemExit(f"cannot clone {repo} at {ref!r}: {e.stderr.strip() or e}")
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise SystemExit(f"cannot clone {repo} at {ref!r}: {e}")
+    if not (dest / "SKILL.md").exists():
+        raise SystemExit(f"{repo} at {ref!r} has no SKILL.md at its root")
+    return dest
 
 
-def pinned_commit(skill_dir: Path) -> str:
-    """The commit the registry pins for this submodule: HEAD of its checkout.
-    Local only — no fetch, so --dry-run works offline."""
+def fetch_skills(work_dir: Path, registry: list[dict] | None = None) -> list[tuple[dict, Path]]:
+    """Clone every registry entry under `work_dir`, one directory per skill.
+
+    The checkout is named after the registry entry, so the directory a skill is
+    validated and indexed under is the name the registry lists it as."""
+    registry = load_registry() if registry is None else registry
+    out: list[tuple[dict, Path]] = []
+    for entry in registry:
+        out.append((entry, clone_skill(entry, work_dir / entry["name"])))
+    return out
+
+
+def resolved_commit(skill_dir: Path) -> str:
+    """The commit the ref resolved to for this build: HEAD of the clone."""
     try:
         out = subprocess.run(
             ["git", "-C", str(skill_dir), "rev-parse", "HEAD"],
             capture_output=True, text=True, check=True, timeout=30,
         )
     except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-        raise SystemExit(f"cannot read the pinned commit of {skill_dir}: {e}")
+        raise SystemExit(f"cannot read the resolved commit of {skill_dir}: {e}")
     commit = out.stdout.strip()
     if not COMMIT_RE.match(commit):
         raise SystemExit(f"unexpected `git rev-parse HEAD` output for {skill_dir}: {commit!r}")
     return commit
 
 
-def source_block(skill_dir: Path, version: str, gitmodules: dict[str, dict] | None = None) -> dict:
-    """The additive per-entry "source" block: the skill repo, the pinned
-    commit and the tag the registry expects that commit to carry (v<version>;
-    CI asserts the two agree, see scripts/check_pins.py)."""
-    gitmodules = parse_gitmodules() if gitmodules is None else gitmodules
-    rel = skill_dir.resolve().relative_to(REPO_ROOT.resolve()).as_posix()
-    entry = gitmodules.get(rel)
-    if entry is None or not entry.get("url"):
-        raise SystemExit(f"{rel} has no url in .gitmodules — registry skills are git submodules")
-    return {"repo": entry["url"], "commit": pinned_commit(skill_dir), "ref": f"v{version}"}
+def source_block(skill_dir: Path, entry: dict) -> dict:
+    """The additive per-entry "source" block: the repo and ref the registry
+    records for this skill, plus the commit that ref resolved to in the
+    checkout this build cloned. The ref may be a branch, so the commit is the
+    only part of this block that identifies exact bytes."""
+    return {
+        "repo": entry["repo"],
+        "commit": resolved_commit(skill_dir),
+        "ref": entry.get("ref") or "main",
+    }
 
 
 def parse_frontmatter_light(text: str) -> dict:
@@ -183,9 +193,9 @@ def load_yanked() -> set[str]:
 
 def tombstone_entries(yanked: set[str], entries: list[dict]) -> list[dict]:
     """A yanked:true tombstone for every yanked "name@version" whose skill has
-    no live entry (no submodule any more). Sorted by spec so the output is
-    stable. Refuses a malformed spec — a typo in yanked.json must fail the
-    build, not silently yank nothing."""
+    no live entry (not listed in skills.json any more). Sorted by spec so the
+    output is stable. Refuses a malformed spec — a typo in yanked.json must
+    fail the build, not silently yank nothing."""
     live_names = {e["name"] for e in entries}
     tombstones: list[dict] = []
     for spec in sorted(yanked):
@@ -221,7 +231,8 @@ def render_contracts_section(web3: dict) -> str:
     return "\n".join(rows)
 
 
-def collect_skill(skill_dir: Path, yanked: set[str], gitmodules: dict[str, dict] | None = None) -> dict:
+def collect_skill(skill_dir: Path, yanked: set[str], entry: dict) -> dict:
+    """One index entry, read out of the checkout cloned for `entry`."""
     skill_md = skill_dir / "SKILL.md"
     text = skill_md.read_text()
     fm = parse_frontmatter_light(text)
@@ -230,9 +241,9 @@ def collect_skill(skill_dir: Path, yanked: set[str], gitmodules: dict[str, dict]
     version = fm["version"]
     files = []
     for f in sorted(skill_dir.iterdir()):
-        if f.is_file() and f.name in ("SKILL.md", "duty.py", "CHANGELOG.md"):
+        if f.is_file() and f.name in PUBLISHED_FILES:
             files.append({"path": f.name, "sha256": sha256_file(f), "bytes": f.stat().st_size})
-    entry = {
+    return {
         "name": name,
         "version": version,
         "description": fm.get("description", ""),
@@ -244,9 +255,8 @@ def collect_skill(skill_dir: Path, yanked: set[str], gitmodules: dict[str, dict]
         "requires": butler.get("requires", {}),
         "yanked": f"{name}@{version}" in yanked,
         "files": files,
-        "source": source_block(skill_dir, version, gitmodules),
+        "source": source_block(skill_dir, entry),
     }
-    return entry
 
 
 def repo_slug(url: str) -> str:
@@ -259,7 +269,7 @@ def repo_slug(url: str) -> str:
 
 def write_dist_files(skill_dir: Path, name: str, version: str, dist_root: Path, dry_run: bool) -> None:
     version_dir = dist_root / "skills" / name / version
-    src_files = [f for f in skill_dir.iterdir() if f.is_file() and f.name in ("SKILL.md", "duty.py", "CHANGELOG.md")]
+    src_files = [f for f in skill_dir.iterdir() if f.is_file() and f.name in PUBLISHED_FILES]
     if version_dir.exists():
         # immutable: refuse unless identical
         for f in src_files:
@@ -283,14 +293,15 @@ def regenerate_catalog(entries: list[dict]) -> str:
         "",
         "Generated by `scripts/build_index.py`. Do not edit by hand.",
         "",
-        "Each skill is its own git repository, pinned here as a submodule at the commit of its",
-        "`v<version>` tag (the Repo link opens that tag). Butler clones exactly that commit.",
+        "Each skill is its own git repository, listed in `skills.json` as a link plus the ref",
+        "the registry follows (the Repo link opens that ref). Every build re-resolves the ref to",
+        "a commit and republishes; the index records that commit, and Butler clones exactly it.",
         "",
         "| Skill | Version | Repo | Tier | Modes | Money-moving | Description |",
         "| --- | --- | --- | --- | --- | --- | --- |",
     ]
     for e in sorted(entries, key=lambda x: x["name"]):
-        yank_marker = " (yanked)" if e["yanked"] else ""
+        yank_marker = " (yanked)" if e.get("yanked") else ""
         src = e.get("source") or {}
         repo_cell = "—"
         if src.get("repo"):
@@ -299,8 +310,8 @@ def regenerate_catalog(entries: list[dict]) -> str:
                 repo_url = repo_url[: -len(".git")]
             repo_cell = f"[{repo_slug(src['repo'])}]({repo_url}/tree/{src.get('ref', '')})"
         lines.append(
-            f"| `{e['name']}`{yank_marker} | {e['version']} | {repo_cell} | {e['tier']} | {', '.join(e['modes'])} | "
-            f"{'yes' if e['moneyMoving'] else 'no'} | {e['description']} |"
+            f"| `{e['name']}`{yank_marker} | {e.get('version', '')} | {repo_cell} | {e.get('tier', '')} | "
+            f"{', '.join(e.get('modes', []))} | {'yes' if e.get('moneyMoving') else 'no'} | {e.get('description', '')} |"
         )
     lines.append("")
     return "\n".join(lines)
@@ -313,28 +324,28 @@ def main() -> int:
     args = parser.parse_args()
 
     yanked = load_yanked()
-    gitmodules = parse_gitmodules()
-    skill_dirs = list_skill_dirs()
+    registry = load_registry()
 
-    entries = []
-    for d in skill_dirs:
-        entries.append(collect_skill(d, yanked, gitmodules))
-    tombstones = tombstone_entries(yanked, entries)
-    entries.extend(tombstones)
+    # The clones live only for this build: the registry stores links, not files.
+    with tempfile.TemporaryDirectory(prefix="butler-skills-build-") as tmp:
+        cloned = fetch_skills(Path(tmp), registry)
 
-    index = {
-        "schemaVersion": 1,
-        "repoTag": args.repo_tag,
-        "builtAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "baseUrl": BASE_URL_TEMPLATE,
-        "signature": None,
-        "skills": entries,
-    }
+        entries = [collect_skill(d, yanked, entry) for entry, d in cloned]
+        tombstones = tombstone_entries(yanked, entries)
 
-    dist_root = REPO_ROOT / "dist"
-    for d in skill_dirs:
-        fm = parse_frontmatter_light((d / "SKILL.md").read_text())
-        write_dist_files(d, fm["name"], fm["version"], dist_root, args.dry_run)
+        index = {
+            "schemaVersion": 1,
+            "repoTag": args.repo_tag,
+            "builtAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "baseUrl": BASE_URL_TEMPLATE,
+            "signature": None,
+            "skills": entries + tombstones,
+        }
+
+        dist_root = REPO_ROOT / "dist"
+        for entry, d in cloned:
+            fm = parse_frontmatter_light((d / "SKILL.md").read_text())
+            write_dist_files(d, fm["name"], fm["version"], dist_root, args.dry_run)
 
     index_path = dist_root / "index.json"
     if args.dry_run:
@@ -345,14 +356,14 @@ def main() -> int:
         index_path.write_text(json.dumps(index, indent=2) + "\n")
         print(f"wrote {index_path}")
 
-    catalog = regenerate_catalog(entries)
+    catalog = regenerate_catalog(index["skills"])
     if args.dry_run:
         print(f"[dry-run] would write {CATALOG_PATH} ({len(catalog)} chars)")
     else:
         CATALOG_PATH.write_text(catalog)
         print(f"wrote {CATALOG_PATH}")
 
-    summary = f"{len(entries) - len(tombstones)} skill(s) indexed"
+    summary = f"{len(entries)} skill(s) indexed"
     if tombstones:
         summary += f", plus {len(tombstones)} yanked tombstone(s)"
     print(summary)

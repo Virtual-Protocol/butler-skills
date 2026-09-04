@@ -3,13 +3,16 @@ fixture skills under tests/fixtures/skills/{valid, missing-key,
 bad-frontmatter, oversize-description, banned-command, undeclared-param,
 unmarked-step}, plus the git-backed rules: --standalone mode (name from the
 frontmatter), the tree rules (symlinks, nested submodules/repos, the 50-file
-and 1 MB caps) and the registry pin rules (.gitmodules entry, https URL).
+and 1 MB caps) and registry mode (the checkout is named after its skills.json
+entry; `--all` clones every entry).
 """
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -322,78 +325,91 @@ def test_more_than_1mb_is_refused(tmp_path):
     assert any(e.startswith("bundle-size:") for e in result["errors"])  # the older 200 KB rule still fires too
 
 
-def test_registry_mode_refuses_a_vendored_directory_under_skills(tmp_path, monkeypatch):
-    # A plain directory under skills/ that is not declared in .gitmodules.
-    root = tmp_path / "registry"
-    (root / "skills").mkdir(parents=True)
-    (root / ".gitmodules").write_text("")
-    monkeypatch.setattr(validate, "REPO_ROOT", root)
-    monkeypatch.setattr(validate, "SKILLS_DIR", root / "skills")
-    monkeypatch.setattr(validate, "GITMODULES_PATH", root / ".gitmodules")
-    skill_dir = root / "skills" / "foo"
-    _write_minimal_skill(skill_dir, "foo")
+def test_registry_mode_requires_the_frontmatter_name_to_match_the_registry_name(tmp_path):
+    """Registry mode's remaining directory rule: `--all` clones each entry into a
+    directory named after its skills.json entry, so a skill whose frontmatter
+    disagrees would be installed under a name the registry never listed."""
+    skill_dir = tmp_path / "foo"
+    _write_minimal_skill(skill_dir, "bar")
     ok, result = validate.validate_skill(skill_dir, set(), maintainer=False, json_mode=True, standalone=False)
     assert not ok
-    assert any(e.startswith("submodule:") and "not declared in .gitmodules" in e for e in result["errors"])
+    assert any(e.startswith("name:") and "must equal directory name" in e for e in result["errors"])
+    # --standalone drops that rule: the author's checkout is named whatever they cloned it as.
+    ok2, _ = validate.validate_skill(skill_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    assert ok2
 
 
-def test_registry_mode_refuses_non_https_github_submodule_url(tmp_path, monkeypatch):
-    root = tmp_path / "registry"
-    (root / "skills").mkdir(parents=True)
-    (root / ".gitmodules").write_text(
-        '[submodule "skills/foo"]\n\tpath = skills/foo\n\turl = git@github.com:someone/butler-skill-foo.git\n'
-    )
-    monkeypatch.setattr(validate, "REPO_ROOT", root)
-    monkeypatch.setattr(validate, "SKILLS_DIR", root / "skills")
-    monkeypatch.setattr(validate, "GITMODULES_PATH", root / ".gitmodules")
-    skill_dir = root / "skills" / "foo"
-    _write_minimal_skill(skill_dir, "foo")
-    (skill_dir / ".git").write_text("gitdir: ../../.git/modules/skills/foo\n")  # an initialised submodule's gitlink
-    ok, result = validate.validate_skill(skill_dir, set(), maintainer=False, json_mode=True, standalone=False)
-    assert not ok
-    assert any(e.startswith("submodule:") and "https://github.com" in e for e in result["errors"])
+def test_load_registry_reads_skills_json(tmp_path):
+    registry = tmp_path / "skills.json"
+    rows = [{"name": "foo", "repo": "https://github.com/someone/butler-skill-foo", "ref": "main"}]
+    registry.write_text(json.dumps({"skills": rows}))
+    assert validate.load_registry(registry) == rows
+
+    empty = tmp_path / "empty.json"
+    empty.write_text(json.dumps({"skills": []}))
+    with pytest.raises(SystemExit):
+        validate.load_registry(empty)
+    with pytest.raises(SystemExit):
+        validate.load_registry(tmp_path / "missing.json")
 
 
-def test_registry_mode_accepts_declared_https_submodule(tmp_path, monkeypatch):
-    root = tmp_path / "registry"
-    (root / "skills").mkdir(parents=True)
-    (root / ".gitmodules").write_text(
-        '[submodule "skills/foo"]\n\tpath = skills/foo\n\turl = https://github.com/someone/butler-skill-foo\n'
-    )
-    monkeypatch.setattr(validate, "REPO_ROOT", root)
-    monkeypatch.setattr(validate, "SKILLS_DIR", root / "skills")
-    monkeypatch.setattr(validate, "GITMODULES_PATH", root / ".gitmodules")
-    skill_dir = root / "skills" / "foo"
-    _write_minimal_skill(skill_dir, "foo")
-    (skill_dir / ".git").write_text("gitdir: ../../.git/modules/skills/foo\n")
-    ok, result = validate.validate_skill(skill_dir, set(), maintainer=False, json_mode=True, standalone=False)
-    assert ok, result["errors"]
-    assert validate.registry_skill_dirs() == [skill_dir]
+def _make_skill_repo(root: Path, name: str) -> str:
+    """A real local git repo holding one skill, so clone_registry_skills has
+    something to clone without touching the network."""
+    _write_minimal_skill(root, name)
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com",
+        "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.com",
+    }
+    for cmd in (["init", "-q", "-b", "main"], ["add", "-A"], ["commit", "-q", "-m", "init"]):
+        subprocess.run(["git", *cmd], cwd=str(root), check=True, capture_output=True, env=env)
+    return root.as_uri()
 
 
-def test_real_registry_submodules_pass_in_both_modes():
-    reserved = validate.load_reserved()
-    dirs = validate.registry_skill_dirs()
-    assert dirs, "no skills/<name> submodules declared in .gitmodules"
+def test_all_clones_every_registry_entry_into_a_directory_named_for_it(tmp_path, monkeypatch):
+    """No skill is checked out here, so `--all` fetches what it validates. The
+    clone directory takes the registry name, which is what makes the
+    frontmatter-name check above mean anything."""
+    registry = tmp_path / "skills.json"
+    registry.write_text(json.dumps({"skills": [
+        {"name": "foo", "repo": _make_skill_repo(tmp_path / "src-foo", "foo"), "ref": "main"},
+        {"name": "bar", "repo": _make_skill_repo(tmp_path / "src-bar", "bar"), "ref": "main"},
+    ]}))
+    monkeypatch.setattr(validate, "REGISTRY_PATH", registry)
+
+    work = tmp_path / "work"
+    work.mkdir()
+    dirs = validate.clone_registry_skills(work)
+    assert [d.name for d in dirs] == ["bar", "foo"]  # sorted
     for d in dirs:
-        assert (d / "SKILL.md").exists(), f"{d} is not initialised — run git submodule update --init --recursive"
-        ok, result = validate.validate_skill(d, reserved, maintainer=True, json_mode=True)
+        assert (d / "SKILL.md").exists()
+        ok, result = validate.validate_skill(d, set(), maintainer=False, json_mode=True, standalone=False)
         assert ok, (d, result["errors"])
-        ok2, result2 = validate.validate_skill(d, reserved, maintainer=True, json_mode=True, standalone=True)
-        assert ok2, (d, result2["errors"])
-        assert result2["skill"] == d.name
 
 
-def test_parse_gitmodules_reads_git_style_indented_keys(tmp_path):
-    gm = tmp_path / ".gitmodules"
-    gm.write_text(
-        '[submodule "skills/a"]\n\tpath = skills/a\n\turl = https://github.com/x/a\n'
-        '[submodule "skills/b"]\n    path = skills/b\n    url = https://github.com/x/b.git\n'
-    )
-    entries = validate.parse_gitmodules(gm)
-    assert set(entries) == {"skills/a", "skills/b"}
-    assert entries["skills/a"]["url"] == "https://github.com/x/a"
-    assert entries["skills/b"]["name"] == "skills/b"
+def test_clone_registry_skills_fails_loudly_on_a_ref_that_does_not_resolve(tmp_path, monkeypatch):
+    registry = tmp_path / "skills.json"
+    registry.write_text(json.dumps({"skills": [
+        {"name": "foo", "repo": _make_skill_repo(tmp_path / "src-foo", "foo"), "ref": "no-such-ref"},
+    ]}))
+    monkeypatch.setattr(validate, "REGISTRY_PATH", registry)
+    work = tmp_path / "work"
+    work.mkdir()
+    with pytest.raises(SystemExit) as e:
+        validate.clone_registry_skills(work)
+    assert "no-such-ref" in str(e.value)
+
+
+def test_the_real_copytrade_skill_passes_in_both_modes(copytrade_checkout):
+    """The registry's own butler-copytrade, cloned at the ref skills.json
+    follows (tests/conftest.py), through both modes of the validator."""
+    reserved = validate.load_reserved()
+    ok, result = validate.validate_skill(copytrade_checkout, reserved, maintainer=True, json_mode=True)
+    assert ok, result["errors"]
+    ok2, result2 = validate.validate_skill(copytrade_checkout, reserved, maintainer=True, json_mode=True, standalone=True)
+    assert ok2, result2["errors"]
+    assert result2["skill"] == "butler-copytrade"
 
 
 if __name__ == "__main__":
