@@ -24,10 +24,18 @@ def _load_build_index_module():
 build_index = _load_build_index_module()
 
 
+def _pinned_version(name: str) -> str:
+    """The version the pinned submodule actually declares. Read it rather than
+    hard-coding: the pin moves every time a skill releases, and a test that
+    snapshots the number turns an ordinary bump into a red build."""
+    fm = build_index.parse_frontmatter_light((REPO_ROOT / "skills" / name / "SKILL.md").read_text())
+    return fm["version"]
+
+
 def test_collect_skill_butler_copytrade():
     entry = build_index.collect_skill(REPO_ROOT / "skills" / "butler-copytrade", yanked=set())
     assert entry["name"] == "butler-copytrade"
-    assert entry["version"] == "1.0.1"
+    assert entry["version"] == _pinned_version("butler-copytrade")
     assert entry["tier"] == "on-demand"
     assert "one-off" in entry["modes"] and "duty" in entry["modes"]
     assert entry["moneyMoving"] is True
@@ -40,8 +48,9 @@ def test_collect_skill_butler_copytrade():
 
 
 def test_collect_skill_respects_yanked():
+    version = _pinned_version("butler-copytrade")
     entry = build_index.collect_skill(
-        REPO_ROOT / "skills" / "butler-copytrade", yanked={"butler-copytrade@1.0.1"}
+        REPO_ROOT / "skills" / "butler-copytrade", yanked={f"butler-copytrade@{version}"}
     )
     assert entry["yanked"] is True
 
