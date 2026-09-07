@@ -719,7 +719,7 @@ tags, is
 [`Virtual-Protocol/butler-skill-copytrade`](https://github.com/Virtual-Protocol/butler-skill-copytrade):
 [`SKILL.md`](https://raw.githubusercontent.com/Virtual-Protocol/butler-skill-copytrade/main/SKILL.md),
 [`duty.py`](https://raw.githubusercontent.com/Virtual-Protocol/butler-skill-copytrade/main/duty.py)
-([CATALOG.md](CATALOG.md) links each skill's repo at the `ref` the registry follows, and the
+([`skills.json`](skills.json) links each skill's repo at the `ref` the registry follows, and the
 index records the commit that ref resolved to).
 
 ### Web3 — protocol-specific skills only
@@ -823,8 +823,11 @@ rule for `moneyMoving:true` skills.
 - [CONTRIBUTING.md](CONTRIBUTING.md) — process, the `skills.json` entry and `ref` rules,
   DCO, review rules, the yank rule.
 - [SECURITY.md](SECURITY.md) — reporting a vulnerability, what is in scope.
-- [CATALOG.md](CATALOG.md) — the generated table of published skills with a link to each
-  skill's repo at the `ref` the registry follows (this file stays a guide, not a catalog).
+- [the published index](https://virtual-protocol.github.io/butler-skills/index.json) — what
+  is actually live: every skill's current version, description, tier and resolved commit,
+  rebuilt hourly. There is no checked-in copy of it; a file in git could only drift, since
+  the index moves whenever a listed skill repo merges a release (this file stays a guide,
+  not a catalog).
 - [`Virtual-Protocol/butler-skill-template`](https://github.com/Virtual-Protocol/butler-skill-template)
   — the scaffold every skill repo starts from.
 - `skills.json` — the registry itself: one `{name, repo, ref}` entry per skill.
