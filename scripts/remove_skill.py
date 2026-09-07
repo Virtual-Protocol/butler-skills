@@ -32,8 +32,8 @@ visiting the name, and any lock row already marked keeps yanked:true forever
 `bevo-hub remove <name>` is the only clear after that.
 
 Writes skills.json (and yanked.json with --yank), then prints the commit and
-PR commands. Does not regenerate CATALOG.md — run scripts/build_index.py for
-that, since it needs a clone of every remaining skill.
+PR commands. Nothing else in this repo describes a skill, so that is the whole
+edit: the index is rebuilt from skills.json on the next publish.
 
 Python 3.11 stdlib only.
 """
@@ -153,11 +153,7 @@ def main() -> int:
     print(f"""
 # {effect}
 #
-# CATALOG.md is generated — regenerate it in the same commit (needs a clone of
-# each remaining skill; CI builds it but never commits it back):
-python3 scripts/build_index.py
-
-# Then the second and last PR this skill gets here:
+# The second and last PR this skill gets here:
 git commit -s -am "skills: remove {name}"
 gh pr create --repo {REGISTRY_REPO} --base main --title "skills: remove {name}"
 
