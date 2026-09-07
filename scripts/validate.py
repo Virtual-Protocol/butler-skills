@@ -140,6 +140,8 @@ BEVO_READ_SUBCOMMANDS = {
     "request",
     "card-budget",
     "token-search",
+    "token",
+    "token-stats",
     "token-balance",
 }
 
