@@ -48,20 +48,6 @@ jobs:
       - name: Build the index (this commit)
         run: python3 scripts/build_index.py --repo-tag "main-${{ github.sha }}"
 
-      # TRANSITIONAL — delete once every container is on an image whose
-      # bevo_hub/client.py requests /index.json. A container built before the
-      # channel collapse asks for /stable/index.json or /canary/index.json;
-      # without these copies it gets a 404 and its skill sync stops entirely.
-      # This is about the index PATH, not the frontmatter key: it protects any
-      # container not yet redeployed, whatever it reads.
-      - name: Publish legacy channel aliases (transitional)
-        run: |
-          set -eu
-          for legacy in stable canary; do
-            mkdir -p "dist/$legacy"
-            cp dist/index.json "dist/$legacy/index.json"
-          done
-
       # The standalone developer tools, served next to the index so a skill repo never
       # has to clone this registry to validate:
       #   tools/validate.py, tools/replay.py, tools/stub_bevo.py, tools/check_selectors.mjs,
