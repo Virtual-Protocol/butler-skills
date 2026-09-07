@@ -151,3 +151,10 @@ so `scripts/build_index.py` keeps publishing a `yanked:true` tombstone entry (no
 no `source`) for every yanked version whose skill is no longer listed. A yanked version
 superseded by a newer build of the same skill needs no tombstone: the newer entry un-yanks
 and updates the container.
+
+`scripts/remove_skill.py <name>` performs both removals so the choice is explicit: it
+de-lists by default (installed copies keep working, enabled) and tombstones with `--yank`
+(installed copies are disabled and their owners notified once), resolving the version to
+tombstone from the live index unless you pass `--version`. `--dry-run` prints the change
+without writing. It is the mirror of `scripts/new_skill.py`: registration is a skill's
+first PR here, removal is its second and last, and every version in between needs none.
