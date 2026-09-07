@@ -37,6 +37,11 @@ FIXTURE_NAME = os.environ.get("BEVO_STUB_FIXTURE", "trade-activity-page")
 FIXTURES_URL = os.environ.get("BEVO_STUB_FIXTURES_URL", "").rstrip("/")
 
 SERVICE_ID = os.environ.get("BEVO_STUB_SERVICE_ID", "stub-service-id")
+# The venue a stubbed stock sell names. The real one reads it off the holding;
+# either way it must stay a NAME (eth|sol) and never a chain id — bevo-server
+# treats a numeric --chain on the stock shape as a mis-shaped token trade and
+# reroutes it to a spot swap.
+STOCK_VENUE = os.environ.get("BEVO_STUB_STOCK_VENUE", "eth")
 SESSION_ID = os.environ.get("BEVO_STUB_SESSION_ID", "stub-session-id")
 
 DEFAULT_STOCK_SYMBOLS = {"AAPL", "TSLA", "NVDA", "MSFT", "GOOGL", "AMZN", "META", "SPY", "QQQ"}
@@ -417,44 +422,55 @@ def sell(token, usd=None, pct=None, all=False, idempotency_key=None, chain=None)
     return _record_money_action("sell", command, idempotency_key, summary, asked=asked, token=ref, chainId=chain_id)
 
 
+# Every money verb below records the REAL `acp trade` grammar. There is no
+# `acp perptrade` and no `acp stocktrade` — those were invented here, and a
+# replay is the first thing a skill author reads, so a fake grammar in this
+# file teaches a command the product does not have. Quantities the real SDK
+# derives from a live read (a close's side and size, a stock sell's share
+# count and venue) are not knowable here; the stub emits the real FLAGS with
+# placeholder values and says so, rather than inventing different flags.
+
+
 def long(token, usd=None, leverage=1, idempotency_key=None) -> ActionResult:
     ref, asset_chain = _ref_and_chain(token)
-    command = f"acp perptrade --side long --token {ref} --amount-usdc {usd} --leverage {leverage}"
-    summary = f"opened {leverage}x long {ref} with {usd} USD margin"
+    command = f"acp trade --side long --token {ref} --amount-usdc {usd} --leverage {leverage}"
+    # --amount-usdc is the POSITION size (notional), never the margin.
+    summary = f"opened a {leverage}x long on {ref}, {usd} USD notional"
     return _record_money_action("long", command, idempotency_key, summary, asked=usd, token=ref, leverage=leverage)
 
 
 def short(token, usd=None, leverage=1, idempotency_key=None) -> ActionResult:
     ref, asset_chain = _ref_and_chain(token)
-    command = f"acp perptrade --side short --token {ref} --amount-usdc {usd} --leverage {leverage}"
-    summary = f"opened {leverage}x short {ref} with {usd} USD margin"
+    command = f"acp trade --side short --token {ref} --amount-usdc {usd} --leverage {leverage}"
+    summary = f"opened a {leverage}x short on {ref}, {usd} USD notional"
     return _record_money_action("short", command, idempotency_key, summary, asked=usd, token=ref, leverage=leverage)
 
 
 def close(token, idempotency_key=None) -> ActionResult:
+    """The real close reads the open position and places the OPPOSITE side at
+    its size; with no position to read, the stub records the reduce-only shape
+    without a side or size."""
     ref, asset_chain = _ref_and_chain(token)
-    command = f"acp perptrade --close --token {ref}"
+    command = f"acp trade --token {ref} --reduce-only"
     summary = f"closed {ref}"
     return _record_money_action("close", command, idempotency_key, summary, asked=None, token=ref)
 
 
 def stock_buy(ticker, usd=None, idempotency_key=None) -> ActionResult:
-    command = f"acp stocktrade --side buy --ticker {ticker} --amount-usdc {usd}"
+    # A stock takes --token with NO --side; that is what separates it from a perp
+    # on the same ticker.
+    command = f"acp trade --token {ticker} --amount-usdc {usd}"
     summary = f"bought {usd} USD of {ticker}"
     return _record_money_action("stock_buy", command, idempotency_key, summary, asked=usd, token=ticker)
 
 
 def stock_sell(ticker, usd=None, pct=None, all=False, idempotency_key=None) -> ActionResult:
-    if all:
-        amount = "--pct 100"
-        asked = "all"
-    elif pct is not None:
-        amount = f"--pct {pct}"
-        asked = pct
-    else:
-        amount = f"--amount-usdc {usd}"
-        asked = usd
-    command = f"acp stocktrade --side sell --ticker {ticker} {amount}"
+    """A stock sell is SHARE-denominated and carries the venue NAME, never a
+    chain id — bevo-server reroutes a numeric --chain off the stock rail onto a
+    spot swap. The real share count comes from the holding; the stub has none,
+    so `<shares>` stands in for it."""
+    asked = "all" if all else (pct if pct is not None else usd)
+    command = f"acp trade --token {ticker} --amount-shares <shares> --chain {STOCK_VENUE}"
     summary = f"sold {'all of ' if all else ''}{ticker}"
     return _record_money_action("stock_sell", command, idempotency_key, summary, asked=asked, token=ticker)
 
