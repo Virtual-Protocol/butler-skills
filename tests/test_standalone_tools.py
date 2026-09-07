@@ -23,7 +23,16 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-LEADER_ENV = "LEADER=11111111-1111-1111-1111-111111111111"
+# The published skill has no money defaults — SIZING is required, so LEADER
+# alone replays nothing. `leader_share` at 1.0 copies the leader's own size,
+# which is what makes the fixture's three Base buys land as three copies.
+SKILL_ENV = [
+    "LEADER=11111111-1111-1111-1111-111111111111",
+    "SIZING=leader_share",
+    "SHARE=1",
+    "CHAIN_IDS=[8453]",
+]
+ENV_ARGS = [arg for kv in SKILL_ENV for arg in ("--env", kv)]
 
 
 def _load_publish_tools():
@@ -110,12 +119,12 @@ def test_validate_and_replay_from_the_published_layout(tmp_path, copytrade_check
 
     r = _run(
         [sys.executable, str(tools / "replay.py"), "--standalone", str(skill), "--fixture", "trade-activity-page",
-         "--env", LEADER_ENV, "--no-download"],
+         *ENV_ARGS, "--no-download"],
         cwd=tmp_path,
     )
     assert r.returncode == 0, r.stdout + r.stderr
     assert "# standalone replay of butler-copytrade from" in r.stdout
-    assert len([a for a in _actions(r.stdout) if a["call"] == "trade"]) == 3
+    assert len([a for a in _actions(r.stdout) if a["call"] == "buy"]) == 3
 
 
 def test_standalone_validate_uses_the_embedded_reserved_list(tmp_path):
@@ -147,7 +156,7 @@ def test_replay_downloads_stub_and_fixture_when_missing(tmp_path, copytrade_chec
 
     env = {"BUTLER_SKILLS_TOOLS_URL": (tmp_path / "site" / "tools").as_uri()}
     r = _run(
-        [sys.executable, str(dev / "replay.py"), "--standalone", str(skill), "--fixture", "trade-activity-page", "--env", LEADER_ENV],
+        [sys.executable, str(dev / "replay.py"), "--standalone", str(skill), "--fixture", "trade-activity-page", *ENV_ARGS],
         cwd=skill, env=env,
     )
     assert r.returncode == 0, r.stdout + r.stderr
@@ -155,11 +164,11 @@ def test_replay_downloads_stub_and_fixture_when_missing(tmp_path, copytrade_chec
     assert (dev / "fixtures" / "trade-activity-page.jsonl").exists()
     assert "# downloaded stub_bevo.py from" in r.stdout
     assert "# downloaded trade-activity-page.jsonl from" in r.stdout
-    assert len([a for a in _actions(r.stdout) if a["call"] == "trade"]) == 3
+    assert len([a for a in _actions(r.stdout) if a["call"] == "buy"]) == 3
 
     # second run: everything is beside replay.py now, nothing is fetched
     r2 = _run(
-        [sys.executable, str(dev / "replay.py"), "--standalone", str(skill), "--fixture", "trade-activity-page", "--env", LEADER_ENV, "--no-download"],
+        [sys.executable, str(dev / "replay.py"), "--standalone", str(skill), "--fixture", "trade-activity-page", *ENV_ARGS, "--no-download"],
         cwd=skill, env=env,
     )
     assert r2.returncode == 0, r2.stdout + r2.stderr

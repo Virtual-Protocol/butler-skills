@@ -478,16 +478,21 @@ with both a one-off and a duty mode.
 ````markdown
 ---
 name: butler-copytrade
-description: Copy another member's buys once or as a standing duty, one trade per leader event, never twice. Use for "copy/mirror/follow <@handle or wallet>".
-version: 1.1.0
-metadata: {"openclaw":{"emoji":"🪞","requires":{"bins":["acp","bevo-read","bevo-automation"]}},"butler":{"tier":"on-demand","modes":["one-off","duty"],"moneyMoving":true,"keywords":["copy trade","mirror wallet","follow trader"],"requires":{"routes":["GET /butler-read/user","GET /butler-read/trade-activity","POST /butler-exec/trade","POST /butler-exec/services"],"features":["tradeIdempotency","execRequestStatus"],"gates":["canSwap"],"bins":["acp","bevo-read","bevo-automation"]},"params":[{"name":"LEADER","type":"principalId|wallet","required":true,"ask":"who to copy"},{"name":"COPY_USDC_PER_TRADE","type":"usd","default":25,"min":2,"max":10000},{"name":"COPY_MAX_USDC","type":"usd","default":50,"min":2,"max":10000},{"name":"COPY_RATIO","type":"number","default":0,"min":0,"max":1,"help":"share of the leader's USD size; 0 = fixed size"},{"name":"CHAIN_IDS","type":"chainIds","default":[8453]}],"dutyTemplate":"duty.py"}}
+description: Copy, mirror or follow another member's trades — spot, tokenized stocks and perps, once or as a standing duty sized from your owner's own words.
+version: 3.0.0
+metadata: {"openclaw":{"emoji":"🪞","requires":{"bins":["acp","bevo-read","bevo-automation"]}},"butler":{"tier":"on-demand","modes":["one-off","duty"],"moneyMoving":true,"keywords":["copy trade","copy trading","copy buys","mirror wallet","mirror trades","follow trader","follow wallet","copy perps","mirror perps","copy stocks"],"requires":{"routes":["GET /butler-read/user","GET /butler-read/trade-activity","GET /butler-read/user-assets","GET /butler-read/token-search","POST /butler-exec/trade","POST /butler-exec/services"],"features":["tradeIdempotency","execRequestStatus"],"gates":["canSwap","canPerp","canStock"],"bins":["acp","bevo-read","bevo-automation"]},"params":[{"name":"LEADER","type":"principalId|wallet","required":true,"ask":"who should I copy?"},{"name":"SIZING","type":"enum","values":["fixed","cash_share","leader_share"],"required":true,"ask":"how much per copy — a fixed dollar figure, a share of your own cash, or a share of what they trade?"},{"name":"SIZE_USD","type":"usd","min":2,"max":10000,"help":"dollars per copy (SIZING=fixed)"},{"name":"SHARE","type":"number","min":0,"max":1,"help":"fraction for cash/leader share sizing (0.2 = 20%)"},{"name":"MAX_USD","type":"usd","min":2,"max":100000,"help":"per-trade ceiling"},{"name":"CHAIN_IDS","type":"chainIds","default":[],"help":"empty = the leader's chain; set only when specified. Spot only"},{"name":"MIRROR_SELLS","type":"bool","default":false,"help":"copy spot and stock sells too"},{"name":"MIN_LEADER_USD","type":"usd","default":0,"min":0,"max":100000,"help":"ignore trades smaller than this; never applied to a perp close"},{"name":"MIRROR_PERPS","type":"bool","default":false,"help":"copy their leveraged positions too"},{"name":"MIRROR_STOCKS","type":"bool","default":false,"help":"copy their tokenized stock trades too"},{"name":"PERP_LEVERAGE","type":"number","default":0,"min":0,"max":50,"help":"fixed leverage to open at; 0 = take the leader's own"},{"name":"PERP_MAX_LEVERAGE","type":"number","default":0,"min":0,"max":50,"help":"leverage ceiling; 0 = no ceiling"}],"dutyTemplate":"duty.py"}}
 ---
 
 ## When to use
 
-The owner asks to copy, mirror or follow another member's or wallet's buys — once ("copy
-their last buy") or standing ("copy every buy they make"). Spot buys only; never a
-substitute for a plain trade the owner sizes themselves.
+Your owner asks to copy, mirror or follow another member's or wallet's trading —
+once ("copy their last buy") or standing ("copy every buy they make"). Spot
+tokens, tokenized stocks and leveraged perps, each behind its own switch.
+
+**The knobs below ARE your owner's words.** This skill has no money defaults: no
+size, no chain, no sells, no perps, no stocks unless they said so. If they did
+not name a size, ask that one question before you create anything — a default
+here is you deciding how much of their money to spend.
 
 ## Before you start
 
@@ -497,18 +502,59 @@ Resolve the leader:
 bevo-read user <@handle>
 ```
 
-On `user_not_found` ask the owner for a wallet address and use `wallets:[...]` in the
-trade-activity read instead. Get the sizing rule in the owner's own words (fixed USD per
-copy or a ratio of the leader's size, plus a daily cap).
+On `user_not_found` ask for a wallet address and use `--wallets` in the
+trade-activity read (and `"wallets"` in the trigger) instead of principal ids.
+
+Then get, in their own words: **how much per copy**, and **which of the three
+products** they mean. Map what they said onto the knobs:
+
+| What they said | `SIZING` | with |
+| --- | --- | --- |
+| "$5 a trade" | `fixed` | `SIZE_USD: 5` |
+| "20% of my wallet each" | `cash_share` | `SHARE: 0.2` — read live, every event |
+| "20% of whatever she buys" | `leader_share` | `SHARE: 0.2` |
+| "never more than $50" | (any) | `MAX_USD: 50` |
+| "only her trades over $100" | (any) | `MIN_LEADER_USD: 100` |
+| "her buys AND sells" | (any) | `MIRROR_SELLS: true` |
+| "her perps / longs / shorts too" | (any) | `MIRROR_PERPS: true` |
+| "her stocks too" / "her AAPL trades" | (any) | `MIRROR_STOCKS: true` |
+| "everything she does" | (any) | all three of the above `true` |
+| "but cap it at 3x" | (any) | `PERP_MAX_LEVERAGE: 3` |
+| "always at 2x" | (any) | `PERP_LEVERAGE: 2` |
+| "only on Base" | (any) | `CHAIN_IDS: [8453]` |
+
+A share of THEIR wallet and a share of the LEADER's trade are different asks and
+different modes — "20% of my wallet" is `cash_share`, "20% of what she buys" is
+`leader_share`. Getting that wrong spends the wrong money.
+
+Perps and stocks are OFF unless they asked. "Copy her trades" is spot: say what
+you switched on and what you did not.
 
 ## Customize
 
-- `LEADER` (required, asked as "who should I copy?") — the principalId or wallet to mirror.
-- `COPY_USDC_PER_TRADE` (default $25) — fixed USD size per copy when `COPY_RATIO` is 0.
-- `COPY_MAX_USDC` (default $50) — hard per-trade ceiling regardless of ratio.
-- `COPY_RATIO` (default 0) — when > 0, size = leader's USD size × ratio, clamped to
-  `COPY_MAX_USDC`.
-- `CHAIN_IDS` (default `[8453]`) — only leader buys on one of these chains are copied.
+- `LEADER` (required) — principal id or wallet.
+- `SIZING` (required) — `fixed` | `cash_share` | `leader_share`. No default:
+  ask rather than pick one. On a perp it sizes the POSITION (notional), never
+  the margin, which is also what the leader's own row reports.
+- `SIZE_USD` — dollars per copy when `SIZING` is `fixed`.
+- `SHARE` — the fraction (20% → `0.2`) of the owner's spendable cash
+  (`cash_share`, read at trade time) or of the leader's own USD size
+  (`leader_share`).
+- `MAX_USD` — per-trade ceiling. Set it ONLY when they named a ceiling.
+- `CHAIN_IDS` (default `[]`) — `[]` copies each trade on the chain the leader
+  traded on, which is almost always right. Set it only when they named a chain;
+  a chain filter they did not ask for is refused at create. **Spot only** — a
+  perp has no chain and a stock's chain belongs to its cash leg, so neither is
+  ever filtered by it.
+- `MIRROR_SELLS` (default `false`) — "copy her buys" means buys. Spot and stock
+  sells only; a perp close is not a sell and is never gated by it.
+- `MIN_LEADER_USD` (default `0`) — skip leader trades below this size. Applies
+  to spot, stocks and perp opens; never to a perp close.
+- `MIRROR_PERPS` (default `false`) — mirror their leveraged opens, and close
+  when they close.
+- `MIRROR_STOCKS` (default `false`) — mirror their tokenized stock trades.
+- `PERP_LEVERAGE` (default `0`) — open at this leverage instead of the
+  leader's. `PERP_MAX_LEVERAGE` (default `0`) caps whichever applies.
 
 ## One-off procedure
 
@@ -518,193 +564,315 @@ copy or a ratio of the leader's size, plus a daily cap).
    bevo-read trade-activity --principal-ids <leaderPrincipalId> --limit 20
    ```
 
-2. [ADAPT] Pick the event the owner meant — default: the newest `direction:"buy"`.
-3. [FIXED] Skip it if `direction`, `chainId`, `tokenOutAddress` or `usdValue` is null, or if
-   `chainId` (cast to int) is not in `CHAIN_IDS` — take the next candidate.
-4. [ADAPT] Size from `COPY_USDC_PER_TRADE` / `COPY_RATIO`, clamped to `COPY_MAX_USDC`.
-5. [FIXED] Echo token address, chain, the leader's size and your size to the owner before
-   filing anything.
-6. [FIXED] File it — token by address, a buy so `--chain-out`, key from the event id:
+2. [ADAPT] Pick the event your owner meant — default: the newest `direction:"buy"`.
+3. [FIXED] Skip an event whose `direction`, `usdValue` or traded-leg address and
+   symbol are all null — take the next candidate rather than guessing a value.
+4. [ADAPT] Size it exactly as they said (the table above). No size named, no trade.
+5. [FIXED] Echo the product, the token, the chain, the leader's size and your
+   size before filing anything.
+6. [FIXED] File it — key from the event id — in the shape the product takes.
+   A spot token goes by ADDRESS on the event's OWN `chainId`, a buy taking
+   `--chain-out` and a sell `--chain-in`:
 
    ```bash
    acp trade --token-in usdc --amount-in <usd> --token-out <tokenOutAddress> --chain-out <chainId> --idempotency-key copytrade:chat:<eventId>
    ```
 
-7. [FIXED] On `accepted` or `manual_signing_required`, stop and report; on anything else,
-   see "Idempotency and retries".
+   A perp (`type: "HL"`) takes the leader's side and coin, sized in notional:
+
+   ```bash
+   acp trade --side <long|short> --token <tokenOutSymbol> --amount-usdc <usd> --leverage <n> --idempotency-key copytrade:chat:<eventId>
+   ```
+
+   A tokenized stock takes the ticker with no `--side`; a sell is share-denominated
+   and needs the chain and count from your owner's own holding, floored:
+
+   ```bash
+   acp trade --token <TICKER> --amount-usdc <usd> --idempotency-key copytrade:chat:<eventId>
+   acp trade --token <TICKER> --amount-shares <n> --chain <chain> --idempotency-key copytrade:chat:<eventId>
+   ```
+
+7. [FIXED] On `accepted` or `manual_signing_required`, stop and report; on
+   anything else, see "Idempotency and retries".
 
 ## Duty procedure
 
-1. [ADAPT] Confirm the trigger is what the owner meant: every buy by `LEADER`, on the
-   allowed chains, sized by the params above.
-2. [FIXED] Trigger JSON: `{"kind":"trade","principalIds":["<leaderPrincipalId>"],"direction":"buy"}`.
-3. [FIXED] `env` = the params above (skill defaults, then the owner's saved `bevo-hub set`
-   prefs, then this ask's own values).
-4. [ADAPT] `requestedDailyLimitUsdc` = the owner's stated daily cap; `yardstick` = "Every buy
-   by LEADER is mirrored once, within a minute, for $COPY_USDC_PER_TRADE, never twice."
-5. [FIXED] Create it — never hand-write the duty's code, the shim loads this skill's `duty.py`:
+1. [ADAPT] Confirm what you are about to file back to them in one line: whose
+   trades, which products, how much per copy, any cap, leverage or chain.
+2. [FIXED] Trigger JSON — the leader's own row in the public feed:
+   `{"kind":"trade","principalIds":["<leaderPrincipalId>"]}` (or
+   `{"kind":"trade","wallets":["0x…"]}`). Do not add `"direction"`: the mirror
+   switches decide what is copied, and the duty needs to SEE a sell or a close
+   to act on it.
+3. [FIXED] `env` = the knobs above, from your owner's words (skill defaults,
+   then their saved `bevo-hub set` prefs, then this ask's own values).
+4. [ADAPT] `requestedDailyLimitUsdc` = their stated daily cap; `spec` and
+   `yardstick` = what they asked for, in their words — name the chain in the
+   `spec` when you set `CHAIN_IDS`, or the create is refused.
+5. [FIXED] Create it — never hand-write the duty's code, the shim loads this
+   skill's `duty.py`:
 
    ```bash
-   bevo-automation create --from-skill butler-copytrade@1.0.1 '<json>'
+   bevo-automation create --from-skill butler-copytrade@3.0.0 '<json>'
    ```
 
 6. [FIXED] Report as in "Say to the owner".
 
 ## Idempotency and retries
 
-Key: `copytrade:chat:<eventId>` (one-off), `copytrade:{SERVICE_ID}:<eventId>` (duty, see
-`duty.py`) — one key per leader event, never a timestamp. Any error or uncertainty:
-`bevo-read request <key>` first — do not re-run.
+Key: `copytrade:chat:<eventId>` (one-off), `copytrade:{SERVICE_ID}:<eventId>`
+(duty, see `duty.py`) — one key per leader event, never a timestamp. The service
+pump can hand back rows it already delivered after a restart; the same key is
+what makes that a no-op instead of a second real trade. Any error or
+uncertainty: `bevo-read request <key>` first — do not re-run.
 
 ## Failure handling
 
 | Outcome | What to do |
 | --- | --- |
-| `user_not_found` on the leader | Ask for a wallet address; read by `wallets` instead. |
-| Leader event has a null field or an off-list chain | Skip it; take the next candidate. |
-| `accepted` | Done — report token, chain and size. |
-| `manual_signing_required` | Notify the owner once; do not poll in a loop. |
+| `user_not_found` on the leader | Ask for a wallet address; read and trigger by `wallets` instead. |
+| Leader event names no token at all | Skip it; take the next candidate. |
+| create refused: `env.CHAIN_IDS` narrows to a chain the owner never named | Drop `CHAIN_IDS` (or `[]`) — or name their chain in the `spec`. |
+| create refused: share-of-wallet ask whose `SIZING` is not `cash_share` | They said a share of THEIR money: `SIZING=cash_share`, `SHARE=<fraction>`. |
+| create refused: `env.SIZING: required` | You never asked how much. Ask that one question, then create. |
+| Leader traded a bare ticker that is not a stock you can trade | Skipped, never guessed onto the spot rail — a bare-symbol swap resolves to whatever token wears that ticker. A region that bars stocks looks the same here. |
+| A perp or stock leg refused for a permission gate | That product is not available to this owner; offer the spot mode and leave the switch off. |
+| Copy size under a venue minimum ($2 spot, $15 perp, $15 stock buy) | Not filed. Say the minimum rather than rounding their size up to it. |
+| Closing a perp the owner never opened | A no-op, not an error — the close refuses and the duty moves on. |
+| `accepted` | Done — report product, token and size. |
+| `manual_signing_required` | The card is already in Approvals; say so once, do not poll. |
 
 ## Limits
 
-Buys only in v1 — sells and perps are never mirrored. Yanking this skill does not stop a
-duty already created from it (the duty keeps its own copy of `duty.py`).
+One trade per leader event, with no averaging or laddering. A perp CLOSE is
+mirrored whenever the leader's position comes off — by their own hand, a stop,
+or a liquidation — and is never gated by a size, chain or minimum knob; but the
+copy closes ALL of that coin's position, not the leader's fraction of theirs.
+Leverage is the leader's unless the owner named a figure: their 40x is 40x of
+their conviction on their balance, not the owner's — and a position the
+exchange reported rather than the leader placing it through us carries no
+leverage at all, so a copy of one opens at 1x. The notional is still theirs;
+the margin is not. Perp margin is never moved
+between the spot and perp accounts — a perp copy with no perp cash simply
+refuses. Yanking this skill does not stop a duty already created from it (the
+duty keeps its own copy of `duty.py`).
 
 ## Say to the owner
 
-One-off: "Copied LEADER's buy of `<amount>` USD into `<token>` on chain `<chainId>`. Sells
-are not mirrored in this version." Duty: "Created, pending — arm it in Approvals; the card
-proposes your daily cap as its pocket; nothing runs until then."
+One-off: "Copied `<@leader>`'s `<buy|long|stock buy>` — `<amount>` USD into
+`<token>`<` on chain <chainId>` for a spot leg, `at <n>x` for a perp>." Duty:
+"Created, pending — arm it in Approvals; the card proposes your daily cap as its
+pocket; nothing runs until then." Say back, in their own words, the sizing ("20%
+of your cash, read fresh each time") and exactly which products are mirrored and
+which are not — never as a dollar figure you worked out yourself.
 ````
 
 `butler-copytrade/duty.py`:
 
 ```python
-"""butler-copytrade duty — mirrors LEADER's spot buys, one trade per leader
-event, never twice. Sells are not mirrored in this version. See
-skills/butler-copytrade/SKILL.md for the full procedure this code implements.
+"""butler-copytrade duty — mirrors LEADER's trades on the Virtuals rails, one
+trade per leader event, never twice. Spot swaps, tokenized stocks and perps.
+Every knob below is a word the owner actually said; nothing here has a money
+default of its own. See SKILL.md.
 """
 import json
 import os
 
 import bevo
 
-STATE_PATH = "state.json"
-MAX_SEEN = 2000
-NOTIFIED_MANUAL_PATH = "notified_manual.json"
+# Every knob is read with .get(): `bevo-automation create` already refuses a
+# duty missing LEADER or SIZING, so a KeyError here could only ever fire in an
+# offline replay — and a duty that dies on import is a crash loop, not an error
+# message. An unusable config skips every event and says so in the log instead.
+LEADER = os.environ.get("LEADER") or ""
+# fixed = SIZE_USD per copy | cash_share = SHARE of the owner's cash, read at
+# trade time | leader_share = SHARE of what the leader just spent.
+SIZING = os.environ.get("SIZING") or "fixed"
+SIZE_USD = float(os.environ.get("SIZE_USD") or 0)
+SHARE = float(os.environ.get("SHARE") or 0)
+MAX_USD = float(os.environ.get("MAX_USD") or 0)
+# [] means "wherever the leader traded" — trade.asset already carries the chain.
+# Spot only: a perp has no chain and a stock's chain is its cash leg's, so a
+# chain filter that touched either would silently drop every one of them.
+CHAIN_IDS = [int(c) for c in json.loads(os.environ.get("CHAIN_IDS") or "[]")]
+MIRROR_SELLS = str(os.environ.get("MIRROR_SELLS") or "false").lower() == "true"
+MIN_LEADER_USD = float(os.environ.get("MIN_LEADER_USD") or 0)
+MIRROR_PERPS = str(os.environ.get("MIRROR_PERPS") or "false").lower() == "true"
+MIRROR_STOCKS = str(os.environ.get("MIRROR_STOCKS") or "false").lower() == "true"
+# 0 = take the leader's own leverage on each trade.
+PERP_LEVERAGE = float(os.environ.get("PERP_LEVERAGE") or 0)
+PERP_MAX_LEVERAGE = float(os.environ.get("PERP_MAX_LEVERAGE") or 0)
 
-LEADER = os.environ.get("LEADER", "")
-COPY_USDC_PER_TRADE = float(os.environ.get("COPY_USDC_PER_TRADE", "25"))
-COPY_MAX_USDC = float(os.environ.get("COPY_MAX_USDC", "50"))
-COPY_RATIO = float(os.environ.get("COPY_RATIO", "0"))
-CHAIN_IDS = json.loads(os.environ.get("CHAIN_IDS", "[8453]"))
+# The venue minimums AGENTS.md names. A copy under one of them is not filed at
+# all: the leader's size is theirs, the minimum is ours.
+SPOT_MIN_USD = 2.0
+PERP_MIN_USD = 15.0
+STOCK_MIN_USD = 15.0
 
 
-def load_json(path: str, default):
-    if os.path.exists(path):
-        with open(path) as f:
-            return json.load(f)
-    return default
+def size_for(trade):
+    """The USD to put into this copy, or 0 to skip it.
 
-
-def save_json(path: str, data) -> None:
-    tmp = path + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(data, f)
-    os.replace(tmp, path)
-
-
-def size_for(event: dict) -> float:
-    if COPY_RATIO > 0:
-        leader_usd = event.get("usdValue") or 0
-        size = float(leader_usd) * COPY_RATIO
+    `cash_share` reads the LIVE wallet on every event — the owner said "a
+    share of my wallet", and a figure worked out when the duty was written is
+    a different promise by the second trade. `leader_share` is a share of what
+    the leader spent, which the event carries. `MAX_USD` caps all three, and
+    only when the owner named a ceiling. On a perp this is the POSITION size
+    (notional), never the margin — `usd_value` on the leader's row is notional
+    too, so `leader_share` compares like with like."""
+    if SIZING == "cash_share":
+        balance = bevo.balance()
+        if not balance.available or not balance.cash_usd:
+            return 0.0
+        size = balance.cash_usd * SHARE
+    elif SIZING == "leader_share":
+        size = (trade.usd_value or 0.0) * SHARE
     else:
-        size = COPY_USDC_PER_TRADE
-    return min(size, COPY_MAX_USDC)
+        size = SIZE_USD
+    return min(size, MAX_USD) if MAX_USD else size
 
 
-class SeenSet:
-    """A bounded, insertion-ordered seen-set backed by a list on disk. A
-    plain Python set has no order, so trimming it with `[-MAX_SEEN:]` drops
-    arbitrary ids, not the oldest — this keeps the list as the order of
-    record and a parallel set only for O(1) membership checks."""
+def leverage_for(trade):
+    """The leverage to open at: the owner's fixed figure when they named one,
+    otherwise the leader's own on that trade. `PERP_MAX_LEVERAGE` caps it only
+    when they named a ceiling. A leader's 40x is 40x of THEIR conviction on
+    THEIR balance — an owner who did not say a number gets it verbatim, which
+    is why the skill asks."""
+    lev = PERP_LEVERAGE or (trade.leverage or 1)
+    if PERP_MAX_LEVERAGE:
+        lev = min(lev, PERP_MAX_LEVERAGE)
+    return max(1, int(lev))
 
-    def __init__(self, path: str, key: str, max_len: int = MAX_SEEN):
-        self.path = path
-        self.key = key
-        self.max_len = max_len
-        data = load_json(path, {key: []})
-        self.items: list = list(data.get(key, []))
-        self.member = set(self.items)
 
-    def __contains__(self, item) -> bool:
-        return item in self.member
+def too_small(trade, size, floor, kind):
+    if size >= floor:
+        return False
+    bevo.log(f"copytrade skip event={trade.id}: ${size:.2f} is under the ${floor:.2f} {kind} minimum")
+    return True
 
-    def add_and_save(self, item) -> None:
-        if item in self.member:
+
+def copy_perp(trade, key):
+    """A perp leg. A CLOSE is risk coming off and is never gated by a size
+    knob, MIN_LEADER_USD or CHAIN_IDS: if the leader is out — by their own
+    hand, a stop, or a liquidation the exchange forced — the copy gets out
+    too. bevo.close() reads our own side and size and refuses when we hold
+    nothing, so a close we never opened is a no-op, not an error."""
+    if trade.is_close:
+        result = bevo.close(trade.asset.ref, idempotency_key=key)
+        bevo.log(f"copytrade event={trade.id} close {trade.asset.ref} ({trade.hl_event or 'by hand'}) {result.summary} key={key}")
+        return
+
+    if MIN_LEADER_USD and (trade.usd_value or 0.0) < MIN_LEADER_USD:
+        return
+    size = size_for(trade)
+    if size <= 0 or too_small(trade, size, PERP_MIN_USD, "perp"):
+        return
+
+    lev = leverage_for(trade)
+    open_side = bevo.short if trade.is_short else bevo.long
+    result = open_side(trade.asset.ref, usd=size, leverage=lev, idempotency_key=key)
+    bevo.log(f"copytrade event={trade.id} {'short' if trade.is_short else 'long'} {trade.asset.ref} ${size:.2f} at {lev}x {result.summary} key={key}")
+
+
+def is_stock_leg(trade):
+    """Ask the catalog whether this ticker is a tokenized stock.
+
+    A read failure is not an answer. `bevo.is_stock` goes out to token-search,
+    and an exception escaping here would abort the whole batch — stranding a
+    perp CLOSE queued behind this event, which is the one thing that must
+    never be skipped. Log it and treat the leg as unresolvable instead."""
+    try:
+        return bevo.is_stock(trade.asset.symbol)
+    except bevo.BevoError as err:
+        bevo.log(f"copytrade skip event={trade.id}: stock lookup failed ({err})")
+        return False
+
+
+def copy_stock(trade, key):
+    """A tokenized stock. It rides in on a SWAP row that names a ticker and no
+    address, so it needs the stock command shape — never the swap shape a
+    spot token takes. bevo.stock_sell() resolves our own share count and venue
+    from the holding and refuses when we hold none."""
+    if MIN_LEADER_USD and (trade.usd_value or 0.0) < MIN_LEADER_USD:
+        return
+    size = size_for(trade)
+    if size <= 0:
+        bevo.log(f"copytrade skip event={trade.id}: size 0 (LEADER={LEADER} SIZING={SIZING})")
+        return
+
+    if trade.is_sell:
+        result = bevo.stock_sell(trade.asset.symbol, usd=size, idempotency_key=key)
+    else:
+        if too_small(trade, size, STOCK_MIN_USD, "stock buy"):
             return
-        self.items.append(item)
-        self.member.add(item)
-        if len(self.items) > self.max_len:
-            dropped = self.items[: len(self.items) - self.max_len]
-            self.items = self.items[-self.max_len :]
-            self.member.difference_update(dropped)
-        save_json(self.path, {self.key: self.items})
+        result = bevo.stock_buy(trade.asset.symbol, usd=size, idempotency_key=key)
+    bevo.log(f"copytrade event={trade.id} stock {trade.asset.symbol} ${size:.2f} {result.summary} key={key}")
 
 
-def main() -> None:
-    handled = SeenSet(STATE_PATH, "handled")
-    notified_manual = SeenSet(NOTIFIED_MANUAL_PATH, "ids")
+def copy_spot(trade, key):
+    if CHAIN_IDS and trade.chain_id not in CHAIN_IDS:
+        return
+    if MIN_LEADER_USD and (trade.usd_value or 0.0) < MIN_LEADER_USD:
+        return
+    size = size_for(trade)
+    if size <= 0:
+        bevo.log(f"copytrade skip event={trade.id}: size 0 (LEADER={LEADER} SIZING={SIZING})")
+        return
+    if too_small(trade, size, SPOT_MIN_USD, "spot"):
+        return
 
-    for ev in bevo.events():
-        if ev.get("kind") != "trade":
+    # trade.asset is the exact token on the exact chain the leader traded —
+    # its address verbatim plus the feed's own chain id. Never trade.token,
+    # which is a display name, and never a chain of our own.
+    if trade.is_sell:
+        result = bevo.sell(trade.asset, usd=size, idempotency_key=key)
+    else:
+        result = bevo.buy(trade.asset, usd=size, idempotency_key=key)
+    bevo.log(f"copytrade event={trade.id} {trade.asset} ${size:.2f} {result.summary} key={key}")
+
+
+def main():
+    for trade in bevo.trades():
+        # The trigger already scopes the feed to LEADER (SKILL.md, Duty
+        # procedure): a second owner check here would drop every event when
+        # the owner gave a wallet and the feed reports a principal id.
+        #
+        # One key per LEADER EVENT, never a timestamp: the service pump can
+        # replay rows it already handed over after a restart, and the same key
+        # answers "already filed" instead of trading twice.
+        key = f"copytrade:{bevo.SERVICE_ID}:{trade.id}"
+
+        if trade.is_perp:
+            if MIRROR_PERPS:
+                copy_perp(trade, key)
             continue
 
-        e = ev.get("event", {})
-        event_id = e.get("id")
-        if event_id is None or event_id in handled:
+        if trade.is_sell:
+            if not MIRROR_SELLS:
+                continue
+        elif not trade.is_buy:
+            continue  # a row the feed could not classify
+
+        if trade.asset.ref is None:
+            bevo.log(f"copytrade skip event={trade.id}: the feed named no token")
             continue
 
-        if e.get("direction") != "buy":
-            handled.add_and_save(event_id)
+        # A leg with no ADDRESS is a bare ticker: a tokenized stock, or a
+        # symbol the feed could not resolve to a contract. NEVER guess it onto
+        # the spot rail — bevo.buy("AAPL") is a bare-symbol swap that resolves
+        # to whatever token happens to wear that ticker, which is someone
+        # else's asset. Ask the catalog only when the owner asked for stocks:
+        # token-search hides tokenized stocks from an owner whose region does
+        # not permit them, so a `False` here can mean "not a stock" OR "not
+        # yours to trade", and both end the same way — skip, never substitute.
+        if trade.asset.address is None:
+            if MIRROR_STOCKS and is_stock_leg(trade):
+                copy_stock(trade, key)
+            else:
+                bevo.log(f"copytrade skip event={trade.id}: {trade.asset.symbol} names no address and is not a stock we can trade")
             continue
 
-        chain_id = e.get("chainId")
-        token_out = e.get("tokenOutAddress")
-        usd_value = e.get("usdValue")
-        if chain_id is None or token_out is None or usd_value is None:
-            handled.add_and_save(event_id)
-            continue
-
-        try:
-            chain_id_int = int(chain_id)
-        except (TypeError, ValueError):
-            handled.add_and_save(event_id)
-            continue
-
-        if chain_id_int not in CHAIN_IDS:
-            handled.add_and_save(event_id)
-            continue
-
-        amount = size_for(e)
-        key = f"copytrade:{bevo.SERVICE_ID}:{event_id}"
-
-        command = (
-            f"acp trade --token-in usdc --amount-in {amount} "
-            f"--token-out {token_out} --chain-out {chain_id_int} "
-            f"--idempotency-key {key}"
-        )
-        result = bevo.trade(command=command, idempotency_key=key)
-        status = result.get("status") if isinstance(result, dict) else None
-        bevo.log(f"copytrade event={event_id} status={status} key={key}")
-
-        if status == "manual_signing_required" and event_id not in notified_manual:
-            bevo.notify(f"Copied {LEADER}'s buy of {token_out} — approve it in Approvals.")
-            notified_manual.add_and_save(event_id)
-
-        # unknown_outcome and every other terminal status: never loop on it,
-        # just mark the event handled and move on.
-        handled.add_and_save(event_id)
+        copy_spot(trade, key)
 
 
 if __name__ == "__main__":
