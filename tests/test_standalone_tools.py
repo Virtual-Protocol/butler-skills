@@ -6,6 +6,10 @@ scripts/check_selectors.mjs and tests/fixtures/* out under dist/tools/
 replay.py; replay.py fetches stub_bevo.py and any fixture it needs from the same
 site. These tests exercise exactly that layout from an empty directory, with a
 file:// mirror standing in for the Pages site so nothing touches the network.
+
+The tests that need a real skill tree use `copytrade_checkout` (tests/conftest.py),
+which clones butler-copytrade at the ref skills.json follows — no skill is
+checked out in this repo — and skips them when that clone is unavailable.
 """
 from __future__ import annotations
 
@@ -19,7 +23,6 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-COPYTRADE = REPO_ROOT / "skills" / "butler-copytrade"
 LEADER_ENV = "LEADER=11111111-1111-1111-1111-111111111111"
 
 
@@ -93,13 +96,13 @@ def test_publish_tools_cli_writes_under_dist(tmp_path):
 # --- the developer path, from an empty directory ------------------------------------------
 
 
-def test_validate_and_replay_from_the_published_layout(tmp_path):
+def test_validate_and_replay_from_the_published_layout(tmp_path, copytrade_checkout):
     """Exactly what publish.yml serves, used from an unrelated cwd on a copy of the
-    pinned copytrade skill: validate.py alone (no schema/, no scripts/) and replay.py
+    cloned copytrade skill: validate.py alone (no schema/, no scripts/) and replay.py
     with stub + fixtures beside it (no download)."""
     tools = tmp_path / "site" / "tools"
     publish_tools.publish(tmp_path / "site")
-    skill = _copy_skill(COPYTRADE, tmp_path / "my-skill-checkout")
+    skill = _copy_skill(copytrade_checkout, tmp_path / "my-skill-checkout")
 
     v = _run([sys.executable, str(tools / "validate.py"), "--standalone", "--maintainer", str(skill)], cwd=tmp_path)
     assert v.returncode == 0, v.stdout + v.stderr
@@ -133,14 +136,14 @@ def test_standalone_validate_uses_the_embedded_reserved_list(tmp_path):
     assert "'clawhub' is reserved" in v.stdout
 
 
-def test_replay_downloads_stub_and_fixture_when_missing(tmp_path):
+def test_replay_downloads_stub_and_fixture_when_missing(tmp_path, copytrade_checkout):
     """The author's real setup: only replay.py in the directory. stub_bevo.py and the
     fixture come from BUTLER_SKILLS_TOOLS_URL (a file:// mirror of the Pages layout)."""
     publish_tools.publish(tmp_path / "site")
     dev = tmp_path / "dev"
     dev.mkdir()
     shutil.copy2(REPO_ROOT / "tests" / "replay.py", dev / "replay.py")
-    skill = _copy_skill(COPYTRADE, tmp_path / "checkout")
+    skill = _copy_skill(copytrade_checkout, tmp_path / "checkout")
 
     env = {"BUTLER_SKILLS_TOOLS_URL": (tmp_path / "site" / "tools").as_uri()}
     r = _run(
@@ -180,24 +183,24 @@ def test_stub_downloads_a_read_fixture_on_first_use(tmp_path):
     assert (dev / "fixtures" / "me.json").exists()
 
 
-def test_replay_without_download_fails_loudly_on_a_missing_fixture(tmp_path):
+def test_replay_without_download_fails_loudly_on_a_missing_fixture(tmp_path, copytrade_checkout):
     dev = tmp_path / "dev"
     dev.mkdir()
     shutil.copy2(REPO_ROOT / "tests" / "replay.py", dev / "replay.py")
     shutil.copy2(REPO_ROOT / "tests" / "stub_bevo.py", dev / "stub_bevo.py")
-    skill = _copy_skill(COPYTRADE, tmp_path / "checkout")
+    skill = _copy_skill(copytrade_checkout, tmp_path / "checkout")
     r = _run([sys.executable, str(dev / "replay.py"), "--standalone", str(skill), "--fixture", "no-such-page", "--no-download"], cwd=tmp_path)
     assert r.returncode != 0
     assert "fixture no-such-page.jsonl not found" in (r.stdout + r.stderr)
 
 
-def test_replay_is_skipped_cleanly_for_a_one_off_only_skill(tmp_path):
+def test_replay_is_skipped_cleanly_for_a_one_off_only_skill(tmp_path, copytrade_checkout):
     """A one-off-only skill ships no duty.py: replay prints 'nothing to replay', exits 0,
     and never needs a stub or a fixture."""
     dev = tmp_path / "dev"
     dev.mkdir()
     shutil.copy2(REPO_ROOT / "tests" / "replay.py", dev / "replay.py")
-    skill = _copy_skill(COPYTRADE, tmp_path / "checkout")
+    skill = _copy_skill(copytrade_checkout, tmp_path / "checkout")
     (skill / "duty.py").unlink()
     assert not (skill / "duty.py").exists()
     r = _run([sys.executable, str(dev / "replay.py"), "--standalone", str(skill), "--fixture", "trade-activity-page", "--no-download"], cwd=tmp_path)

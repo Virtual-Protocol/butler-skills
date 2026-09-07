@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 """sync_readme.py — regenerate README.md's `butler-copytrade` worked example
-from the real skills/butler-copytrade/{SKILL.md,duty.py} — the submodule
-checkout of the skill's own repository, pinned at its tagged commit — so the
-README can never drift from the published skill (and a Claude copying the
-README example verbatim copies exactly what CI validates). Run
-`git submodule update --init --recursive` first if that directory is empty.
+from that skill's own repository, so the README can never drift from what the
+registry publishes (and a Claude copying the README example verbatim copies
+exactly what CI validates).
+
+No skill is checked out here: skills.json records `butler-copytrade`'s repo
+and the ref the registry follows, and this script clones that ref into a
+temporary directory and reads SKILL.md and duty.py out of it — the same
+resolution the publish build does. It therefore needs the network, and its
+answer moves when the skill repo moves: if the ref is a branch, a merge over
+there makes `--check` fail here until the block is regenerated.
 
 Usage:
     scripts/sync_readme.py             # rewrite README.md in place
@@ -18,57 +23,61 @@ The generated region is delimited by two HTML comments in README.md:
 from __future__ import annotations
 
 import argparse
+import json
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 README_PATH = REPO_ROOT / "README.md"
-GITMODULES_PATH = REPO_ROOT / ".gitmodules"
-SKILL_SUBMODULE = "skills/butler-copytrade"
-SKILL_DIR = REPO_ROOT / SKILL_SUBMODULE
-SKILL_MD_PATH = SKILL_DIR / "SKILL.md"
-DUTY_PY_PATH = SKILL_DIR / "duty.py"
+REGISTRY_PATH = REPO_ROOT / "skills.json"
+SKILL_NAME = "butler-copytrade"
 
 BEGIN_MARKER = "<!-- BEGIN GENERATED: butler-copytrade worked example (scripts/sync_readme.py; do not edit by hand) -->"
 END_MARKER = "<!-- END GENERATED: butler-copytrade worked example -->"
 
 
-def submodule_url(path: str = SKILL_SUBMODULE) -> str:
-    """The skill repo URL recorded for `path` in .gitmodules (empty if absent)."""
-    if not GITMODULES_PATH.exists():
-        return ""
-    current_path = None
-    entries: dict[str, str] = {}
-    section: dict[str, str] = {}
-    for raw in GITMODULES_PATH.read_text().splitlines():
-        line = raw.strip()
-        if line.startswith("[submodule"):
-            section = {}
-            continue
-        if "=" in line:
-            k, v = (x.strip() for x in line.split("=", 1))
-            section[k] = v
-            if "path" in section and "url" in section:
-                entries[section["path"]] = section["url"]
-    return entries.get(path, "")
+def registry_entry(name: str = SKILL_NAME) -> dict:
+    """The skills.json row for `name` — the repo link and the ref to clone."""
+    rows = json.loads(REGISTRY_PATH.read_text()).get("skills", [])
+    for row in rows:
+        if row.get("name") == name:
+            return row
+    raise SystemExit(f"{name} is not listed in {REGISTRY_PATH}")
 
 
-def build_block() -> str:
-    if not SKILL_MD_PATH.exists():
-        raise SystemExit(f"{SKILL_MD_PATH} missing — run `git submodule update --init --recursive`")
-    skill_md = SKILL_MD_PATH.read_text()
-    duty_py = DUTY_PY_PATH.read_text()
-    repo = submodule_url()
-    origin = f" (submodule of {repo}, pinned at its tagged commit)" if repo else ""
+def clone(entry: dict, dest: Path) -> Path:
+    repo, ref = entry["repo"], entry.get("ref") or "main"
+    try:
+        subprocess.run(
+            ["git", "clone", "--quiet", "--depth", "1", "--branch", ref, repo, str(dest)],
+            capture_output=True, text=True, check=True, timeout=300,
+        )
+    except subprocess.CalledProcessError as e:
+        raise SystemExit(f"cannot clone {repo} at {ref!r}: {e.stderr.strip() or e}")
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise SystemExit(f"cannot clone {repo} at {ref!r}: {e}")
+    return dest
+
+
+def build_block(skill_dir: Path, entry: dict) -> str:
+    skill_md_path = skill_dir / "SKILL.md"
+    duty_py_path = skill_dir / "duty.py"
+    if not skill_md_path.exists():
+        raise SystemExit(f"{entry['repo']} at {entry.get('ref')!r} has no SKILL.md at its root")
+    skill_md = skill_md_path.read_text()
+    duty_py = duty_py_path.read_text()
+    origin = f" (from {entry['repo']} at `{entry.get('ref') or 'main'}`)"
 
     parts = [
-        f"`skills/butler-copytrade/SKILL.md`{origin}:",
+        f"`{SKILL_NAME}/SKILL.md`{origin}:",
         "",
         "````markdown",
         skill_md.rstrip("\n"),
         "````",
         "",
-        "`skills/butler-copytrade/duty.py`:",
+        f"`{SKILL_NAME}/duty.py`:",
         "",
         "```python",
         duty_py.rstrip("\n"),
@@ -91,12 +100,17 @@ def main() -> int:
     before, rest = readme.split(BEGIN_MARKER, 1)
     _, after = rest.split(END_MARKER, 1)
 
-    new_block = build_block()
+    entry = registry_entry()
+    with tempfile.TemporaryDirectory(prefix="butler-skills-readme-") as tmp:
+        new_block = build_block(clone(entry, Path(tmp) / SKILL_NAME), entry)
     new_readme = before + BEGIN_MARKER + "\n\n" + new_block + "\n" + END_MARKER + after
 
     if args.check:
         if new_readme != readme:
-            print("README.md's butler-copytrade worked example is out of sync with skills/butler-copytrade/. Run scripts/sync_readme.py.")
+            print(
+                f"README.md's {SKILL_NAME} worked example is out of sync with "
+                f"{entry['repo']} at {entry.get('ref')!r}. Run scripts/sync_readme.py."
+            )
             return 1
         print("README.md is in sync")
         return 0

@@ -11,12 +11,12 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      # Skills are git submodules pinned at a tagged commit of their own repo;
-      # every check below runs against that pinned checkout.
+      # Skills live in their own repos and are validated in their own CI (the
+      # composite action in .github/actions/validate). Here we check the
+      # registry itself: skills.json, the schema, the tools and the index build.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          submodules: recursive
 
       - uses: actions/setup-python@v5
         with:
@@ -38,14 +38,14 @@ jobs:
         # The PR's real head, not the synthetic merge commit actions/checkout puts at HEAD.
         run: python3 scripts/check_dco.py --base origin/${{ github.base_ref }} --head ${{ github.event.pull_request.head.sha || 'HEAD' }}
 
-      - name: Submodule pins
-        # For every skills/<name> submodule: (a) the pinned commit carries tag
-        # v<version> of that repo (`git -C skills/<name> tag --points-at HEAD`),
-        # (b) the URL is https://github.com/<owner>/<repo>, (c) the checkout has no
-        # symlinks and no nested submodules/repositories. This is the trust
-        # boundary: what a PR pins is what Butler clones, and a later force-push to
-        # the skill repo cannot change it.
-        run: python3 scripts/check_pins.py
+      - name: Registry listing
+        # skills.json IS the registry: a name and a GitHub link per skill. Checks
+        # the listing and the boundary around it — valid unique names, an
+        # https://github.com/<owner>/<repo> URL with no credentials or query, a
+        # sane ref, and that the ref resolves on the remote. What a butler
+        # actually trusts is the resolved commit + per-file sha256 the publish
+        # build writes into the index, not this file.
+        run: python3 scripts/check_registry.py
 
       - name: Validate all skills
         # The butler- prefix is maintainer-only (bevo- is always refused). author_association is a trusted GitHub

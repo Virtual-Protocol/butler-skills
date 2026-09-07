@@ -18,15 +18,23 @@ without cloning anything.
 
 ## How this registry works (read this once)
 
-**Every skill is its own git repository.** This repo is the curated **registry**: it pins
-each skill as a git submodule at `skills/<name>`, at the commit of the skill repo's
-`v<version>` tag, and publishes an index of those pinned commits. Butler containers clone
-**exactly the pinned commit** (`source.commit` in the index; the Pages-served files are the
-fallback and carry the same bytes). The registry is the trust boundary: what a maintainer
-reviewed and merged is what runs — a later force-push, retag or deletion in a skill repo
-cannot change what is pinned, and moving the pin is a reviewed PR here. Team skills live
-under `Virtual-Protocol/butler-skill-<name>`; community skills live in the author's own
-repo, created from the same template.
+**Every skill is its own git repository.** This repo is the **registry**, and the registry
+is a directory of links: [`skills.json`](skills.json) lists one entry per skill —
+`name`, `repo` (a GitHub link) and `ref` — and no skill content is stored here at all.
+Every build clones each entry at its `ref` into a throwaway checkout, resolves that ref to a
+commit, and publishes an index carrying the **resolved commit** (`source.commit`) plus a
+sha256 for every file, so a container verifies exactly what it fetched (Butler clones
+`source.commit`; the Pages-served files are the fallback and carry the same bytes). A PR
+here **adds or removes** a skill; it never updates one. A new version of a listed skill
+reaches every Butler on the next build — hourly, or on any push to `main` here — with no PR
+here at all.
+
+Be clear-eyed about what that costs, because it is the trust boundary: with a branch `ref`,
+whatever the skill repo merges reaches every Butler on the next build, reviewed by nobody in
+this repo — the skill repo's own maintainers are the gate on its content. Set `ref` to a tag
+for a skill that should move only on a release. Team skills live under
+`Virtual-Protocol/butler-skill-<name>`; community skills live in the author's own repo,
+created from the same template.
 
 ## Building a skill: the 8 steps
 
@@ -84,20 +92,17 @@ repo, created from the same template.
    through `uses: Virtual-Protocol/butler-skills/.github/actions/validate@main`). See
    [§7](#7-test-locally-with-no-infrastructure).
 
-8. **Ship it.** Tag the release in your skill repo (`git tag v1.0.0 && git push origin
-   main --tags` — the tag must be `v` + the frontmatter `version`), then open a PR to this
-   registry that adds your repo as a submodule at that tag:
-   ```bash
-   git submodule add https://github.com/<you>/butler-skill-my-skill skills/my-skill
-   git -C skills/my-skill checkout v1.0.0
-   git add .gitmodules skills/my-skill
-   git commit -s -m "skills: add my-skill 1.0.0"
+8. **Ship it.** Release in your skill repo (`version` matches what you are shipping, a
+   `CHANGELOG.md` line, and `git tag v1.0.0 && git push origin main --tags`), then open a
+   PR to this registry adding **one entry** to [`skills.json`](skills.json), list sorted by
+   name:
+   ```json
+   { "name": "my-skill", "repo": "https://github.com/<you>/butler-skill-my-skill", "ref": "main" }
    ```
-   CI validates the pinned checkout and asserts the pinned commit carries tag
-   `v<version>`; maintainers review that exact content (two reviews if
-   `moneyMoving:true`); merging to `main` publishes it to every Butler at once. A new
-   version is a new tag in your repo plus a PR here moving the pointer. See
-   [§8](#8-ship-it).
+   CI checks the listing (`scripts/check_registry.py`) and validates the skill; maintainers
+   review it at that ref (two reviews if `moneyMoving:true`); merging to `main` publishes it
+   to every Butler at once. That is the only PR you open here: a **new version needs no PR**
+   — the next build re-resolves your `ref` and republishes. See [§8](#8-ship-it).
 
 ---
 
@@ -131,8 +136,8 @@ creates your skill's own repository from
 [`Virtual-Protocol/butler-skill-template`](https://github.com/Virtual-Protocol/butler-skill-template)
 (its [`SKILL.md`](https://raw.githubusercontent.com/Virtual-Protocol/butler-skill-template/main/SKILL.md),
 `duty.py`, `CHANGELOG.md`, and a `validate.yml` workflow). The three skill files sit at the
-**repo root** — there is no `skills/<name>/` inside a skill repo; that path is where the
-registry mounts it. Every section and marker is pre-filled with a `TODO:` that
+**repo root** — the registry clones your repo and reads them from there; it has no
+`skills/` directory of its own. Every section and marker is pre-filled with a `TODO:` that
 `scripts/validate.py` rejects if left in place — you cannot accidentally ship an unfinished
 scaffold. Change `name: _template` to your skill's name. `python3 scripts/new_skill.py
 <name>` (in a checkout of this registry) prints the commands above for your name and
@@ -143,13 +148,13 @@ that prefix is the container's own bundled-skill namespace (`bevo-hub`, `bevo-on
 
 ## 3. Pick the profile, then ground every command before you write it
 
-Five profiles; the trading profile has a worked example pinned in this repo:
+Five profiles; the trading profile has a worked example inlined in this repo:
 
 - **Trading** — spot/perp/stock, copy-trading, DCA. Toolbox rows: *Trade*, *Other people's
   trades*, *Own history*, *Owner holdings / prices*. Worked example:
   [`butler-copytrade`](https://raw.githubusercontent.com/Virtual-Protocol/butler-skill-copytrade/main/SKILL.md)
-  (repo `Virtual-Protocol/butler-skill-copytrade`, pinned here at `skills/butler-copytrade`;
-  inlined in full below).
+  (repo `Virtual-Protocol/butler-skill-copytrade`, listed in `skills.json`; inlined in
+  full below).
 - **Web3** — protocol-specific contract interactions: approvals, LP, staking, vaults.
   Toolbox rows: *Read chain state*, *Build a transaction*, *Sign and send*. The generic
   build → dry-run → file sequence for a contract call is in every Butler's AGENTS.md §10; a
@@ -298,38 +303,54 @@ runs the same validator + replay — so a green check on your own repo means the
 PR's validator step will be green too.
 
 What you cannot test offline — a real Approvals card, a real live feed — is what a
-maintainer checks on staging before the PR is merged — merging publishes to everyone.
+maintainer checks on staging before the skill is listed. After that it is on you: on a
+branch `ref` every later version you merge is published without anyone here looking at it.
 
 ## 8. Ship it
 
-**In your skill repo:** make sure `version` (semver) matches what you are releasing, add a
-line to `CHANGELOG.md`, commit, and tag the release `v<version>` (`git tag v1.0.0 && git
-push origin main --tags`). The tag is the contract: the registry only accepts a pin whose
-commit carries the tag `v` + the frontmatter `version`.
+**In your skill repo, for every release:** make sure `version` (semver) matches what you
+are releasing, add a line to `CHANGELOG.md`, commit, and tag it `v<version>` (`git tag
+v1.2.0 && git push origin main --tags`). The version is the contract: publishing is
+immutable per `name@version`, so a build that would republish an already-published
+`name@version` with different bytes is refused — a change without a version bump fails the
+build instead of silently republishing.
 
-**In this registry:** one skill per PR, from a fork, every commit signed off (`git commit
--s` — DCO). The PR adds (or, for a new version, moves) the submodule pointer and nothing
-else:
+**In this registry, once per skill:** one skill per PR, from a fork, every commit signed off
+(`git commit -s` — DCO). The PR adds a single entry to `skills.json` and nothing else (keep
+the list sorted by name):
 
-```bash
-git submodule add https://github.com/<you>/butler-skill-<name> skills/<name>   # first release only
-git -C skills/<name> fetch --tags && git -C skills/<name> checkout v1.2.0         # every release
-git add .gitmodules skills/<name>
-git commit -s -m "skills: <name> 1.2.0"
+```json
+{
+  "name": "<name>",
+  "repo": "https://github.com/<you>/butler-skill-<name>",
+  "ref": "main"
+}
 ```
 
-CI checks out the pinned commit (`submodules: recursive`) and runs the same validator, plus
-the pin rules: the pinned commit carries tag `v<version>` in your repo, the submodule URL is
-`https://github.com/<owner>/<repo>`, the checkout has no symlinks or nested submodules.
+`ref` decides how the skill moves after that, and there is a real trade-off between the two:
+
+- **a branch** (`main`) — every build re-resolves it, so whatever you merge in your repo is
+  live on the next build (hourly, or on any push here). No PR here, and **no review here**:
+  your repo's own maintainers are the only gate on that content.
+- **a tag** (`v1.2.0`) — the entry holds that release, and moving to the next one is a PR
+  here changing the `ref`. Use it for a skill that should only move under review. A tag is
+  still resolved on every build, not frozen: if the skill repo moves the tag, the next build
+  follows it.
+
+CI runs `scripts/check_registry.py` on the listing — unique valid names, an
+`https://github.com/<owner>/<repo>` URL with no credentials, query or fragment, a sane
+`ref`, and that the `ref` actually resolves on the remote (`--offline` skips only that last
+check) — then the validator, the tests and a `build_index.py --dry-run`.
 `moneyMoving:true` skills need **two** maintainer reviews, not one; the review is of the
-pinned content, which is what Butler will clone. The registry publishes ONE index, so a
-merge reaches every Butler immediately — review is the only gate, and there is no soak
-channel. Publishing is immutable — a pin that
-would republish an already-published `name@version` with different bytes is refused; fix
-forward with a new version (new tag, new PR). A broken or unsafe published version is
-disabled fleet-wide by adding it to `yanked.json` (see [SECURITY.md](SECURITY.md)) — never
-by deleting the submodule or retagging the skill repo (retagging cannot change a pin
-anyway, and Butler keeps installing the pinned commit until the registry says otherwise).
+skill at that `ref`. The registry publishes ONE index, so a merge reaches every Butler
+immediately — there is no soak channel.
+
+Every build writes the commit it resolved each `ref` to, plus a sha256 for every file, into
+the index, so a container can verify exactly what it fetched. A broken or unsafe published
+version is disabled fleet-wide by adding it to `yanked.json` (see [SECURITY.md](SECURITY.md))
+— not by deleting the `skills.json` entry, which only stops the skill being published:
+Butler keeps a skill it has already installed until an index entry tells it that version is
+yanked.
 
 ---
 
@@ -452,7 +473,7 @@ with both a one-off and a duty mode.
 
 <!-- BEGIN GENERATED: butler-copytrade worked example (scripts/sync_readme.py; do not edit by hand) -->
 
-`skills/butler-copytrade/SKILL.md` (submodule of https://github.com/Virtual-Protocol/butler-skill-copytrade, pinned at its tagged commit):
+`butler-copytrade/SKILL.md` (from https://github.com/Virtual-Protocol/butler-skill-copytrade at `main`):
 
 ````markdown
 ---
@@ -556,7 +577,7 @@ are not mirrored in this version." Duty: "Created, pending — arm it in Approva
 proposes your daily cap as its pocket; nothing runs until then."
 ````
 
-`skills/butler-copytrade/duty.py`:
+`butler-copytrade/duty.py`:
 
 ```python
 """butler-copytrade duty — mirrors LEADER's spot buys, one trade per leader
@@ -692,13 +713,14 @@ if __name__ == "__main__":
 
 <!-- END GENERATED: butler-copytrade worked example -->
 
-The block above is generated from the pinned submodule checkout (`scripts/sync_readme.py`;
-CI fails if it drifts). The skill's own repository, with its full history and tags, is
+The block above is generated from `butler-copytrade`'s own repository
+(`scripts/sync_readme.py`; CI fails if it drifts). That repository, with its full history and
+tags, is
 [`Virtual-Protocol/butler-skill-copytrade`](https://github.com/Virtual-Protocol/butler-skill-copytrade):
 [`SKILL.md`](https://raw.githubusercontent.com/Virtual-Protocol/butler-skill-copytrade/main/SKILL.md),
 [`duty.py`](https://raw.githubusercontent.com/Virtual-Protocol/butler-skill-copytrade/main/duty.py)
-(`main` may be ahead of what the registry pins — [CATALOG.md](CATALOG.md) links the pinned
-tag).
+([CATALOG.md](CATALOG.md) links each skill's repo at the `ref` the registry follows, and the
+index records the commit that ref resolved to).
 
 ### Web3 — protocol-specific skills only
 
@@ -783,32 +805,35 @@ from the frontmatter. `python3 replay.py --standalone . --fixture <name>` — ru
 against a captured page with `stub_bevo.py` standing in for the real SDK (both fetched on
 demand from the same site) and prints what it would have done. In CI:
 `uses: Virtual-Protocol/butler-skills/.github/actions/validate@main`. (In a registry
-checkout the same tools are `scripts/validate.py` / `tests/replay.py` and take
-`skills/<name>` and `--all`.) See [§7](#7-test-locally-with-no-infrastructure) above for
+checkout the same tools are `scripts/validate.py` / `tests/replay.py`, and `--all` covers
+every skill `skills.json` lists.) See [§7](#7-test-locally-with-no-infrastructure) above for
 the pass criteria.
 
 ## Shipping / PR flow
 
-Tag `v<version>` in your skill repo, then a PR here that adds/moves the `skills/<name>`
-submodule pointer to that tag. See [§8](#8-ship-it) above and
-[CONTRIBUTING.md](CONTRIBUTING.md) for the full review process, the tag rule, the DCO
-requirement, and the two-review rule for `moneyMoving:true` skills.
+One PR here per skill, ever: it adds `{name, repo, ref}` to `skills.json`. Every later
+release is a merge (and a tag) in your own repo — the next build re-resolves the `ref` and
+republishes, no PR here. See [§8](#8-ship-it) above and [CONTRIBUTING.md](CONTRIBUTING.md)
+for the full review process, what `ref` to choose, the DCO requirement, and the two-review
+rule for `moneyMoving:true` skills.
 
 ## Reference
 
 - [SKILL_STANDARD.md](SKILL_STANDARD.md) — the exact rules `scripts/validate.py` enforces.
-- [CONTRIBUTING.md](CONTRIBUTING.md) — process, the submodule/tag rule, DCO, review rules,
-  the yank rule.
+- [CONTRIBUTING.md](CONTRIBUTING.md) — process, the `skills.json` entry and `ref` rules,
+  DCO, review rules, the yank rule.
 - [SECURITY.md](SECURITY.md) — reporting a vulnerability, what is in scope.
 - [CATALOG.md](CATALOG.md) — the generated table of published skills with a link to each
-  skill's repo at its pinned tag (this file stays a guide, not a catalog).
+  skill's repo at the `ref` the registry follows (this file stays a guide, not a catalog).
 - [`Virtual-Protocol/butler-skill-template`](https://github.com/Virtual-Protocol/butler-skill-template)
   — the scaffold every skill repo starts from.
+- `skills.json` — the registry itself: one `{name, repo, ref}` entry per skill.
 - `schema/skill-frontmatter.schema.json`, `schema/index.schema.json` (each entry's
-  `source` block = repo + pinned commit + tag), `schema/reserved-names.json` — the
-  machine-checkable contracts.
-- `scripts/check_pins.py` — the CI pin rules (tag `v<version>` at the pinned commit, https
-  GitHub URL, no symlinks/nested submodules).
+  `source` block = repo + the resolved commit + the `ref` it was resolved from),
+  `schema/reserved-names.json` — the machine-checkable contracts.
+- `scripts/check_registry.py` — the CI listing checks (unique valid names, an https
+  `github.com/<owner>/<repo>` URL, a sane `ref` that resolves on the remote; `--offline`
+  skips the remote check).
 - `https://virtual-protocol.github.io/butler-skills/tools/` — the standalone `validate.py`,
   `replay.py`, `stub_bevo.py`, `check_selectors.mjs` and `fixtures/` (`scripts/publish_tools.py`
   lays them out on every publish); `.github/actions/validate` — the composite action a

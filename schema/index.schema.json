@@ -53,7 +53,7 @@
             "properties": {
               "repo": { "type": "string", "pattern": "^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
               "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
-              "ref": { "type": "string", "pattern": "^v\\d+\\.\\d+\\.\\d+$" }
+              "ref": { "type": "string", "pattern": "^[A-Za-z0-9._/-]{1,100}$" }
             }
           },
           "files": {

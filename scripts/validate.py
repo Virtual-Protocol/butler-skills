@@ -2,10 +2,10 @@
 """validate.py — the butler-skills CI validator.
 
 Usage:
-    scripts/validate.py skills/<name> [skills/<name> ...]   # registry mode
-    scripts/validate.py --all                               # every submodule in .gitmodules
-    scripts/validate.py --all --maintainer      # allow the butler- prefix / reserved-adjacent names
-    scripts/validate.py skills/<name> --json     # machine-readable output
+    scripts/validate.py <dir> [<dir> ...]        # registry mode: a checkout of a listed skill
+    scripts/validate.py --all                    # clone and validate every skills.json entry
+    scripts/validate.py --all --maintainer       # allow the butler- prefix / reserved-adjacent names
+    scripts/validate.py <dir> --json             # machine-readable output
     scripts/validate.py --standalone <dir>       # any directory holding one skill (a skill repo)
 
 Standalone copy (no registry checkout needed — publish.yml puts this exact file on the
@@ -22,16 +22,21 @@ recomputation uses check_selectors.mjs + viem when both are resolvable next to t
 
 Two modes:
 
-  registry (default) — the directory is `skills/<name>` inside this repo, i.e. a
-  git submodule pinned by .gitmodules. The frontmatter `name` must equal the
-  directory name and the submodule URL must be an https://github.com/ URL.
+  registry (default) — the directory is a checkout of a skill this registry
+  lists, named after the entry in skills.json, so the frontmatter `name` must
+  equal the directory name: that is the name Butler installs the skill under.
+  `--all` clones every skills.json entry at its ref into a temporary directory
+  and validates those. The link itself — that `repo` is an
+  https://github.com/<owner>/<repo> URL and that `ref` resolves — is
+  scripts/check_registry.py's job, not this file's.
 
   --standalone — the directory is a skill repository (created from
   Virtual-Protocol/butler-skill-template) checked out anywhere. The name comes
   from the frontmatter alone (it only has to be a valid skill name); every other
   rule is identical, so a skill that passes here passes the registry PR.
 
-Python 3.11 stdlib only. No network access. Exits 1 on any failing check and
+Python 3.11 stdlib only. No network access except `--all`, which clones the
+skills.json entries (no skill is checked out in this repo). Exits 1 on any failing check and
 prints one field-by-field message per failure. This script is the source of
 truth for what a passing PR looks like; scripts/check_selectors.mjs (invoked
 here when node is available) covers viem-based selector recomputation.
@@ -46,13 +51,14 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
+from contextlib import ExitStack
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SKILLS_DIR = REPO_ROOT / "skills"
+REGISTRY_PATH = REPO_ROOT / "skills.json"
 SCHEMA_PATH = REPO_ROOT / "schema" / "skill-frontmatter.schema.json"
 RESERVED_PATH = REPO_ROOT / "schema" / "reserved-names.json"
-GITMODULES_PATH = REPO_ROOT / ".gitmodules"
 
 MAX_DESCRIPTION = 160
 MAX_BODY_CHARS = 12000
@@ -62,11 +68,9 @@ MAX_BUNDLE_BYTES = 200 * 1024
 # checkout that breaks any of these before copying a single file).
 MAX_TREE_FILES = 50
 MAX_TREE_BYTES = 1024 * 1024
-# Never part of a skill's tree: the submodule gitlink / an author's .git dir,
-# and local bytecode caches.
+# Never part of a skill's tree: the clone's own .git dir (or an author's), and
+# local bytecode caches.
 TREE_SKIP_NAMES = {".git", "__pycache__"}
-
-SUBMODULE_URL_RE = re.compile(r"^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?(?:\.git)?/?$")
 
 # Name prefixes. `butler-` is the Butler team's namespace for skills published through
 # this hub (maintainer-only: --maintainer / MAINTAINER=1). `bevo-` is the container's
@@ -362,59 +366,13 @@ def validate_schema(fm: dict, issues: Issues) -> None:
 
 
 def check_name_matches_dir(fm: dict, skill_dir: Path, issues: Issues) -> None:
-    """Registry mode only: the submodule is mounted at skills/<name>, so the
-    directory name is the name Butler installs the skill under and must equal
-    the frontmatter. In --standalone mode the directory is whatever the author
-    cloned their repo as, so only the frontmatter pattern (validate_schema) applies."""
+    """Registry mode only: the checkout is named after the skills.json entry,
+    so the directory name is the name Butler installs the skill under and must
+    equal the frontmatter. In --standalone mode the directory is whatever the
+    author cloned their repo as, so only the frontmatter pattern (validate_schema) applies."""
     name = fm.get("name")
     if name and name != skill_dir.name:
         issues.error("name", f"frontmatter name {name!r} must equal directory name {skill_dir.name!r}")
-
-
-def parse_gitmodules(path: Path | None = None) -> dict[str, dict]:
-    """Minimal .gitmodules reader: returns {path: {"name": ..., "url": ...}}.
-    Deliberately not configparser (it treats git's indented keys as
-    continuation lines) and not `git config` (keeps this script git-free)."""
-    path = GITMODULES_PATH if path is None else path
-    entries: dict[str, dict] = {}
-    if not path.exists():
-        return entries
-    current: dict | None = None
-    for raw in path.read_text().splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or line.startswith(";"):
-            continue
-        m = re.match(r'^\[submodule\s+"(.+)"\]$', line)
-        if m:
-            current = {"name": m.group(1)}
-            continue
-        m = re.match(r"^([A-Za-z][A-Za-z0-9-]*)\s*=\s*(.*)$", line)
-        if m and current is not None:
-            current[m.group(1)] = m.group(2).strip()
-            if m.group(1) == "path":
-                entries[current["path"]] = current
-    return entries
-
-
-def check_registry_pin(skill_dir: Path, issues: Issues) -> None:
-    """Registry mode: skills/<name> must be a submodule declared in .gitmodules
-    with an https://github.com/ URL, and must be initialised (SKILL.md present is
-    checked by the caller). A plain directory under skills/ is refused — the
-    registry pins git repos, it no longer vendors files."""
-    try:
-        rel = skill_dir.resolve().relative_to(SKILLS_DIR.resolve())
-    except ValueError:
-        return  # not under skills/ (fixtures, tmp dirs) — nothing to pin
-    rel_path = f"skills/{rel.as_posix()}"
-    entry = parse_gitmodules().get(rel_path)
-    if entry is None:
-        issues.error("submodule", f"{rel_path} is not declared in .gitmodules — registry skills are git submodules (README §8)")
-        return
-    url = entry.get("url", "")
-    if not SUBMODULE_URL_RE.match(url):
-        issues.error("submodule", f"{rel_path} url {url!r} must be an https://github.com/<owner>/<repo> URL")
-    if not (skill_dir / ".git").exists():
-        issues.error("submodule", f"{rel_path} is not initialised — run `git submodule update --init --recursive`")
 
 
 def iter_tree(skill_dir: Path):
@@ -429,7 +387,7 @@ def iter_tree(skill_dir: Path):
         for d in dirs:
             p = root_path / d
             if top and d in TREE_SKIP_NAMES:
-                continue  # the submodule gitlink / author's .git, local caches
+                continue  # the clone's own .git (or the author's), local caches
             if d == "__pycache__":
                 continue
             if p.is_symlink():
@@ -849,14 +807,12 @@ def validate_skill(
 ) -> tuple[bool, dict]:
     """Validate one skill directory. `standalone=True` is the skill-repo mode:
     the name is taken from the frontmatter and nothing is assumed about where
-    the directory sits; otherwise the directory is a registry submodule at
-    skills/<name>."""
+    the directory sits; otherwise the directory is a checkout of a skill this
+    registry lists, in a directory named after its skills.json entry."""
     issues = Issues()
     skill_md = skill_dir / "SKILL.md"
     if not skill_md.exists():
         issues.error("SKILL.md", "missing")
-        if not standalone:
-            check_registry_pin(skill_dir, issues)
         return False, {"skill": skill_dir.name, "errors": issues.errors, "warnings": issues.warnings}
 
     text = skill_md.read_text()
@@ -870,9 +826,8 @@ def validate_skill(
     validate_schema(fm, issues)
     if not standalone:
         # --standalone: the name only has to be a valid skill name (validate_schema);
-        # the registry PR is what mounts it at skills/<name>.
+        # in registry mode the directory is named after the skills.json entry.
         check_name_matches_dir(fm, skill_dir, issues)
-        check_registry_pin(skill_dir, issues)
     check_reserved(fm, reserved, maintainer, issues)
     check_tree(skill_dir, issues)
 
@@ -913,17 +868,38 @@ def validate_skill(
     }
 
 
-def registry_skill_dirs() -> list[Path]:
-    """Every skills/<name> submodule declared in .gitmodules, sorted. A plain
-    directory under skills/ that is not a submodule is returned too so that
-    validate_skill can refuse it (check_registry_pin) instead of silently
-    skipping a vendored skill."""
-    declared = [Path(p) for p in parse_gitmodules() if p.startswith("skills/")]
-    dirs = {REPO_ROOT / p for p in declared}
-    if SKILLS_DIR.exists():
-        for d in SKILLS_DIR.iterdir():
-            if d.is_dir() and not d.name.startswith(".") and d.name != "__pycache__":
-                dirs.add(d)
+def load_registry(path: Path | None = None) -> list[dict]:
+    """The `skills` list of skills.json: one {name, repo, ref} entry per skill."""
+    path = REGISTRY_PATH if path is None else path
+    if not path.exists():
+        raise SystemExit(f"{path} not found — --all only works in a checkout of the registry")
+    rows = json.loads(path.read_text()).get("skills")
+    if not isinstance(rows, list) or not rows:
+        raise SystemExit(f"{path} has no `skills` list")
+    return rows
+
+
+def clone_registry_skills(work_dir: Path) -> list[Path]:
+    """Clone every skills.json entry at its ref into `work_dir`, one directory
+    per skill named after the registry entry, and return those directories.
+
+    Nothing is checked out in this repo, so `--all` fetches what it validates.
+    The directory name is the registry name on purpose: check_name_matches_dir
+    then asserts the skill's frontmatter agrees with the name it is listed as."""
+    dirs: list[Path] = []
+    for entry in load_registry():
+        name, repo, ref = entry["name"], entry["repo"], entry.get("ref") or "main"
+        dest = work_dir / name
+        try:
+            subprocess.run(
+                ["git", "clone", "--quiet", "--depth", "1", "--branch", ref, repo, str(dest)],
+                capture_output=True, text=True, check=True, timeout=300,
+            )
+        except subprocess.CalledProcessError as e:
+            raise SystemExit(f"cannot clone {repo} at {ref!r}: {e.stderr.strip() or e}")
+        except (OSError, subprocess.TimeoutExpired) as e:
+            raise SystemExit(f"cannot clone {repo} at {ref!r}: {e}")
+        dirs.append(dest)
     return sorted(dirs)
 
 
@@ -938,8 +914,8 @@ def load_reserved() -> set[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate one or more butler-skills skill directories.")
-    parser.add_argument("skills", nargs="*", help="skills/<name> paths (registry mode) or any skill directory (--standalone)")
-    parser.add_argument("--all", action="store_true", help="validate every skills/<name> submodule declared in .gitmodules")
+    parser.add_argument("skills", nargs="*", help="skill directories (registry mode) or any skill directory (--standalone)")
+    parser.add_argument("--all", action="store_true", help="clone and validate every skill listed in skills.json")
     parser.add_argument(
         "--standalone",
         action="store_true",
@@ -955,30 +931,33 @@ def main() -> int:
     maintainer = args.maintainer or os.environ.get("MAINTAINER") == "1"
     reserved = load_reserved()
 
-    targets: list[Path] = []
-    if args.all:
-        targets.extend(registry_skill_dirs())
-    for s in args.skills:
-        targets.append(Path(s).resolve())
-
-    if not targets:
-        parser.error("no skills given; pass a path, --standalone <dir>, or --all")
-
     results = []
     all_ok = True
-    for t in targets:
-        if not args.json:
-            print(f"validating {t.relative_to(REPO_ROOT) if t.is_relative_to(REPO_ROOT) else t} ...")
-        ok, result = validate_skill(t, reserved, maintainer, args.json, standalone=args.standalone)
-        all_ok = all_ok and ok
-        results.append(result)
-        if not args.json:
-            for e in result["errors"]:
-                print(f"  ERROR {e}")
-            for w in result["warnings"]:
-                print(f"  WARN  {w}")
-            if ok:
-                print("  OK")
+    with ExitStack() as stack:
+        targets: list[Path] = []
+        if args.all:
+            # The clones live only for this run: the registry stores links, not files.
+            work_dir = stack.enter_context(tempfile.TemporaryDirectory(prefix="butler-skills-validate-"))
+            targets.extend(clone_registry_skills(Path(work_dir)))
+        for s in args.skills:
+            targets.append(Path(s).resolve())
+
+        if not targets:
+            parser.error("no skills given; pass a path, --standalone <dir>, or --all")
+
+        for t in targets:
+            if not args.json:
+                print(f"validating {t.relative_to(REPO_ROOT) if t.is_relative_to(REPO_ROOT) else t.name} ...")
+            ok, result = validate_skill(t, reserved, maintainer, args.json, standalone=args.standalone)
+            all_ok = all_ok and ok
+            results.append(result)
+            if not args.json:
+                for e in result["errors"]:
+                    print(f"  ERROR {e}")
+                for w in result["warnings"]:
+                    print(f"  WARN  {w}")
+                if ok:
+                    print("  OK")
 
     if args.json:
         print(json.dumps({"ok": all_ok, "results": results}, indent=2))

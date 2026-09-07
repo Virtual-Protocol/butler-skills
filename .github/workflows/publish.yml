@@ -3,6 +3,11 @@ name: publish
 on:
   push:
     branches: [main]
+  # A skill update is a push to ITS repo, not to this one, so nothing here
+  # would notice it. This is what makes "PR only to add or remove a skill"
+  # true: every build re-resolves each skills.json ref to a commit.
+  schedule:
+    - cron: "17 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -18,12 +23,12 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      # Skills are git submodules pinned at a tagged commit of their own repo;
-      # the index (files[] + sha256 + source.commit) is built from that checkout.
+      # Skills live in their own repos; build_index.py clones each skills.json
+      # entry at its ref and builds the index (files[] + sha256 + source.commit)
+      # from that throwaway checkout. Nothing about a skill is stored here.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          submodules: recursive
 
       - uses: actions/setup-python@v5
         with:
