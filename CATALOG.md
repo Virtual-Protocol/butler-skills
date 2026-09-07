@@ -8,7 +8,5 @@ a commit and republishes; the index records that commit, and Butler clones exact
 
 | Skill | Version | Repo | Tier | Modes | Money-moving | Description |
 | --- | --- | --- | --- | --- | --- | --- |
-| `bevo-contract-call` (yanked) | 1.0.0 | — | on-demand |  | no | Withdrawn by its maintainers (yanked) and removed from the registry; not installable. |
-| `butler-contract-call` (yanked) | 1.0.1 | — | on-demand |  | no | Withdrawn by its maintainers (yanked) and removed from the registry; not installable. |
 | `butler-copytrade` | 1.1.0 | [Virtual-Protocol/butler-skill-copytrade](https://github.com/Virtual-Protocol/butler-skill-copytrade/tree/main) | on-demand | one-off, duty | yes | Copy another member's buys once or as a standing duty, one trade per leader event, never twice. Use for "copy/mirror/follow <@handle or wallet>". |
 | `butler-dca` | 1.2.1 | [Virtual-Protocol/butler-skill-dca](https://github.com/Virtual-Protocol/butler-skill-dca/tree/main) | on-demand | one-off, duty | yes | Trade one asset in slices on a repeating schedule — spot or perp, flat or % size, with price-band, weekday and stop conditions. DCA, ladder in, scale out. |
