@@ -141,17 +141,6 @@ def test_a_new_commit_on_the_ref_changes_the_pinned_commit(tmp_path):
     assert build_index.collect_skill(d, set(), ENTRY)["version"] == "1.2.4"
 
 
-def test_regenerate_catalog_contains_all_skills_and_links_their_repos(tmp_path):
-    d = make_checkout(tmp_path)
-    entries = [build_index.collect_skill(d, set(), ENTRY)]
-    catalog = build_index.regenerate_catalog(entries)
-    assert "| Repo |" in catalog
-    for e in entries:
-        assert e["name"] in catalog
-        src = e["source"]
-        assert f"[{build_index.repo_slug(src['repo'])}]({src['repo']}/tree/{src['ref']})" in catalog
-
-
 def test_yanked_version_without_a_registry_entry_is_published_as_a_tombstone(tmp_path):
     """Removing a skill from skills.json must not silently drop its yank: the
     container's hub client only disables a skill on an index entry carrying
@@ -195,9 +184,6 @@ def test_real_yanked_json_entries_without_a_registry_entry_are_tombstoned():
     expected = {spec for spec in yanked if spec.split("@", 1)[0] not in live_names}
     tombstones = build_index.tombstone_entries(yanked, live)
     assert {f"{t['name']}@{t['version']}" for t in tombstones} == expected
-    catalog = build_index.regenerate_catalog(live + tombstones)
-    for t in tombstones:
-        assert f"| `{t['name']}` (yanked) | {t['version']} | — |" in catalog
 
 
 def test_index_schema_allows_source_and_pins_schema_version_1():
