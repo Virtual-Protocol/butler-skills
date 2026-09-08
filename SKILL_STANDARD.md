@@ -10,7 +10,7 @@ with the skill files at the **repository root**:
 
 ```
 SKILL.md        required
-duty.py         optional (required when modes includes "duty")
+duty.py         optional — even when modes includes "duty"
 CHANGELOG.md    required
 ```
 
@@ -122,6 +122,12 @@ subcommand list; `acp <area>` subcommands are checked against the real `acp` are
 `acp --help` is forbidden.
 
 ## `duty.py` conventions
+
+`duty.py` is optional in every mode: the validator checks it when it is there and
+requires nothing when it is not. A `duty` skill may be prose alone — the numbered
+`## Duty procedure` steps, which ARE required for that mode — leaving the duty's code
+to the Butler that files it. Ship one when every owner of this skill wants the same
+code; leave it out when the procedure is the point.
 
 `import bevo` plus stdlib only.
 
