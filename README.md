@@ -492,7 +492,7 @@ with both a one-off and a duty mode.
 ---
 name: butler-copytrade
 description: Copy, mirror or follow another member's trades — spot, tokenized stocks and perps, once or as a standing duty sized from your owner's own words.
-version: 3.0.1
+version: 3.1.0
 metadata: {"openclaw":{"emoji":"🪞","requires":{"bins":["acp","bevo-read","bevo-automation"]}},"butler":{"tier":"on-demand","modes":["one-off","duty"],"moneyMoving":true,"keywords":["copy trade","copy trading","copy buys","mirror wallet","mirror trades","follow trader","follow wallet","copy perps","mirror perps","copy stocks"],"requires":{"routes":["GET /butler-read/user","GET /butler-read/trade-activity","GET /butler-read/user-assets","GET /butler-read/token-search","POST /butler-exec/trade","POST /butler-exec/services"],"features":["tradeIdempotency","execRequestStatus"],"gates":["canSwap"],"bins":["acp","bevo-read","bevo-automation"]},"params":[{"name":"LEADER","type":"principalId|wallet","required":true,"ask":"who should I copy?"},{"name":"SIZING","type":"enum","values":["fixed","cash_share","leader_share"],"required":true,"ask":"how much per copy — a fixed dollar figure, a share of your own cash, or a share of what they trade?"},{"name":"SIZE_USD","type":"usd","min":2,"max":10000,"help":"dollars per copy (SIZING=fixed)"},{"name":"SHARE","type":"number","min":0,"max":1,"help":"fraction for cash/leader share sizing (0.2 = 20%)"},{"name":"MAX_USD","type":"usd","min":2,"max":100000,"help":"per-trade ceiling"},{"name":"CHAIN_IDS","type":"chainIds","default":[],"help":"empty = the leader's chain; set only when specified. Spot only"},{"name":"MIRROR_SELLS","type":"bool","default":false,"help":"copy spot and stock sells too"},{"name":"MIN_LEADER_USD","type":"usd","default":0,"min":0,"max":100000,"help":"ignore trades smaller than this; never applied to a perp close"},{"name":"MIRROR_PERPS","type":"bool","default":false,"help":"copy their leveraged positions too"},{"name":"MIRROR_STOCKS","type":"bool","default":false,"help":"copy their tokenized stock trades too"},{"name":"PERP_LEVERAGE","type":"number","default":0,"min":0,"max":50,"help":"fixed leverage to open at; 0 = take the leader's own"},{"name":"PERP_MAX_LEVERAGE","type":"number","default":0,"min":0,"max":50,"help":"leverage ceiling; 0 = no ceiling"}],"dutyTemplate":"duty.py"}}
 ---
 
@@ -569,6 +569,24 @@ you switched on and what you did not.
 - `PERP_LEVERAGE` (default `0`) — open at this leverage instead of the
   leader's. `PERP_MAX_LEVERAGE` (default `0`) caps whichever applies.
 
+**A rule these knobs cannot express is not a dead end.** A filter on the token,
+a second leader, a ceiling on total exposure across copies, a cooldown between
+them — that is code, and code runs on every leader event:
+
+```bash
+bevo-hub fork butler-copytrade
+```
+
+Your owner's own copy, yours to edit. `duty.py` already shows the shape: each
+`copy_*` function opens with its skip checks and returns early, so a new one
+goes beside them. `bevo.read("/token-stats", {"tokens": "<address>:<chainId>"})`
+for the token's liquidity or market cap, `bevo.state` for a running total or a
+cooldown that survives a restart, `bevo.holdings()` for what they already hold.
+Add the knobs you need, then create from the fork with `bevo-automation create
+--from-skill <your-fork>`. The hub never overwrites a fork, and forking changes
+nothing that guards the money — the same key per leader event, the same approval
+cards, the same pocket. Tell your owner what you changed and why.
+
 ## One-off procedure
 
 1. [FIXED] Read the leader's recent activity (newest-first):
@@ -622,11 +640,12 @@ you switched on and what you did not.
 4. [ADAPT] `requestedDailyLimitUsdc` = their stated daily cap; `spec` and
    `yardstick` = what they asked for, in their words — name the chain in the
    `spec` when you set `CHAIN_IDS`, or the create is refused.
-5. [FIXED] Create it — never hand-write the duty's code, the shim loads this
-   skill's `duty.py`:
+5. [FIXED] Create it — the shim loads this skill's `duty.py`, so never hand-write
+   from scratch what this skill already does. A rule its knobs cannot express is a
+   fork (see "Customize"), which files exactly the same way, under its own name:
 
    ```bash
-   bevo-automation create --from-skill butler-copytrade@3.0.0 '<json>'
+   bevo-automation create --from-skill butler-copytrade '<json>'
    ```
 
 6. [FIXED] Report as in "Say to the owner".
