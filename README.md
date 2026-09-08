@@ -114,8 +114,9 @@ skill; "be generally helpful with money" is not). A skill declares two possible 
 
 - **one-off** — the owner asks once, Butler runs the procedure once, right now.
 - **duty** — the owner asks for standing behaviour, Butler creates a `bevo-automation`
-  duty *from* the skill (`bevo-automation create --from-skill <name>@<version> '<json>'`);
-  the skill's `duty.py` becomes the duty's code stage.
+  duty *from* the skill (`bevo-automation create --from-skill <name> '<json>'`); the
+  skill's `duty.py`, when it ships one, becomes the duty's code stage. It is optional —
+  a duty skill may be procedure alone, and a Butler that forks it supplies the code.
 
 A skill needs both modes when the same task is reasonable to do once *and* to repeat
 (copy-trading is the canonical example). A generic action whose every execution needs an
