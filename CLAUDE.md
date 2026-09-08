@@ -25,3 +25,13 @@ holds the skill at a release.
 - Name prefixes: `butler-` is maintainer-only; `bevo-` is the container's bundled-skill
   namespace and is refused. A skill is the delta over AGENTS.md — never restate what the
   container already teaches.
+- `schema/reserved-names.json` also refuses names the *entrypoint* writes as skill dirs,
+  and a name stays reserved after the container stops writing it: images older than the
+  change still seed that dir, so the collision is live until the fleet turns over. This is
+  why the browser rail is `butler-web-checkout` and not `web-checkout`.
+- **`check_command_allowlist` cannot parse a heredoc.** Every non-comment line in a
+  ```sh/bash/shell/console fence is treated as its own command, so the canonical form the
+  toolbox documents — `web-checkout run --json --steps - <<'JSON' … JSON` — fails the
+  validator inside a skill (`[{"action":` and `JSON` are read as commands). Show the
+  command alone in a shell fence and the joined heredoc in a ```text fence, which
+  `extract_shell_lines` skips. The toolbox row and this linter disagree; the linter wins.
