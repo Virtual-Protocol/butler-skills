@@ -216,11 +216,22 @@ meant, a sizing rule, an extra `judgment` filter, notification style). Keep the 
 set **minimal but complete** — everything that touches money or state must be fixed;
 everything that is a judgment call about the owner's intent is adapt.
 
-A skill that needs behaviour the knobs do not cover is a **new version of the skill** (a
-PR), never a local fork — customization lives in the ask, the duty's `env`/`judgment`/
-`spec`, and per-owner saved defaults (`bevo-hub set <name> <PARAM>=<value>`), never in an
-edited copy of `SKILL.md` (the hourly sync overwrites installed files, so a local edit is a
-silently diverging procedure that nobody reviewed).
+A skill customizes two ways, and only one of them is yours to design. The asks you can
+anticipate are knobs: the ask itself, the duty's `env`/`judgment`/`spec`, and per-owner
+saved defaults (`bevo-hub set <name> <PARAM>=<value>`). The ones you cannot are a fork.
+`bevo-hub fork <name>` makes the owner's own copy, and Butler changes anything in it —
+`duty.py` and steps you marked `[FIXED]` included. The hub never updates, yanks or
+overwrites a fork, and `--from-skill` accepts one like any other skill. Forking changes the
+recipe, never what the recipe may move: the signing policy, the approval cards and the
+pocket are all server-side and apply to a fork exactly as to the original.
+
+What is never right is editing an **installed** skill in place — the hourly sync overwrites
+it, and the fork is precisely what that rule points at. A change every owner would want is
+still a new version here (a PR); a fork is one owner's, and left to drift it stays that way.
+
+So write for both paths: knobs for the asks you can anticipate, and a procedure that shows a
+forking Butler the seam for the rest — where a new condition goes, and which read feeds it.
+A skill whose steps only make sense at its own default settings is one nobody can extend.
 
 ## 5. Make it idempotent by construction
 
@@ -439,7 +450,9 @@ no `## Contracts` section.
 Each of these caused a real failure — do not repeat them.
 
 - **Editing an installed `SKILL.md` directly.** The hourly hub sync overwrites it; your fix
-  silently disappears and the next owner gets the old, broken procedure back.
+  silently disappears and the next owner gets the old, broken procedure back. `bevo-hub fork
+  <name>` is the supported edit — the hub never overwrites a fork; a PR here is the fix every
+  owner should get.
 - **Hard-coding an owner's numbers** (their wallet, their sizing) into the skill instead of
   a `param`. The next owner who installs the skill inherits the first owner's money.
 - **Hiding a trade or a `send-transaction` line inside an `[ADAPT]` step.** CI requires
@@ -952,10 +965,12 @@ phrase "do not re-run".
 `default`, `min`/`max` (or `values`), `required`, and `ask`. The same knobs serve both
 modes — substituted into commands for one-off, passed as `env` for a duty. `[FIXED]` steps
 are the safety-bearing sequence and must be followed verbatim; `[ADAPT]` steps are where
-Butler applies the owner's specific wording. Customization never edits `SKILL.md` — it
-lives in the ask, the duty row (`env`, `judgment`, `spec`), and `bevo-hub set <name>
-<PARAM>=<value>` (per-owner saved defaults, applied before the payload's own `env`). A skill
-that needs behaviour the knobs cannot express is a new version, not a fork.
+Butler applies the owner's specific wording. Inside an installed skill, customization never
+edits `SKILL.md` — it lives in the ask, the duty row (`env`, `judgment`, `spec`), and
+`bevo-hub set <name> <PARAM>=<value>` (per-owner saved defaults, applied before the
+payload's own `env`). Behaviour the knobs cannot express is `bevo-hub fork <name>`: the
+owner's own editable copy, which the hub never overwrites and `--from-skill` accepts like
+any other skill (§4). A change every owner would want is a new version here, a PR.
 
 ## The five profiles, in one line each
 
