@@ -10,6 +10,11 @@
       "name": "butler-dca",
       "repo": "https://github.com/Virtual-Protocol/butler-skill-dca",
       "ref": "main"
+    },
+    {
+      "name": "butler-web-checkout",
+      "repo": "https://github.com/Virtual-Protocol/butler-skill-web-checkout",
+      "ref": "main"
     }
   ]
 }
