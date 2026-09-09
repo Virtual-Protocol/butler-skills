@@ -131,6 +131,10 @@ TOOLBOX_FIRST_TOKENS = {
     "bevo-location",
     "bevo-sms",
     "web-checkout",
+    # The phone rail's container primitive (bevo-docker#138): a cloud Android
+    # phone brokered by bevo-server. Same split as `web-checkout` — the command
+    # is baked into the image, the how-to is the hub skill butler-app-checkout.
+    "app-checkout",
     "node",  # viem one-liners for calldata encoding
 }
 
