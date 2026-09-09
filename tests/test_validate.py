@@ -447,3 +447,30 @@ def test_the_renamed_creator_skill_dir_is_reserved():
     # the pre-rename dir persists on older consoles, so it stays reserved too
     assert "bevo-automation-creator" in reserved
 
+# ── The phone rail's container primitive (bevo-docker#138) ───────────────────
+# `app-checkout` drives a cloud Android phone brokered by bevo-server. Same
+# split as `web-checkout`: the command is baked into the image, the how-to is
+# the hub skill butler-app-checkout, so a SKILL.md must be allowed to spell it.
+
+def test_app_checkout_is_in_the_toolbox():
+    assert "app-checkout" in validate.TOOLBOX_FIRST_TOKENS
+
+
+def test_app_checkout_command_lines_pass_the_allowlist():
+    issues = validate.Issues()
+    body = (
+        "```sh\n"
+        "app-checkout start --app grabfood --country MY\n"
+        "app-checkout screen\n"
+        'app-checkout checkpoint --app GrabFood --summary "1x coffee" --amount 12.40 --currency MYR\n'
+        "app-checkout end\n"
+        "```"
+    )
+    validate.check_command_allowlist(body, issues)
+    assert not [e for e in issues.errors if "command-allowlist" in e], issues.errors
+
+
+def test_the_phone_rail_skill_name_is_not_the_command_name():
+    # `butler-app-checkout` is the hub name; `app-checkout` is the container
+    # command. A skill may not claim the command's name as its own.
+    assert validate.NAME_RE.match("butler-app-checkout")
