@@ -1,0 +1,99 @@
+name: Validate a Butler skill
+description: >-
+  Checks out the calling repository, fetches the Butler Skill Hub's validator and offline
+  replay harness (Virtual-Protocol/butler-skills at main) into the runner's temp directory
+  — never inside the skill tree — and runs `validate.py` and, when the skill has a duty.py,
+  `replay.py` on it. A skill repo's whole CI is one step:
+  `uses: Virtual-Protocol/butler-skills/.github/actions/validate@main`.
+
+inputs:
+  path:
+    description: Directory of the skill inside the calling repository (where SKILL.md lives).
+    required: false
+    default: "."
+  standalone:
+    description: >-
+      "true" (default) validates a skill repository — the name comes from the frontmatter.
+      "false" is registry mode: the path is skills/<name> inside a butler-skills checkout.
+    required: false
+    default: "true"
+  maintainer:
+    description: >-
+      "true" allows the maintainer-only `butler-` name prefix (the registry PR check decides
+      for real; this only affects the skill repo's own run). `bevo-` names are always refused.
+    required: false
+    default: "false"
+  fixture:
+    description: Replay fixture for duty.py (basename under the hub's tests/fixtures/).
+    required: false
+    default: trade-activity-page
+
+runs:
+  using: composite
+  steps:
+    - name: Check out the skill
+      uses: actions/checkout@v4
+
+    # actions/checkout can only place a repository under $GITHUB_WORKSPACE, and anything
+    # inside the skill tree would count against its 50-file / 1 MB rules — so land the hub
+    # in a scratch path, then move it to $RUNNER_TEMP before validating.
+    - name: Fetch the hub tooling (Virtual-Protocol/butler-skills at main)
+      uses: actions/checkout@v4
+      with:
+        repository: Virtual-Protocol/butler-skills
+        ref: main
+        path: .butler-skills-hub
+        persist-credentials: false
+
+    - name: Move the hub tooling out of the skill tree
+      shell: bash
+      run: |
+        set -eu
+        HUB="$RUNNER_TEMP/butler-skills"
+        rm -rf "$HUB"
+        mv .butler-skills-hub "$HUB"
+        echo "BUTLER_SKILLS_HUB=$HUB" >> "$GITHUB_ENV"
+
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: "20"
+
+    - name: Install viem for the selector check
+      # scripts/check_selectors.mjs is an ES module: `import "viem"` resolves from its own
+      # directory upward, so viem is installed at the hub checkout's root.
+      shell: bash
+      run: npm i --no-save --no-audit --no-fund viem@2 >/dev/null
+      working-directory: ${{ env.BUTLER_SKILLS_HUB }}
+
+    - name: Validate the skill
+      shell: bash
+      env:
+        SKILL_PATH: ${{ inputs.path }}
+        STANDALONE: ${{ inputs.standalone }}
+        MAINTAINER_FLAG: ${{ inputs.maintainer == 'true' && '--maintainer' || '' }}
+      run: |
+        set -eu
+        FLAG=""
+        if [ "$STANDALONE" = "true" ]; then FLAG="--standalone"; fi
+        python3 "$BUTLER_SKILLS_HUB/scripts/validate.py" $FLAG $MAINTAINER_FLAG "$SKILL_PATH"
+
+    - name: Offline replay of duty.py
+      shell: bash
+      env:
+        SKILL_PATH: ${{ inputs.path }}
+        STANDALONE: ${{ inputs.standalone }}
+        FIXTURE: ${{ inputs.fixture }}
+      run: |
+        set -eu
+        if [ ! -f "$SKILL_PATH/duty.py" ]; then
+          echo "no duty.py in $SKILL_PATH — replay skipped (one-off-only skill)"
+          exit 0
+        fi
+        FLAG=""
+        if [ "$STANDALONE" = "true" ]; then FLAG="--standalone"; fi
+        # The hub checkout carries stub_bevo.py and every fixture, so nothing is downloaded.
+        python3 "$BUTLER_SKILLS_HUB/tests/replay.py" $FLAG "$SKILL_PATH" --fixture "$FIXTURE" --no-download

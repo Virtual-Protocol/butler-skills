@@ -1,0 +1,74 @@
+name: publish
+
+on:
+  push:
+    branches: [main]
+  # A skill update is a push to ITS repo, not to this one, so nothing here
+  # would notice it. This is what makes "PR only to add or remove a skill"
+  # true: every build re-resolves each skills.json ref to a commit.
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      # Skills live in their own repos; build_index.py clones each skills.json
+      # entry at its ref and builds the index (files[] + sha256 + source.commit)
+      # from that throwaway checkout. Nothing about a skill is stored here.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # ONE channel. A Pages deploy replaces the WHOLE site, so this single run
+      # produces the whole registry: dist/index.json (the moving pointer) plus
+      # dist/skills/<name>/<version>/ (the immutable store). Merging to main IS
+      # the publish action — there is no separate release tag gating it, and no
+      # per-environment view. A container that wants to hold a version pins it
+      # (`bevo-hub install <name>@<version>`), which is the only supported way
+      # to not move with the index.
+      #
+      # build_index.py refuses to overwrite a published version dir with
+      # different bytes, so a skill changed without a version bump fails here
+      # instead of silently republishing 1.0.0 with new content.
+      - name: Build the index (this commit)
+        run: python3 scripts/build_index.py --repo-tag "main-${{ github.sha }}"
+
+      # The standalone developer tools, served next to the index so a skill repo never
+      # has to clone this registry to validate:
+      #   tools/validate.py, tools/replay.py, tools/stub_bevo.py, tools/check_selectors.mjs,
+      #   tools/fixtures/<every file under tests/fixtures/>
+      # replay.py downloads stub_bevo.py + fixtures from here when they are not beside it.
+      - name: Publish the standalone tools
+        run: python3 scripts/publish_tools.py
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
