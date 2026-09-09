@@ -414,3 +414,36 @@ def test_the_real_copytrade_skill_passes_in_both_modes(copytrade_checkout):
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))
+
+
+# ── The duty CLI's two spellings (bevo-docker#178) ───────────────────────────
+# The container renamed `bevo-automation` to `bevo-duty` and kept the old name
+# on PATH as an undocumented alias. The validator must accept BOTH: every
+# already-published skill spells it the old way, and a skill can only adopt
+# the new one once the renamed image has reached the fleet.
+
+def test_both_duty_cli_spellings_share_one_subcommand_grammar():
+    assert validate.BEVO_AUTOMATION_SUBCOMMANDS is validate.BEVO_DUTY_SUBCOMMANDS
+    for name in ("bevo-duty", "bevo-automation"):
+        assert name in validate.TOOLBOX_FIRST_TOKENS
+
+
+def test_both_duty_cli_spellings_pass_the_command_allowlist(tmp_path):
+    for name in ("bevo-duty", "bevo-automation"):
+        issues = validate.Issues()
+        validate.check_command_allowlist(f"```sh\n{name} create '{{}}'\n```", issues)
+        assert not [e for e in issues.errors if "command-allowlist" in e], (name, issues.errors)
+
+
+def test_an_unknown_subcommand_is_still_rejected_under_the_new_name():
+    issues = validate.Issues()
+    validate.check_command_allowlist("```sh\nbevo-duty frobnicate '{}'\n```", issues)
+    assert any("command-allowlist" in e and "frobnicate" in e for e in issues.errors), issues.errors
+
+
+def test_the_renamed_creator_skill_dir_is_reserved():
+    reserved = validate.load_reserved()
+    assert "bevo-duty-creator" in reserved
+    # the pre-rename dir persists on older consoles, so it stays reserved too
+    assert "bevo-automation-creator" in reserved
+
