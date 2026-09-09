@@ -118,6 +118,14 @@ skill; "be generally helpful with money" is not). A skill declares two possible 
   skill's `duty.py`, when it ships one, becomes the duty's code stage. It is optional —
   a duty skill may be procedure alone, and a Butler that forks it supplies the code.
 
+  > **Two spellings, one tool.** The container renamed this CLI to `bevo-duty`
+  > (bevo-docker#178) and kept `bevo-automation` on PATH as an undocumented
+  > alias, so nothing already published breaks. The validator accepts either.
+  > Keep writing `bevo-automation` in a published skill until the renamed image
+  > has reached the fleet — only containers built from bevo-docker `main` at or
+  > after that release have `bevo-duty`, and a skill's steps run on whatever
+  > image the owner's console is on.
+
 A skill needs both modes when the same task is reasonable to do once *and* to repeat
 (copy-trading is the canonical example). A generic action whose every execution needs an
 owner approval — a raw contract call — is one-off only: a timer duty around it would page
@@ -145,7 +153,7 @@ scaffold. Change `name: _template` to your skill's name. `python3 scripts/new_sk
 refuses reserved names; `--maintainer` is required for a `butler-`-prefixed name (that
 prefix is reserved for the Butler team), and a `bevo-`-prefixed name is refused outright —
 that prefix is the container's own bundled-skill namespace (`bevo-hub`, `bevo-onchain`,
-`bevo-automation-creator`, …; see `schema/reserved-names.json`).
+`bevo-duty-creator`, …; see `schema/reserved-names.json`).
 
 ## 3. Pick the profile, then ground every command before you write it
 
@@ -180,8 +188,8 @@ container regardless of what a model "remembers" from training. The grammar of r
 `bevo-docker/entrypoint.py` (`DEFAULT_AGENTS_CONTEXT`) and the shims in
 `bevo-docker/api/scripts/`; the routes of record are `bevo-server/server/routes/
 butlerRead.ts` and `butlerExec.ts` (declare each route you use in `metadata.butler.requires.
-routes`); the duty SDK of record is `bevo-docker/api/bevo_services/sdk.py`; the duty
-payload of record is `bevo-docker/docs/butler-automation-authoring.md`. If you do not have
+routes`); the duty SDK of record is `bevo-docker/api/bevo_duty/code/sdk.py`; the duty
+payload of record is `bevo-docker/docs/butler-duty-authoring.md`. If you do not have
 access to those repos, the [toolbox table](#the-butler-toolbox) below is the same contract
 condensed to what a skill author needs.
 

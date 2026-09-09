@@ -74,7 +74,7 @@ TREE_SKIP_NAMES = {".git", "__pycache__"}
 
 # Name prefixes. `butler-` is the Butler team's namespace for skills published through
 # this hub (maintainer-only: --maintainer / MAINTAINER=1). `bevo-` is the container's
-# own bundled-skill namespace (bevo-hub, bevo-onchain, bevo-automation-creator, ... are
+# own bundled-skill namespace (bevo-hub, bevo-onchain, bevo-duty-creator, ... are
 # written by the entrypoint every boot) and is refused outright — a hub skill with that
 # prefix would collide with, or masquerade as, a bundled one.
 MAINTAINER_PREFIX = "butler-"
@@ -85,6 +85,9 @@ CONTAINER_PREFIX = "bevo-"
 # tests/test_validate.py fails if the two drift.
 RESERVED_NAMES_BUILTIN = frozenset({
     "bevo-onchain",
+    "bevo-duty-creator",
+    # Pre-rename name of bevo-duty-creator. Still reserved: the dir persists on
+    # every console provisioned before the Duty rename.
     "bevo-automation-creator",
     "web-checkout",
     "bevo-skill-creator",
@@ -108,13 +111,20 @@ OPENCLAW_METADATA_KEYS = {"emoji", "homepage", "requires"}
 
 # The Butler toolbox (README §3 / SKILL_STANDARD.md table). First token of
 # every command line in a skill's shell code blocks must appear here (or be
-# a validated subcommand of bevo-read / bevo-automation / bevo-hub / acp).
+# a validated subcommand of bevo-read / bevo-duty / bevo-hub / acp).
 TOOLBOX_FIRST_TOKENS = {
     "bevo-notify",
     "bevo-rpc",
     "bevo-read",
     "bevo-send",
     "acp",
+    # `bevo-duty` is the current name of the duty-authoring CLI;
+    # `bevo-automation` is the SAME tool under its retired name, kept on the
+    # container's PATH as an undocumented alias. Both are accepted here: every
+    # already-published skill spells it the old way, and only containers built
+    # from bevo-docker `main` at/after the Duty rename have the new one, so a
+    # skill that must run everywhere still uses `bevo-automation` today.
+    "bevo-duty",
     "bevo-automation",
     "bevo-hub",
     "bevo-x",
@@ -145,7 +155,7 @@ BEVO_READ_SUBCOMMANDS = {
     "token-balance",
 }
 
-BEVO_AUTOMATION_SUBCOMMANDS = {
+BEVO_DUTY_SUBCOMMANDS = {
     "create",
     "validate",
     "rehearse",
@@ -157,6 +167,9 @@ BEVO_AUTOMATION_SUBCOMMANDS = {
     "list",
     "logs",
 }
+
+# The retired spelling shares the grammar — one set, so the two cannot drift.
+BEVO_AUTOMATION_SUBCOMMANDS = BEVO_DUTY_SUBCOMMANDS
 
 # Mirrors api/scripts/bevo-hub-shim.py COMMANDS. `fork` shipped with the
 # forking feature: a skill that almost fits is the owner's to copy and edit,
@@ -449,7 +462,7 @@ def check_reserved(fm: dict, reserved: set[str], maintainer: bool, issues: Issue
         issues.error(
             "name",
             f"{name!r} uses the '{CONTAINER_PREFIX}' prefix, which is the container's bundled-skill namespace "
-            "(bevo-hub, bevo-onchain, bevo-automation-creator, ...) — hub skills may never use it; "
+            "(bevo-hub, bevo-onchain, bevo-duty-creator, ...) — hub skills may never use it; "
             f"team skills use '{MAINTAINER_PREFIX}'",
         )
     elif name.startswith(MAINTAINER_PREFIX) and not maintainer:
@@ -522,10 +535,10 @@ def check_command_allowlist(body: str, issues: Issues) -> list[str]:
             sub = tokens[1]
             if sub not in BEVO_READ_SUBCOMMANDS:
                 issues.error("command-allowlist", f"bevo-read subcommand {sub!r} unknown: {line!r}")
-        if first == "bevo-automation" and len(tokens) > 1:
+        if first in ("bevo-duty", "bevo-automation") and len(tokens) > 1:
             sub = tokens[1]
-            if sub not in BEVO_AUTOMATION_SUBCOMMANDS:
-                issues.error("command-allowlist", f"bevo-automation subcommand {sub!r} unknown: {line!r}")
+            if sub not in BEVO_DUTY_SUBCOMMANDS:
+                issues.error("command-allowlist", f"{first} subcommand {sub!r} unknown: {line!r}")
         if first == "bevo-hub" and len(tokens) > 1:
             sub = tokens[1]
             if sub not in BEVO_HUB_SUBCOMMANDS:

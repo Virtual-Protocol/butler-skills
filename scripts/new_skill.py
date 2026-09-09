@@ -99,7 +99,7 @@ def main() -> int:
     if name.startswith(CONTAINER_PREFIX):
         parser.error(
             f"{name!r} uses the '{CONTAINER_PREFIX}' prefix — that is the container's bundled-skill namespace "
-            f"(bevo-hub, bevo-onchain, bevo-automation-creator, ...); hub skills may never use it. "
+            f"(bevo-hub, bevo-onchain, bevo-duty-creator, ...); hub skills may never use it. "
             f"Team skills use '{MAINTAINER_PREFIX}'"
         )
     if name.startswith(MAINTAINER_PREFIX) and not args.maintainer:
