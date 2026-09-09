@@ -14,9 +14,9 @@ jobs:
       # Skills live in their own repos and are validated in their own CI (the
       # composite action in .github/actions/validate). Here we check the
       # registry itself: skills.json, the schema, the tools and the index build.
+      # A shallow checkout is enough: nothing here reads this repo's own history
+      # (every git call in scripts/ targets a skill clone or a remote ref).
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -33,10 +33,6 @@ jobs:
 
       - name: Install pytest
         run: pip install --quiet pytest
-
-      - name: DCO sign-off check
-        # The PR's real head, not the synthetic merge commit actions/checkout puts at HEAD.
-        run: python3 scripts/check_dco.py --base origin/${{ github.base_ref }} --head ${{ github.event.pull_request.head.sha || 'HEAD' }}
 
       - name: Registry listing
         # skills.json IS the registry: a name and a GitHub link per skill. Checks

@@ -162,7 +162,6 @@ code; leave it out when the procedure is the point.
   resolves on the remote (`tests/test_skills_registry.py`, `scripts/check_registry.py`).
 - `scripts/build_index.py --dry-run` must succeed for the whole repo (every entry gets a
   `source` block: repo URL, the 40-hex commit this build resolved the ref to, and that `ref`).
-- DCO sign-off required on every commit in the registry PR.
 - Hub tooling downloaded for local validation (`validate.py`, `replay.py`, `stub_bevo.py`,
   `check_selectors.mjs`) is never part of a skill; the validator warns when it sees one in
   the tree (the template's `.gitignore` lists them).
