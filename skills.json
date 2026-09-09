@@ -2,6 +2,11 @@
   "comment": "The registry IS this file. A skill is a name and a GitHub link; its repo owns its versions. Adding or removing a skill is a PR here — updating one is not: every build resolves each ref to a commit and republishes. Set `ref` to a branch to follow it, or to a tag to hold a release.",
   "skills": [
     {
+      "name": "butler-app-checkout",
+      "repo": "https://github.com/Virtual-Protocol/butler-skill-app-checkout",
+      "ref": "main"
+    },
+    {
       "name": "butler-copytrade",
       "repo": "https://github.com/Virtual-Protocol/butler-skill-copytrade",
       "ref": "main"
