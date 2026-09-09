@@ -154,7 +154,7 @@ def main() -> int:
 # {effect}
 #
 # The second and last PR this skill gets here:
-git commit -s -am "skills: remove {name}"
+git commit -am "skills: remove {name}"
 gh pr create --repo {REGISTRY_REPO} --base main --title "skills: remove {name}"
 
 # Merging to main IS the publish action: the next build drops it from the index

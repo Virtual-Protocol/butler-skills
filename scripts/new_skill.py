@@ -71,7 +71,7 @@ python3 replay.py --standalone . --fixture trade-activity-page
 #    reaches butlers on the next build (hourly) with no review in the registry;
 #    tag your releases and set `ref` to the tag (e.g. "v1.0.0") if you want it to
 #    move only when you say so.
-git commit -s -m "skills: add {name}"
+git commit -m "skills: add {name}"
 gh pr create --repo {REGISTRY_REPO} --base main --title "skills: add {name}"
 #    CI checks the listing (name, https GitHub URL, the ref resolves) and the
 #    publish build clones your ref, hashes every file and records the resolved

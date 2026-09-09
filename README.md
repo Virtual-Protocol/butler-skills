@@ -336,9 +336,8 @@ immutable per `name@version`, so a build that would republish an already-publish
 `name@version` with different bytes is refused — a change without a version bump fails the
 build instead of silently republishing.
 
-**In this registry, once per skill:** one skill per PR, from a fork, every commit signed off
-(`git commit -s` — DCO). The PR adds a single entry to `skills.json` and nothing else (keep
-the list sorted by name):
+**In this registry, once per skill:** one skill per PR, from a fork. The PR adds a single
+entry to `skills.json` and nothing else (keep the list sorted by name):
 
 ```json
 {
@@ -1028,14 +1027,14 @@ the pass criteria.
 One PR here per skill, ever: it adds `{name, repo, ref}` to `skills.json`. Every later
 release is a merge (and a tag) in your own repo — the next build re-resolves the `ref` and
 republishes, no PR here. See [§8](#8-ship-it) above and [CONTRIBUTING.md](CONTRIBUTING.md)
-for the full review process, what `ref` to choose, the DCO requirement, and the two-review
-rule for `moneyMoving:true` skills.
+for the full review process, what `ref` to choose, and the two-review rule for
+`moneyMoving:true` skills.
 
 ## Reference
 
 - [SKILL_STANDARD.md](SKILL_STANDARD.md) — the exact rules `scripts/validate.py` enforces.
 - [CONTRIBUTING.md](CONTRIBUTING.md) — process, the `skills.json` entry and `ref` rules,
-  DCO, review rules, the yank rule.
+  review rules, the yank rule.
 - [SECURITY.md](SECURITY.md) — reporting a vulnerability, what is in scope.
 - [the published index](https://virtual-protocol.github.io/butler-skills/index.json) — what
   is actually live: every skill's current version, description, tier and resolved commit,

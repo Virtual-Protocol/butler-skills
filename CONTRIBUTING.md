@@ -62,8 +62,6 @@ A PR to this repo adds a skill or removes one. Nothing else.
   `name@version` (`scripts/build_index.py` refuses to republish a version with different
   bytes), so changed content without a version bump fails the build rather than quietly
   republishing the old version number.
-- **DCO sign-off is required** on every commit in the registry PR (`git commit -s`). CI
-  checks this on every PR.
 - **Money-moving skills (`moneyMoving: true`) need two maintainer reviews**, not one —
   on the PR that lists the skill. The registry publishes ONE index, so a merge to `main`
   reaches every Butler and there is no soak channel to land on first. Note what those
@@ -98,7 +96,7 @@ in name order:
 
 ```bash
 git add skills.json
-git commit -s -m "skills: add <name>"
+git commit -m "skills: add <name>"
 python3 scripts/check_registry.py        # the listing checks CI will run (--offline skips the remote ref check)
 python3 scripts/validate.py --all        # add --maintainer for a butler- skill (bevo- is refused)
 python3 -m pytest tests -q               # the full local suite
@@ -106,12 +104,11 @@ python3 -m pytest tests -q               # the full local suite
 
 ## Review process
 
-1. Open the PR from a fork with DCO sign-off; it changes only `skills.json`.
+1. Open the PR from a fork; it changes only `skills.json`.
 2. `validate.yml` runs `scripts/check_registry.py` on the listing (unique valid names, an
    `https://github.com/<owner>/<repo>` URL with no credentials or query, a sane `ref`, and
    the `ref` resolving on the remote), the validator on every listed skill, the replay tests,
-   a `build_index.py --dry-run` and the DCO check — it must be green before a human looks at
-   the diff.
+   and a `build_index.py --dry-run` — it must be green before a human looks at the diff.
 3. A `@Virtual-Protocol/butler-maintainers` review (two for `moneyMoving:true`) of the skill
    **at the `ref` being listed** — the reviewer reads the skill repo there — merges to
    `main`, which republishes the index immediately. Merging IS publishing: there is no second
