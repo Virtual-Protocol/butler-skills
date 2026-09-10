@@ -501,7 +501,7 @@ with both a one-off and a duty mode.
 ---
 name: butler-copytrade
 description: Copy, mirror or follow another member's trades — spot, tokenized stocks and perps, once or as a standing duty sized from your owner's own words.
-version: 3.1.1
+version: 4.0.0
 metadata: {"openclaw":{"emoji":"🪞","requires":{"bins":["acp","bevo-read","bevo-automation"]}},"butler":{"tier":"on-demand","modes":["one-off","duty"],"moneyMoving":true,"keywords":["copy trade","copy trading","copy buys","mirror wallet","mirror trades","follow trader","follow wallet","copy perps","mirror perps","copy stocks"],"requires":{"routes":["GET /butler-read/user","GET /butler-read/trade-activity","GET /butler-read/user-assets","GET /butler-read/token-search","POST /butler-exec/trade","POST /butler-exec/services"],"features":["tradeIdempotency","execRequestStatus"],"gates":["canSwap"],"bins":["acp","bevo-read","bevo-automation"]},"params":[{"name":"LEADER","type":"principalId|wallet","required":true,"ask":"who should I copy?"},{"name":"SIZING","type":"enum","values":["fixed","cash_share","leader_share"],"required":true,"ask":"how much per copy — a fixed dollar figure, a share of your own cash, or a share of what they trade?"},{"name":"SIZE_USD","type":"usd","min":2,"max":10000,"help":"dollars per copy (SIZING=fixed)"},{"name":"SHARE","type":"number","min":0,"max":1,"help":"fraction for cash/leader share sizing (0.2 = 20%)"},{"name":"MAX_USD","type":"usd","min":2,"max":100000,"help":"per-trade ceiling"},{"name":"CHAIN_IDS","type":"chainIds","default":[],"help":"empty = the leader's chain; set only when specified. Spot only"},{"name":"MIRROR_SELLS","type":"bool","default":false,"help":"copy spot and stock sells too"},{"name":"MIN_LEADER_USD","type":"usd","default":0,"min":0,"max":100000,"help":"ignore trades smaller than this; never applied to a perp close"},{"name":"MIRROR_PERPS","type":"bool","default":false,"help":"copy their leveraged positions too"},{"name":"MIRROR_STOCKS","type":"bool","default":false,"help":"copy their tokenized stock trades too"},{"name":"PERP_LEVERAGE","type":"number","default":0,"min":0,"max":50,"help":"fixed leverage to open at; 0 = take the leader's own"},{"name":"PERP_MAX_LEVERAGE","type":"number","default":0,"min":0,"max":50,"help":"leverage ceiling; 0 = no ceiling"}],"dutyTemplate":"duty.py"}}
 ---
 
@@ -626,11 +626,14 @@ cards, the same pocket. Tell your owner what you changed and why.
    ```
 
    A tokenized stock takes the ticker with no `--side`; a sell is share-denominated
-   and needs the chain and count from your owner's own holding, floored:
+   and needs the venue and count from your owner's own holding, floored. `--chain`
+   on a stock is the VENUE NAME (`eth` | `sol`) off that holding's own `chain`
+   field, NEVER a chain id — a numeric one reroutes the order onto a bare-symbol
+   spot swap, which is a different asset:
 
    ```bash
    acp trade --token <TICKER> --amount-usdc <usd> --idempotency-key copytrade:chat:<eventId>
-   acp trade --token <TICKER> --amount-shares <n> --chain <chain> --idempotency-key copytrade:chat:<eventId>
+   acp trade --token <TICKER> --amount-shares <n> --chain <venue> --idempotency-key copytrade:chat:<eventId>
    ```
 
 7. [FIXED] On `accepted` or `manual_signing_required`, stop and report; on
@@ -680,7 +683,7 @@ uncertainty: `bevo-read request <key>` first — do not re-run.
 | Leader traded a bare ticker that is not a stock you can trade | Skipped, never guessed onto the spot rail — a bare-symbol swap resolves to whatever token wears that ticker. A region that bars stocks looks the same here. |
 | A perp or stock leg refused for a permission gate | That product is not available to this owner; offer the spot mode and leave the switch off. |
 | Copy size under a venue minimum ($2 spot, $15 perp, $15 stock buy) | Not filed. Say the minimum rather than rounding their size up to it. |
-| Closing a perp the owner never opened | A no-op, not an error — the close refuses and the duty moves on. |
+| Closing a perp the owner never opened | A no-op, not an error — the duty skips it and moves on. |
 | `accepted` | Done — report product, token and size. |
 | `manual_signing_required` | The card is already in Approvals; say so once, do not poll. |
 
@@ -716,8 +719,17 @@ which are not — never as a dollar figure you worked out yourself.
 trade per leader event, never twice. Spot swaps, tokenized stocks and perps.
 Every knob below is a word the owner actually said; nothing here has a money
 default of its own. See SKILL.md.
+
+The SDK's money verbs (`bevo.buy`/`sell`/`long`/`short`/`close`/`stock_buy`/
+`stock_sell`) are gone — each was a one-line rewrite of an `acp trade` string
+that hid the grammar and drifted from it. `bevo.trade(command=…)` is the ONE
+money rail now, so every leg below builds its own `acp trade` command and does
+the sizing arithmetic the verbs used to do (quantities, prices, holdings) by
+hand, off `bevo.read("/user-assets", {"fresh": 1})` — the `fresh` flag included,
+which every removed verb carried and which a hand-rolled read must not drop.
 """
 import json
+import math
 import os
 
 import bevo
@@ -752,6 +764,47 @@ PERP_MIN_USD = 15.0
 STOCK_MIN_USD = 15.0
 
 
+def _num(raw, default=0.0):
+    """A value read off a JSON row: a missing or unparsable one is the
+    caller's declared default, never a crash mid-batch."""
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+def fmt(n):
+    """A CLI number: never scientific notation, which the trade grammar cannot
+    read back (0.00000012 must not become 1.2e-07)."""
+    return f"{n:.8f}".rstrip("0").rstrip(".") or "0"
+
+
+def same_address(a, b):
+    """The SDK's `_same_address` rule, ported: an EVM address compares
+    case-insensitively, anything else EXACTLY. A Solana mint is base58, where
+    case carries information — lower-casing both sides would let one mint
+    match a different one, and size a sell against a holding we do not have."""
+    a = str(a or "")
+    b = str(b or "")
+    if not a or not b:
+        return False
+    if a.startswith("0x") and b.startswith("0x"):
+        return a.lower() == b.lower()
+    return a == b
+
+
+def bad_amount(qty):
+    """True for a computed quantity that must never reach `acp trade`: 0,
+    negative, non-finite, or one so small it formats to "0" at 8 dp — the
+    server would answer a parse error instead of a reason."""
+    try:
+        if not math.isfinite(qty) or qty <= 0:
+            return True
+    except TypeError:
+        return True
+    return fmt(qty) == "0"
+
+
 def size_for(trade):
     """The USD to put into this copy, or 0 to skip it.
 
@@ -779,11 +832,24 @@ def leverage_for(trade):
     otherwise the leader's own on that trade. `PERP_MAX_LEVERAGE` caps it only
     when they named a ceiling. A leader's 40x is 40x of THEIR conviction on
     THEIR balance — an owner who did not say a number gets it verbatim, which
-    is why the skill asks."""
+    is why the skill asks.
+
+    The venue takes 1–50x and nothing else. The old `bevo.long`/`short` refused
+    an out-of-range figure outright (`LEVERAGE_OUT_OF_RANGE`) before building a
+    command; a leader's 100x is a copy worth filing at the ceiling rather than
+    dropping, so it clamps — but never silently, or the owner reads "60x" in
+    the leader's feed and 50x in their own fills with nothing joining them."""
     lev = PERP_LEVERAGE or (trade.leverage or 1)
     if PERP_MAX_LEVERAGE:
         lev = min(lev, PERP_MAX_LEVERAGE)
-    return max(1, int(lev))
+    asked = int(lev)
+    clamped = max(1, min(50, asked))
+    if clamped != asked:
+        bevo.log(
+            f"copytrade event={trade.id}: leverage {asked}x is outside the venue's "
+            f"1–50x range — clamped to {clamped}x"
+        )
+    return clamped
 
 
 def too_small(trade, size, floor, kind):
@@ -793,15 +859,190 @@ def too_small(trade, size, floor, kind):
     return True
 
 
+def status_of(result):
+    """TradeResult exposes .status; a raw dict from a replay stub answers the
+    same way — read whichever this is."""
+    status = getattr(result, "status", None)
+    if status is None and hasattr(result, "get"):
+        status = result.get("status")
+    return status
+
+
+def read_assets(trade):
+    """One `/user-assets` read for this leg — the holding, its price and (for
+    a perp) the open position all come off the SAME snapshot, never a second
+    fetch per lookup.
+
+    `fresh=1` is load-bearing, and it is the whole reason the removed money
+    verbs read `/butler-read/user-assets?fresh=1`: without it the server serves
+    its stale-while-revalidate portfolio cache, which can be up to ten minutes
+    old. A leader's burst puts several legs through this duty back to back, and
+    a cached read sizes leg N off the balance from BEFORE leg N-1 settled —
+    selling a quantity already sold, or spending cash already spent.
+
+    None means unreadable: the caller must skip, not guess."""
+    try:
+        body = bevo.read("/user-assets", {"fresh": 1})
+    except bevo.BevoError as exc:
+        bevo.log(f"copytrade event={trade.id}: /user-assets unreadable ({exc}) — skipping this leg")
+        return None
+    # Guarded ONCE here, so every reader below (spot_holding, perp_position,
+    # stock_holding) can call .get() on it: a non-dict body — an error envelope,
+    # a list, a null — is not a wallet with nothing in it, and must never read
+    # as "holds none of this" and let a sell size itself off a guess.
+    if not isinstance(body, dict):
+        bevo.log(f"copytrade event={trade.id}: /user-assets answered no object — skipping this leg")
+        return None
+    return body
+
+
+def spot_holding(assets, ref, chain_id):
+    """The owner's holding row for `ref` (an address, matched by the SDK's own
+    EVM-vs-Solana rule — see `same_address`).
+
+    A sell settles on ONE chain: with `chain_id` set (the leader's own), only
+    that chain's row counts; with it unset, the largest row across chains is
+    the one whose OWN chain the sell carries — never a total summed across
+    chains, which would size a quantity no one chain actually holds."""
+    spot = assets.get("spot") or {}
+    if not spot.get("available"):
+        return None
+    rows = [row for row in spot.get("tokens") or [] if same_address(row.get("tokenAddress"), ref)]
+    if chain_id is not None:
+        rows = [row for row in rows if str(row.get("chainId") or "") == str(chain_id)]
+    if not rows:
+        return None
+    return max(rows, key=lambda row: _num(row.get("balance")))
+
+
+def search_price(query, address=None, symbol=None):
+    """A `/token-search` price for `query`, pinned to a row that is really the
+    asset asked for: by `address` when we have one, by `symbol` on a ticker
+    retry. None when the catalog cannot price it — never the first row that
+    happens to wear the ticker."""
+    try:
+        body = bevo.read("/token-search", {"q": query})
+    except bevo.BevoError as exc:
+        bevo.log(f"copytrade: /token-search unreadable for {query} ({exc})")
+        return None
+    for hit in (body if isinstance(body, dict) else {}).get("tokens") or []:
+        if address is not None and not same_address(hit.get("address"), address):
+            continue
+        if symbol is not None and str(hit.get("symbol") or "").strip().upper() != symbol:
+            continue
+        price = _num(hit.get("priceUsd"))
+        if price > 0:
+            return price
+    return None
+
+
+def spot_price(ref, row, symbol=None):
+    """The live price for `ref`, in the order the removed `bevo.sell` used:
+    the holding's own `usdPrice`, then a `/token-search` quote matched on the
+    ADDRESS, then the same quote asked for the SYMBOL.
+
+    Each step FALLS THROUGH on a falsy price rather than returning None — a row
+    that carries `usdPrice: 0` (or null, on a chain whose price feed is down)
+    is a missing price, not a price of zero, and returning there would refuse a
+    sell the catalog can price perfectly well one call later. The symbol retry
+    is the old `_symbol_fallback`: an address the catalog does not index — a
+    fresh listing, a chain it does not cover — still prices by its ticker.
+
+    None means genuinely unknown: the caller must not trade, never guess a
+    quantity from it."""
+    if row is not None:
+        held_price = _num(row.get("usdPrice"))
+        if held_price > 0:
+            return held_price
+    price = search_price(ref, address=ref)
+    if price:
+        return price
+    ticker = str(symbol or "").strip().upper()
+    if ticker and ticker != str(ref or "").strip().upper():
+        return search_price(ticker, symbol=ticker)
+    return None
+
+
+def perp_position(assets, coin):
+    """The owner's open position in `coin` (`size > 0`), or None.
+
+    A HIP-3 coin is namespaced (`xyz:AAPL`): match the FULL coin first, or a
+    close on a HIP-3 market would find nothing. The bare `:`-suffix fallback
+    is only for a plain coin like `BTC` — stripping the dex segment off BOTH
+    sides instead would let `xyz:AAPL` close `abc:AAPL`, a different market."""
+    perps = assets.get("perps") or {}
+    if not perps.get("available"):
+        return None
+    for row in perps.get("positions") or []:
+        if not _num(row.get("size")) > 0:
+            continue
+        rowcoin = str(row.get("coin") or "").upper()
+        if rowcoin == coin or rowcoin.split(":")[-1] == coin:
+            return row
+    return None
+
+
+def stock_holding(assets, ticker):
+    """The owner's tokenized-stock position in `ticker`, or None.
+
+    A stock is NOT in `spot.tokens` — it is its own `spot.stocks` array, and
+    the two disagree on purpose (`tokens` is the raw on-chain balance,
+    `shares` is what the venue sells). Sizing a stock sell off a look-alike
+    token row would sell the wrong quantity, so this reads the stock row or
+    refuses."""
+    spot = assets.get("spot") or {}
+    if not spot.get("available"):
+        return None
+    for row in spot.get("stocks") or []:
+        if str(row.get("ticker") or "").strip().upper() == ticker:
+            return row
+    return None
+
+
+def stock_price(row, ticker):
+    """What one share of `ticker` is worth, in the order the removed
+    `bevo.stock_sell` used: the holding's own `usdPerShare`, then the SAME
+    row's `usdValueUsd / shares` — a row that carries a value and a share count
+    prices itself and needs no round trip — then a live quote.
+
+    `usdPerShare` is nullable on every venue, so refusing on it alone stops the
+    sells of a position the owner plainly holds and whose value the same row
+    states. None means genuinely unpriceable: only then does the caller
+    refuse."""
+    per_share = _num(row.get("usdPerShare"))
+    if per_share > 0:
+        return per_share
+    shares = _num(row.get("shares"))
+    value = _num(row.get("usdValueUsd"))
+    if shares > 0 and value > 0:
+        return value / shares
+    return search_price(ticker, symbol=ticker)
+
+
 def copy_perp(trade, key):
     """A perp leg. A CLOSE is risk coming off and is never gated by a size
     knob, MIN_LEADER_USD or CHAIN_IDS: if the leader is out — by their own
     hand, a stop, or a liquidation the exchange forced — the copy gets out
-    too. bevo.close() reads our own side and size and refuses when we hold
-    nothing, so a close we never opened is a no-op, not an error."""
+    too. No open position in our own book is a no-op, not an error: the leg
+    is simply skipped and the batch moves on."""
+    coin = trade.asset.ref  # symbol only — a perp has no address
+
     if trade.is_close:
-        result = bevo.close(trade.asset.ref, idempotency_key=key)
-        bevo.log(f"copytrade event={trade.id} close {trade.asset.ref} ({trade.hl_event or 'by hand'}) {result.summary} key={key}")
+        assets = read_assets(trade)
+        if assets is None:
+            return
+        pos = perp_position(assets, coin)
+        if pos is None:
+            bevo.log(f"copytrade event={trade.id}: no open position on {coin} — close is a no-op")
+            return
+        opposite = "short" if str(pos.get("side")) == "long" else "long"
+        size = _num(pos.get("size"))
+        command = f"acp trade --side {opposite} --token {coin} --size {fmt(size)} --reduce-only"
+        result = bevo.trade(command=command, idempotency_key=key)
+        bevo.log(
+            f"copytrade event={trade.id} close {coin} ({trade.hl_event or 'by hand'}) "
+            f"status={status_of(result)} key={key}"
+        )
         return
 
     if MIN_LEADER_USD and (trade.usd_value or 0.0) < MIN_LEADER_USD:
@@ -811,9 +1052,10 @@ def copy_perp(trade, key):
         return
 
     lev = leverage_for(trade)
-    open_side = bevo.short if trade.is_short else bevo.long
-    result = open_side(trade.asset.ref, usd=size, leverage=lev, idempotency_key=key)
-    bevo.log(f"copytrade event={trade.id} {'short' if trade.is_short else 'long'} {trade.asset.ref} ${size:.2f} at {lev}x {result.summary} key={key}")
+    side = "short" if trade.is_short else "long"
+    command = f"acp trade --side {side} --token {coin} --amount-usdc {fmt(size)} --leverage {lev}"
+    result = bevo.trade(command=command, idempotency_key=key)
+    bevo.log(f"copytrade event={trade.id} {side} {coin} ${size:.2f} at {lev}x status={status_of(result)} key={key}")
 
 
 def is_stock_leg(trade):
@@ -832,9 +1074,9 @@ def is_stock_leg(trade):
 
 def copy_stock(trade, key):
     """A tokenized stock. It rides in on a SWAP row that names a ticker and no
-    address, so it needs the stock command shape — never the swap shape a
-    spot token takes. bevo.stock_sell() resolves our own share count and venue
-    from the holding and refuses when we hold none."""
+    address, so it needs the stock command shape (`--token <TICKER>`, no
+    `--side`) — never the swap shape a spot token takes. A sell's share count
+    and venue come from our own holding, never worked out from the leader's."""
     if MIN_LEADER_USD and (trade.usd_value or 0.0) < MIN_LEADER_USD:
         return
     size = size_for(trade)
@@ -842,13 +1084,40 @@ def copy_stock(trade, key):
         bevo.log(f"copytrade skip event={trade.id}: size 0 (LEADER={LEADER} SIZING={SIZING})")
         return
 
+    ticker = trade.asset.symbol
+
     if trade.is_sell:
-        result = bevo.stock_sell(trade.asset.symbol, usd=size, idempotency_key=key)
+        assets = read_assets(trade)
+        if assets is None:
+            return
+        row = stock_holding(assets, ticker)
+        if row is None:
+            bevo.log(f"copytrade skip event={trade.id}: no {ticker} stock holding to sell")
+            return
+        # The VENUE name (eth|sol), never a chain id: bevo-server reroutes a
+        # numeric --chain onto a bare-symbol spot swap — a different asset.
+        venue = str(row.get("chain") or "").strip()
+        if not venue or venue.isdigit():
+            bevo.log(f"copytrade skip event={trade.id}: the {ticker} holding names no venue")
+            return
+        owned = _num(row.get("shares"))
+        price = stock_price(row, ticker)
+        if not price:
+            bevo.log(f"copytrade skip event={trade.id}: no price for {ticker} — cannot size the sell")
+            return
+        shares = min(size / price, owned)
+        shares = math.floor(shares * 1e8) / 1e8  # floor, never round up — a rounded-up qty is rejected
+        if bad_amount(shares):
+            bevo.log(f"copytrade skip event={trade.id}: computed stock sell qty is 0 for {ticker}")
+            return
+        command = f"acp trade --token {ticker} --amount-shares {fmt(shares)} --chain {venue}"
     else:
         if too_small(trade, size, STOCK_MIN_USD, "stock buy"):
             return
-        result = bevo.stock_buy(trade.asset.symbol, usd=size, idempotency_key=key)
-    bevo.log(f"copytrade event={trade.id} stock {trade.asset.symbol} ${size:.2f} {result.summary} key={key}")
+        command = f"acp trade --token {ticker} --amount-usdc {fmt(size)}"
+
+    result = bevo.trade(command=command, idempotency_key=key)
+    bevo.log(f"copytrade event={trade.id} stock {ticker} ${size:.2f} status={status_of(result)} key={key}")
 
 
 def copy_spot(trade, key):
@@ -866,11 +1135,34 @@ def copy_spot(trade, key):
     # trade.asset is the exact token on the exact chain the leader traded —
     # its address verbatim plus the feed's own chain id. Never trade.token,
     # which is a display name, and never a chain of our own.
+    ref = trade.asset.ref
+
     if trade.is_sell:
-        result = bevo.sell(trade.asset, usd=size, idempotency_key=key)
+        assets = read_assets(trade)
+        if assets is None:
+            return
+        row = spot_holding(assets, ref, trade.asset.chain_id)
+        if row is None:
+            bevo.log(f"copytrade skip event={trade.id}: nothing held of {trade.asset} to sell")
+            return
+        price = spot_price(ref, row, trade.asset.symbol)
+        if not price:
+            bevo.log(f"copytrade skip event={trade.id}: no price for {trade.asset} — cannot size the sell")
+            return
+        held = _num(row.get("balance"))
+        qty = min(size / price, held)
+        if bad_amount(qty):
+            bevo.log(f"copytrade skip event={trade.id}: computed sell qty is 0 for {trade.asset}")
+            return
+        chain = row.get("chainId")
+        chain_flag = f" --chain-in {chain}" if chain not in (None, "") else ""
+        command = f"acp trade --token-in {ref}{chain_flag} --amount-in {fmt(qty)} --token-out usdc"
     else:
-        result = bevo.buy(trade.asset, usd=size, idempotency_key=key)
-    bevo.log(f"copytrade event={trade.id} {trade.asset} ${size:.2f} {result.summary} key={key}")
+        chain_flag = f" --chain-out {trade.asset.chain_id}" if trade.asset.chain_id else ""
+        command = f"acp trade --token-in usdc --amount-in {fmt(size)} --token-out {ref}{chain_flag}"
+
+    result = bevo.trade(command=command, idempotency_key=key)
+    bevo.log(f"copytrade event={trade.id} {trade.asset} ${size:.2f} status={status_of(result)} key={key}")
 
 
 def main():
@@ -901,12 +1193,13 @@ def main():
 
         # A leg with no ADDRESS is a bare ticker: a tokenized stock, or a
         # symbol the feed could not resolve to a contract. NEVER guess it onto
-        # the spot rail — bevo.buy("AAPL") is a bare-symbol swap that resolves
-        # to whatever token happens to wear that ticker, which is someone
-        # else's asset. Ask the catalog only when the owner asked for stocks:
-        # token-search hides tokenized stocks from an owner whose region does
-        # not permit them, so a `False` here can mean "not a stock" OR "not
-        # yours to trade", and both end the same way — skip, never substitute.
+        # the spot rail — `acp trade --token-out AAPL` with no address is a
+        # bare-symbol swap that resolves to whatever token happens to wear
+        # that ticker, which is someone else's asset. Ask the catalog only
+        # when the owner asked for stocks: token-search hides tokenized
+        # stocks from an owner whose region does not permit them, so a
+        # `False` here can mean "not a stock" OR "not yours to trade", and
+        # both end the same way — skip, never substitute.
         if trade.asset.address is None:
             if MIRROR_STOCKS and is_stock_leg(trade):
                 copy_stock(trade, key)
