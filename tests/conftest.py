@@ -4,7 +4,7 @@ No skill is checked out in this repository any more: skills.json records a
 name, a GitHub link and a ref, and every build clones that. Most of the suite
 is unaffected (synthetic skills in tmp_path), but three areas genuinely need
 the real `butler-copytrade` files — the replay harness, the standalone-tools
-developer path, and the README worked example — so they get them the way the
+developer path — so they get them the way the
 build does: one clone per session, through build_index.clone_skill().
 
 That clone is the only place the suite touches the network. When it fails the
