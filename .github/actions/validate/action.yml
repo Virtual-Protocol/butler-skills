@@ -24,9 +24,15 @@ inputs:
     required: false
     default: "false"
   fixture:
-    description: Replay fixture for duty.py (basename under the hub's tests/fixtures/).
+    description: >-
+      Replay fixture(s) for duty.py — a space-separated list of basenames under the hub's
+      tests/fixtures/, replayed one after another. The default is BOTH, because
+      trade-activity-page is buys only: replayed alone it never reaches a duty's sell,
+      perp-close or stock-sell legs, which are exactly the ones that have to derive a
+      quantity from bevo.read("/user-assets"). trade-activity-mixed carries a sell, a perp
+      open, a perp close, a liquidation and a tokenized-stock buy and sell.
     required: false
-    default: trade-activity-page
+    default: trade-activity-page trade-activity-mixed
 
 runs:
   using: composite
@@ -86,7 +92,7 @@ runs:
       env:
         SKILL_PATH: ${{ inputs.path }}
         STANDALONE: ${{ inputs.standalone }}
-        FIXTURE: ${{ inputs.fixture }}
+        FIXTURES: ${{ inputs.fixture }}
       run: |
         set -eu
         if [ ! -f "$SKILL_PATH/duty.py" ]; then
@@ -95,5 +101,11 @@ runs:
         fi
         FLAG=""
         if [ "$STANDALONE" = "true" ]; then FLAG="--standalone"; fi
-        # The hub checkout carries stub_bevo.py and every fixture, so nothing is downloaded.
-        python3 "$BUTLER_SKILLS_HUB/tests/replay.py" $FLAG "$SKILL_PATH" --fixture "$FIXTURE" --no-download
+        # One replay per fixture: a buys-only feed never exercises the legs that size a
+        # quantity themselves. Unquoted on purpose — $FIXTURES is a space-separated list.
+        # Each run gets its own fresh temp state dir, so nothing leaks between fixtures.
+        for FIXTURE in $FIXTURES; do
+          echo "--- replay against $FIXTURE"
+          # The hub checkout carries stub_bevo.py and every fixture, so nothing is downloaded.
+          python3 "$BUTLER_SKILLS_HUB/tests/replay.py" $FLAG "$SKILL_PATH" --fixture "$FIXTURE" --no-download
+        done

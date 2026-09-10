@@ -135,6 +135,15 @@ code; leave it out when the procedure is the point.
   `socket`, `urllib`, `requests`, `http.client`, `eval`, `exec`, bare `except: pass`.
 - Every `bevo.trade(...)` / `bevo.execute(...)` call passes a keyword `idempotency_key=`
   that is not `None`.
+- Every `bevo.trade(command=…)` string starts with `acp trade` (calldata goes through
+  `bevo.execute(to, data, …)`, whose chat equivalent is `acp wallet send-transaction`),
+  never sets `message=` — a trade is a command, not free text — and is one of the shapes
+  in the [toolbox table](README.md#the-butler-toolbox): swap, perp open, perp close,
+  stock buy, stock sell. There are no per-verb shortcuts: `bevo.buy`/`sell`/`long`/
+  `short`/`close`/`stock_buy`/`stock_sell` were removed, so the command string is the
+  only place the grammar lives and the duty does its own sizing off
+  `bevo.read("/user-assets")`. The offline replay (`tests/replay.py`) refuses a command
+  that breaks this, so a bad shape fails in CI rather than at the venue.
 - Every `os.environ[...]` / `os.environ.get(...)` key must be a declared `params` name.
 - Must `py_compile` and parse as valid Python 3.11 AST.
 

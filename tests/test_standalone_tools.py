@@ -124,7 +124,7 @@ def test_validate_and_replay_from_the_published_layout(tmp_path, copytrade_check
     )
     assert r.returncode == 0, r.stdout + r.stderr
     assert "# standalone replay of butler-copytrade from" in r.stdout
-    assert len([a for a in _actions(r.stdout) if a["call"] == "buy"]) == 3
+    assert len([a for a in _actions(r.stdout) if a["call"] == "trade"]) == 3
 
 
 def test_standalone_validate_uses_the_embedded_reserved_list(tmp_path):
@@ -164,7 +164,7 @@ def test_replay_downloads_stub_and_fixture_when_missing(tmp_path, copytrade_chec
     assert (dev / "fixtures" / "trade-activity-page.jsonl").exists()
     assert "# downloaded stub_bevo.py from" in r.stdout
     assert "# downloaded trade-activity-page.jsonl from" in r.stdout
-    assert len([a for a in _actions(r.stdout) if a["call"] == "buy"]) == 3
+    assert len([a for a in _actions(r.stdout) if a["call"] == "trade"]) == 3
 
     # second run: everything is beside replay.py now, nothing is fetched
     r2 = _run(
@@ -233,6 +233,10 @@ def test_composite_action_exists_with_the_documented_inputs():
     assert "scripts/validate.py" in text and "tests/replay.py" in text
     assert "viem@2" in text
     assert "no duty.py" in text  # replay is skipped, not failed, for one-off-only skills
+    # The default replays BOTH fixtures: trade-activity-page is buys only, so on its own
+    # it never reaches a duty's sell / perp-close / stock-sell legs.
+    assert "trade-activity-mixed" in text
+    assert "for FIXTURE in $FIXTURES; do" in text
 
 
 def test_publish_workflow_publishes_the_tools():
