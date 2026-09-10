@@ -1,14 +1,21 @@
 """stub_bevo.py — the offline `bevo` module.
 
 A port of bevo-docker's `api/bevo_services/sdk_rehearsal.py` recording
-semantics: `events()`/`trades()` replay a fixture JSONL file, the money verbs
-(`trade`/`execute`/`buy`/`sell`/`long`/`short`/`close`/`stock_buy`/
-`stock_sell`) record their call (including the idempotency key) into a list
-instead of acting, `read()`/`rpc()` answer from fixture JSON files, `balance()`
-and `is_stock()` answer from fixture/env-driven data, and `log()` just prints.
-`replay.py` puts this module on `sys.path` as `bevo` so a skill's real,
-unmodified `duty.py` can `import bevo` and run against captured data with no
-network and no container.
+semantics: `events()`/`trades()` replay a fixture JSONL file, the money rails
+(`trade`/`execute`) record their call (including the idempotency key) into a
+list instead of acting, `read()`/`rpc()`/`holdings()` answer from fixture JSON
+files, `balance()` and `is_stock()` answer from fixture/env-driven data,
+`state` is a dict on disk in the replay's state directory, and `log()` just
+prints. `replay.py` puts this module on `sys.path` as `bevo` so a skill's
+real, unmodified `duty.py` can `import bevo` and run against captured data
+with no network and no container.
+
+`bevo.trade(command="acp trade …", idempotency_key=…)` is the ONE money rail;
+the old per-verb shortcuts (`buy`/`sell`/`long`/`short`/`close`/`stock_buy`/
+`stock_sell`) were each a one-line rewrite of an `acp trade` CLI string that
+hid the grammar and drifted from it, and were deleted from the real SDK — this
+stub no longer offers them either, so a skill that still calls one fails the
+same way here as it would in a real container.
 
 Fixtures live in `fixtures/` next to this file (BEVO_STUB_FIXTURES_DIR
 overrides). When BEVO_STUB_FIXTURES_URL is set (replay.py sets it to the hub's
@@ -16,12 +23,21 @@ published fixtures directory) a fixture that is missing locally is downloaded
 from `<url>/<name>` on first use — the only network this stub ever touches,
 and only for files that are not already on disk.
 
-The money verbs are idempotent per `idempotency_key`, the way the real
-container is: a key already used in this state dir (a `bevo_stub_ledger.json`
-file written next to `duty.py`'s own `state.json`, i.e. in the replay's
-working directory) answers "already executed" without a new entry in
-RECORDED_ACTIONS — mirroring the real server's dedup, since a replayed skill
-carries no seen-set of its own any more.
+`trade()`/`execute()` record every call unconditionally — this stub does no
+idempotency-key dedup of its own. `replay.py` checks the recorded list
+afterwards and fails the replay if a key is missing or reused, but it builds
+its `seen_keys` map fresh in every process (`replay.py`'s `main()`), so that
+check catches key reuse WITHIN ONE RUN only. Re-running the same fixture
+re-emits the same keys and records the same actions again, and that is
+correct: cross-run safety is the real container's SERVER-SIDE per-key dedup at
+`POST /butler-exec/trade`, which answers "already filed" instead of trading
+twice. This stub deliberately does not model that — a duty must be safe
+because its keys are derived from the event, not because something remembered
+them.
+
+`trade(command=…)` is grammar-checked here (`_check_trade_command`) the way
+bevo-docker's duty shim refuses a malformed command, so a shape the real rails
+would reject fails in the replay instead of at the venue.
 
 Python 3.11 stdlib only.
 """
@@ -37,18 +53,11 @@ FIXTURE_NAME = os.environ.get("BEVO_STUB_FIXTURE", "trade-activity-page")
 FIXTURES_URL = os.environ.get("BEVO_STUB_FIXTURES_URL", "").rstrip("/")
 
 SERVICE_ID = os.environ.get("BEVO_STUB_SERVICE_ID", "stub-service-id")
-# The venue a stubbed stock sell names. The real one reads it off the holding;
-# either way it must stay a NAME (eth|sol) and never a chain id — bevo-server
-# treats a numeric --chain on the stock shape as a mis-shaped token trade and
-# reroutes it to a spot swap.
-STOCK_VENUE = os.environ.get("BEVO_STUB_STOCK_VENUE", "eth")
 SESSION_ID = os.environ.get("BEVO_STUB_SESSION_ID", "stub-session-id")
 
 DEFAULT_STOCK_SYMBOLS = {"AAPL", "TSLA", "NVDA", "MSFT", "GOOGL", "AMZN", "META", "SPY", "QQQ"}
 
 RECORDED_ACTIONS: list[dict] = []
-
-LEDGER_FILE = "bevo_stub_ledger.json"
 
 
 class BevoError(Exception):
@@ -96,7 +105,10 @@ def events():
 
 
 class Asset:
-    """A token on a chain, the way the trade feed and the money verbs name it."""
+    """A token on a chain, the way the trade feed names it and the way a
+    `bevo.trade(command=…)` string has to spell it: `.ref` goes after
+    `--token-in` / `--token-out`, `.chain_id` after `--chain-in` /
+    `--chain-out`."""
 
     def __init__(self, symbol=None, address=None, chain_id=None):
         self.symbol = symbol.upper() if symbol else None
@@ -109,8 +121,10 @@ class Asset:
 
     @property
     def ref(self):
-        """What a money verb should trade: the address when there is one,
-        else the symbol."""
+        """What the command's token flag carries: the address when there is
+        one, else the symbol. A leg with no address is a bare ticker — a
+        tokenized stock (its own grammar) or an unresolved symbol, never a
+        `--token-out` on the swap rail."""
         return self.address or self.symbol
 
     def __str__(self):
@@ -307,68 +321,93 @@ def notify(text: str) -> dict:
     return {"status": "accepted"}
 
 
-# --- idempotency ledger + money-verb recording --------------------------------------------
+# --- money rail: trade() / execute() -------------------------------------------------------
+
+# Amount flags whose value must be a positive number. A quantity of 0 (or a
+# negative one, or one that formatted to garbage) is the failure mode the
+# removed money verbs used to absorb: the server answers a parse error rather
+# than a reason, so refuse it here where the message can say which flag.
+_AMOUNT_FLAGS = ("--amount-in", "--amount-usdc", "--amount-shares", "--size")
 
 
-def _ledger_load() -> dict:
-    p = Path(LEDGER_FILE)
-    if p.exists():
+def _flag_value(tokens, flag):
+    """The token after `flag`, or None. Exact-token match: `--chain` must never
+    be satisfied by `--chain-in` / `--chain-out`, which are a different rail."""
+    for i, token in enumerate(tokens):
+        if token == flag:
+            return tokens[i + 1] if i + 1 < len(tokens) else None
+    return None
+
+
+def _check_trade_command(command, message):
+    """Refuse a `bevo.trade()` call the real rails would refuse.
+
+    A minimal mirror of bevo-docker's duty shim (`api/scripts/bevo-duty-shim.py`,
+    the retired-rail refusals): the command string is now the only place the
+    grammar lives, so a stub that accepted any string would let a duty pass its
+    replay and fail at the venue. Raises BevoError naming the flag at fault.
+    """
+    if message is not None:
+        raise BevoError(
+            "bevo.trade(message=…) is free text, not a trade — the money rail takes a "
+            'command: bevo.trade(command="acp trade …", idempotency_key=…)'
+        )
+    if command is None:
+        return
+    if not isinstance(command, str) or not command.strip():
+        raise BevoError(f"bevo.trade(command=…) must be a non-empty `acp trade` string, got {command!r}")
+
+    text = command.strip()
+    if not text.startswith("acp trade"):
+        raise BevoError(
+            f"bevo.trade(command={text!r}) must start with `acp trade` — "
+            "`acp wallet send-transaction` calldata goes through bevo.execute(to, data, …)"
+        )
+
+    tokens = text.split()
+    flags = set(tokens)
+
+    if "--amount-in" in flags and "--amount-usdc" in flags:
+        raise BevoError(
+            f"bevo.trade(command={text!r}): --amount-in (a swap's input QUANTITY) and "
+            "--amount-usdc (a perp/stock's USD size) are different grammars — send one"
+        )
+    if "--side" in flags and "--token-in" in flags:
+        raise BevoError(
+            f"bevo.trade(command={text!r}): a --side order is a perp — it takes --token <SYM>, "
+            "never the swap grammar's --token-in/--token-out"
+        )
+    if "--token" in flags and "--amount-shares" in flags:
+        venue = _flag_value(tokens, "--chain")
+        if venue is None:
+            raise BevoError(
+                f"bevo.trade(command={text!r}): a stock sell must name its venue with "
+                "--chain <eth|sol>, from the holding's own spot.stocks[] row"
+            )
+        if venue.isdigit():
+            raise BevoError(
+                f"bevo.trade(command={text!r}): --chain {venue} is a chain id — a stock sell takes "
+                "the VENUE NAME (eth|sol); a numeric one is rerouted onto a bare-symbol spot swap, "
+                "which is a different asset"
+            )
+
+    for flag in _AMOUNT_FLAGS:
+        if flag not in flags:
+            continue
+        raw = _flag_value(tokens, flag)
         try:
-            return json.loads(p.read_text())
-        except (json.JSONDecodeError, OSError):
-            return {}
-    return {}
-
-
-def _ledger_save(data: dict) -> None:
-    try:
-        Path(LEDGER_FILE).write_text(json.dumps(data))
-    except OSError:
-        pass
-
-
-class ActionResult:
-    """What a money verb hands back: `.summary` for logging, `.ok`, and
-    `.asked` (the usd/pct the caller asked for, echoed back)."""
-
-    def __init__(self, call, summary, asked=None, ok=True, already_executed=False, **extra):
-        self.call = call
-        self.summary = summary
-        self.asked = asked
-        self.ok = ok
-        self.already_executed = already_executed
-        for k, v in extra.items():
-            setattr(self, k, v)
-
-    def __str__(self):
-        return self.summary
-
-
-def _record_money_action(call: str, command: str, idempotency_key, summary: str, asked=None, **extra) -> ActionResult:
-    """Append {call, command, key, ...} to RECORDED_ACTIONS unless
-    idempotency_key was already used in this state dir — mirroring the real
-    container's per-key dedup, since a replayed duty carries no seen-set of
-    its own any more."""
-    already = False
-    if idempotency_key:
-        ledger = _ledger_load()
-        if idempotency_key in ledger:
-            already = True
-        else:
-            ledger[idempotency_key] = call
-            _ledger_save(ledger)
-    if not already:
-        RECORDED_ACTIONS.append({"call": call, "command": command, "key": idempotency_key, **extra})
-    return ActionResult(call, summary, asked=asked, already_executed=already, **extra)
-
-
-def _ref_and_chain(token) -> tuple[str, int | None]:
-    if isinstance(token, Asset):
-        return token.ref, token.chain_id
-    return str(token), None
+            amount = float(raw)
+        except (TypeError, ValueError):
+            raise BevoError(f"bevo.trade(command={text!r}): {flag} needs a number, got {raw!r}") from None
+        if amount <= 0:
+            raise BevoError(
+                f"bevo.trade(command={text!r}): {flag} is {raw} — refuse a quantity of 0 or less "
+                "rather than sending it"
+            )
 
 
 def trade(command=None, params=None, message=None, idempotency_key=None, max_attempts=3) -> dict:
+    _check_trade_command(command, message)
     action = {
         "call": "trade",
         "command": command,
@@ -393,99 +432,175 @@ def execute(to, data="0x", value=None, chain_id=8453, idempotency_key=None, max_
     return {"status": "accepted", "idempotencyKey": idempotency_key, "approvalId": len(RECORDED_ACTIONS)}
 
 
-def buy(token, usd=None, idempotency_key=None, chain=None) -> ActionResult:
-    ref, asset_chain = _ref_and_chain(token)
-    chain_id = chain if chain is not None else asset_chain
-    command = f"acp trade --token-in usdc --amount-in {usd} --token-out {ref}"
-    if chain_id is not None:
-        command += f" --chain-out {chain_id}"
-    summary = f"bought {usd} USD of {ref}" if usd is not None else f"bought {ref}"
-    return _record_money_action("buy", command, idempotency_key, summary, asked=usd, token=ref, chainId=chain_id)
-
-
-def sell(token, usd=None, pct=None, all=False, idempotency_key=None, chain=None) -> ActionResult:
-    ref, asset_chain = _ref_and_chain(token)
-    chain_id = chain if chain is not None else asset_chain
-    if all:
-        amount = "--pct 100"
-        asked = "all"
-    elif pct is not None:
-        amount = f"--pct {pct}"
-        asked = pct
-    else:
-        amount = f"--amount-in {usd}"
-        asked = usd
-    command = f"acp trade --token-in {ref} {amount} --token-out usdc"
-    if chain_id is not None:
-        command += f" --chain-in {chain_id}"
-    summary = f"sold {'all of ' if all else ''}{ref}"
-    return _record_money_action("sell", command, idempotency_key, summary, asked=asked, token=ref, chainId=chain_id)
-
-
-# Every money verb below records the REAL `acp trade` grammar. There is no
-# `acp perptrade` and no `acp stocktrade` — those were invented here, and a
-# replay is the first thing a skill author reads, so a fake grammar in this
-# file teaches a command the product does not have. Quantities the real SDK
-# derives from a live read (a close's side and size, a stock sell's share
-# count and venue) are not knowable here; the stub emits the real FLAGS with
-# placeholder values and says so, rather than inventing different flags.
-
-
-def long(token, usd=None, leverage=1, idempotency_key=None) -> ActionResult:
-    ref, asset_chain = _ref_and_chain(token)
-    command = f"acp trade --side long --token {ref} --amount-usdc {usd} --leverage {leverage}"
-    # --amount-usdc is the POSITION size (notional), never the margin.
-    summary = f"opened a {leverage}x long on {ref}, {usd} USD notional"
-    return _record_money_action("long", command, idempotency_key, summary, asked=usd, token=ref, leverage=leverage)
-
-
-def short(token, usd=None, leverage=1, idempotency_key=None) -> ActionResult:
-    ref, asset_chain = _ref_and_chain(token)
-    command = f"acp trade --side short --token {ref} --amount-usdc {usd} --leverage {leverage}"
-    summary = f"opened a {leverage}x short on {ref}, {usd} USD notional"
-    return _record_money_action("short", command, idempotency_key, summary, asked=usd, token=ref, leverage=leverage)
-
-
-def close(token, idempotency_key=None) -> ActionResult:
-    """The real close reads the open position and places the OPPOSITE side at
-    its size; with no position to read, the stub records the reduce-only shape
-    without a side or size."""
-    ref, asset_chain = _ref_and_chain(token)
-    command = f"acp trade --token {ref} --reduce-only"
-    summary = f"closed {ref}"
-    return _record_money_action("close", command, idempotency_key, summary, asked=None, token=ref)
-
-
-def stock_buy(ticker, usd=None, idempotency_key=None) -> ActionResult:
-    # A stock takes --token with NO --side; that is what separates it from a perp
-    # on the same ticker.
-    command = f"acp trade --token {ticker} --amount-usdc {usd}"
-    summary = f"bought {usd} USD of {ticker}"
-    return _record_money_action("stock_buy", command, idempotency_key, summary, asked=usd, token=ticker)
-
-
-def stock_sell(ticker, usd=None, pct=None, all=False, idempotency_key=None) -> ActionResult:
-    """A stock sell is SHARE-denominated and carries the venue NAME, never a
-    chain id — bevo-server reroutes a numeric --chain off the stock rail onto a
-    spot swap. The real share count comes from the holding; the stub has none,
-    so `<shares>` stands in for it."""
-    asked = "all" if all else (pct if pct is not None else usd)
-    command = f"acp trade --token {ticker} --amount-shares <shares> --chain {STOCK_VENUE}"
-    summary = f"sold {'all of ' if all else ''}{ticker}"
-    return _record_money_action("stock_sell", command, idempotency_key, summary, asked=asked, token=ticker)
-
-
 def read(path: str, params: dict | None = None):
     """Answer a bevo.read(...) call from fixtures/<slug>.json.
 
-    The fixture file name is derived from the last non-empty path segment,
-    e.g. "/me" -> me.json, "/user-assets" -> user-assets.json.
+    The fixture file name is derived from the last non-empty path segment with
+    any query string dropped, e.g. "/me" -> me.json, "/user-assets" and
+    "/user-assets?fresh=1" both -> user-assets.json. `fresh=1` is load-bearing
+    on the live rails — without it bevo-server's stale-while-revalidate cache
+    can serve a PRE-trade balance for up to ten minutes — but it selects no
+    different fixture here, so a duty that reads it either way gets an answer.
+
+    `params` narrows nothing: fixtures are per-path, not per-parameter, so a
+    duty must match the row it wants inside the answer (on address, ticker or
+    coin) exactly as it would against the live endpoint.
     """
-    slug = path.strip("/").split("/")[-1] or "index"
+    slug = path.strip("/").split("/")[-1].split("?")[0] or "index"
     fp = _fixture_path(f"{slug}.json")
     if not fp.exists():
         raise BevoError(f"no fixture for read({path!r}) — expected {fp}")
     return json.loads(fp.read_text())
+
+
+# The wallet read the live SDK sizes money off (bevo-docker sdk.py `_ASSETS_PATH`).
+_ASSETS_PATH = "/user-assets?fresh=1"
+
+
+class Holding:
+    """One spot holding, the way bevo.holdings() hands it over — the live SDK's
+    Holding (bevo-docker `sdk_types.py`) over a `spot.tokens[]` row.
+
+    A tokenized stock is NOT here: it has its own `spot.stocks[]` array, whose
+    `shares` disagrees with this raw on-chain `amount` on a share-multiplier
+    venue. Size a stock off that array, through bevo.read("/user-assets")."""
+
+    def __init__(self, row: dict):
+        symbol = row.get("symbol")
+        self.symbol = str(symbol).upper() if symbol else None
+        self.amount = _to_float(row.get("balance"))
+        self.usd = _to_float(row.get("usdValueUsd"))
+        self.price_usd = _to_float(row.get("usdPrice"))
+        address = row.get("tokenAddress")
+        address = str(address) if address else None
+        self.address = address.lower() if address and address.startswith("0x") else address
+        chain_id = row.get("chainId")
+        self.chain_id = int(chain_id) if chain_id not in (None, "") else None
+        network = row.get("network")
+        self.chain = str(network).lower() if network else None
+
+    def __repr__(self):
+        return f"Holding(symbol={self.symbol}, amount={self.amount}, chain_id={self.chain_id})"
+
+
+def _to_float(raw):
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def holdings() -> list[Holding]:
+    """The owner's spot holdings, from the same fixtures/user-assets.json that
+    answers bevo.read("/user-assets"). Empty when there is no fixture — the
+    live SDK returns [] when the wallet could not be read, and a duty must tell
+    that from holding nothing with bevo.balance().available, never by assuming
+    a zero."""
+    try:
+        body = read(_ASSETS_PATH)
+    except BevoError:
+        return []
+    spot = body.get("spot") if isinstance(body, dict) else None
+    rows = spot.get("tokens") if isinstance(spot, dict) else None
+    return [Holding(r) for r in rows or [] if isinstance(r, dict)]
+
+
+class _State(dict):
+    """`bevo.state` — the live SDK's dict-on-disk, saved on every write.
+
+    The file is `state.json` in the process's working directory (BEVO_STATE_PATH
+    overrides), which is the replay's `--state-dir`: replay.py chdir's there
+    before running duty.py, so the path is resolved LAZILY on first touch, not
+    at import time when the cwd is still the caller's."""
+
+    def __init__(self):
+        super().__init__()
+        self._loaded = False
+
+    def _path(self) -> str:
+        return os.environ.get("BEVO_STATE_PATH") or os.path.join(os.getcwd(), "state.json")
+
+    def _load(self):
+        if self._loaded:
+            return
+        self._loaded = True
+        try:
+            with open(self._path(), encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            return
+        if isinstance(data, dict):
+            dict.update(self, data)
+
+    def _save(self):
+        try:
+            with open(self._path(), "w", encoding="utf-8") as f:
+                json.dump(dict(self), f)
+        except OSError as exc:
+            log(f"[stub_bevo] state not saved: {exc}")
+
+    def __getitem__(self, key):
+        self._load()
+        return dict.__getitem__(self, key)
+
+    def __contains__(self, key):
+        self._load()
+        return dict.__contains__(self, key)
+
+    def __iter__(self):
+        self._load()
+        return dict.__iter__(self)
+
+    def __len__(self):
+        self._load()
+        return dict.__len__(self)
+
+    def get(self, key, default=None):
+        self._load()
+        return dict.get(self, key, default)
+
+    def keys(self):
+        self._load()
+        return dict.keys(self)
+
+    def values(self):
+        self._load()
+        return dict.values(self)
+
+    def items(self):
+        self._load()
+        return dict.items(self)
+
+    def __setitem__(self, key, value):
+        self._load()
+        dict.__setitem__(self, key, value)
+        self._save()
+
+    def __delitem__(self, key):
+        self._load()
+        dict.__delitem__(self, key)
+        self._save()
+
+    def setdefault(self, key, default=None):
+        self._load()
+        if key not in self:
+            self[key] = default
+            return default
+        return dict.__getitem__(self, key)
+
+    def pop(self, key, *args):
+        self._load()
+        value = dict.pop(self, key, *args)
+        self._save()
+        return value
+
+    def update(self, *args, **kwargs):
+        self._load()
+        dict.update(self, *args, **kwargs)
+        self._save()
+
+
+state = _State()
 
 
 def rpc(chain_id, method, params=None):
