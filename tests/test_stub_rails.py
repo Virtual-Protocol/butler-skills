@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -96,10 +97,10 @@ def test_exec_status_finds_a_recorded_key():
 # --- prompt() / decide() ------------------------------------------------------------------
 
 
-def test_prompt_always_raises_rehearsal_style():
+def test_prompt_always_raises_unavailable():
     with pytest.raises(stub_bevo.BevoError) as exc:
         stub_bevo.prompt("bullish or bearish?")
-    assert exc.value.code == "rehearsal"
+    assert exc.value.code == "unavailable"
 
 
 def test_decide_raises_through_prompt():
@@ -110,6 +111,14 @@ def test_decide_raises_through_prompt():
 def test_decide_validates_option_count():
     with pytest.raises(ValueError):
         stub_bevo.decide("pick one", ["only-one"])
+
+
+def test_log_appends_a_timestamped_line_to_duty_log(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    stub_bevo.log("x")
+    lines = (tmp_path / "duty.log").read_text().splitlines()
+    assert len(lines) == 1
+    assert re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z x$", lines[0])
 
 
 # --- escalate() shim -----------------------------------------------------------------------
