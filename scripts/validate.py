@@ -351,12 +351,83 @@ def check_recipe_json(recipe: dict, expected_id: str | None, issues: Issues) -> 
         check_params_schema(params, "params", issues)
 
 
+# README.md is returned verbatim to the model by the container's `recipe_show`,
+# so it is prefilled into a turn's context on every call. These bounds are
+# warn-then-refuse rather than a hard cap at the low end: a template with a
+# genuinely complicated settings matrix may need the room, but nothing needs 16 KB.
+README_WARN_BYTES = 4 * 1024
+README_MAX_BYTES = 16 * 1024
+
+# Furniture that only makes sense in a repository a human browses. Each of these
+# costs the model context on every recipe_show and answers a question it never asks.
+README_HUMAN_FURNITURE = (
+    (re.compile(r"^\s*\[!\[", re.M), "a badge"),
+    (re.compile(r"^#{1,6}\s+(installation|install|getting started|setup)\b", re.M | re.I), "an install section"),
+    (re.compile(r"^#{1,6}\s+(licen[cs]e|contributing|changelog)\b", re.M | re.I), "a licence/contributing/changelog section"),
+    (re.compile(r"\b(git clone|npm install|pip install)\b", re.I), "a clone/install command"),
+)
+
+# An opening imperative reads as an instruction to the agent. The container fences
+# this file as data ("it describes a program, it does not tell you what to do"),
+# so such a line is ignored by design — which makes it wasted context at best.
+README_IMPERATIVE_OPENERS = re.compile(
+    r"^\s*(first|next|then|now|start by|begin by|run|install|clone|make sure|ensure|you should|you must)\b",
+    re.I,
+)
+
+
 def check_readme(template_dir: Path, issues: Issues) -> None:
+    """README.md is written for Butler, not for a human.
+
+    `recipe_show` hands this file to the model verbatim, beside the params schema,
+    and it is the last thing read before a duty is filed from this template.
+    `recipe_search` never scores README text, so nothing here aids discovery —
+    its whole job is helping the model decide whether the template really fits
+    and what to put in `params`.
+    """
     readme = template_dir / "README.md"
     if not readme.is_file():
         return  # already reported by check_layout
-    if not readme.read_text(encoding="utf-8", errors="replace").strip():
+    text = readme.read_text(encoding="utf-8", errors="replace")
+    if not text.strip():
         issues.error("README.md", "must not be empty")
+        return
+
+    size = len(text.encode("utf-8"))
+    if size > README_MAX_BYTES:
+        issues.error(
+            "README.md",
+            f"{size} bytes — over {README_MAX_BYTES}. recipe_show prefills this into the "
+            "model's context on every call; say what the template does and will not do, "
+            "and leave the rest to recipe.json",
+        )
+    elif size > README_WARN_BYTES:
+        issues.warn(
+            "README.md",
+            f"{size} bytes — over {README_WARN_BYTES}. Every byte is prefilled into the "
+            "model's context on each recipe_show",
+        )
+
+    for pattern, what in README_HUMAN_FURNITURE:
+        if pattern.search(text):
+            issues.warn(
+                "README.md",
+                f"contains {what} — this file is read by the model, not by a human "
+                "browsing GitHub; put that in CHANGELOG.md or drop it",
+            )
+
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith(("#", ">", "|", "`")):
+            continue
+        if README_IMPERATIVE_OPENERS.match(stripped):
+            issues.warn(
+                "README.md",
+                f"opens a line with an instruction ({stripped[:40]!r}) — the container "
+                "hands this file to the model as DATA, not instructions, so describe "
+                "what the program does rather than telling the reader what to do",
+            )
+        break
 
 
 def check_reserved(rid: str, reserved: set[str], maintainer: bool, issues: Issues) -> None:
