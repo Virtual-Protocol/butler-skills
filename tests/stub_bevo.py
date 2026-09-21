@@ -7,11 +7,11 @@ the typed waiters (`events`/`trades`/`messages`/`transfers`/`ticks`/`polls`/
 `positions()` are read()'s own answer reshaped, `state` is a dict on disk in
 the replay's state directory, `allow()` is the same UTC-bucket rate limiter,
 `log()`/`notify()` record instead of reaching anyone, and `prompt()`/
-`decide()` always raise `BevoError(code="rehearsal")` — exactly what the real
-SDK does in `BEVO_MODE=rehearsal`, because a replay must never call a real
-model. `replay.py` puts this module on `sys.path` as `bevo` so a template's
-real, unmodified `duty.py` can `import bevo` and run against captured data
-with no network and no container.
+`decide()` always raise `BevoError(code="unavailable")` — exactly what the
+real SDK does in a container with no model wired, because a replay must never
+call a real model. `replay.py` puts this module on `sys.path` as `bevo` so a
+template's real, unmodified `duty.py` can `import bevo` and run against
+captured data with no network and no container.
 
 **There is no money verb.** Since 2026-09-21 a duty spends by shelling
 `acp trade`/`acp wallet send-transaction`/`acp card issue` directly — see
@@ -787,7 +787,7 @@ def typed(event):
 
 def batches(seconds=3.0, max_events=100):
     """No timing to observe when replaying a file all at once: each event is
-    its own batch, exactly like the real SDK's rehearsal mode."""
+    its own batch, because a replay has no timing to batch by."""
     for event in _events_raw():
         yield [event]
 
@@ -796,7 +796,20 @@ def batches(seconds=3.0, max_events=100):
 
 
 def log(message) -> None:
+    """Mirrors the live supervisor: every line goes to `duty.log` in the
+    duty's working directory, timestamped `<ISO-8601 UTC, ms, Z> <line>\\n`
+    (see `virtuals-agent`'s `src/integrations/automation/supervisor.ts`
+    `appendLog`, rotated to `duty.log.1` past 1 MB — not reproduced here). A
+    duty may read its own `duty.log` (the `dca` template counts its daily cap
+    from it), so the stub writes one too. `replay.py` chdir's to the state
+    directory before running `duty.py`, so `os.getcwd()` is the right place."""
     print(f"[stub_bevo.log] {message}")
+    ts = _iso_ms(datetime.now(timezone.utc))
+    try:
+        with open(os.path.join(os.getcwd(), "duty.log"), "a", encoding="utf-8") as f:
+            f.write(f"{ts} {message}\n")
+    except OSError:
+        pass
 
 
 class _State(dict):
@@ -950,13 +963,13 @@ def escalate(reason, events=None) -> dict:
 
 
 def prompt(text, *, system=None, schema=None, max_tokens=None):
-    """A replay never calls a real model — exactly like BEVO_MODE=rehearsal,
-    this always raises, so unguarded code fails here rather than in
-    production."""
+    """A replay never calls a real model — it always raises the same way a
+    live container with no model channel wired does, so unguarded code fails
+    here rather than in production."""
     raise BevoError(
         "replay never calls the model; live, this raises the same way when "
         "rate-limited or timed out — catch BevoError",
-        code="rehearsal",
+        code="unavailable",
     )
 
 
