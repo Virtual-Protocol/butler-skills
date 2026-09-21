@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""check_registry.py — skills.json is the registry; check it.
+"""check_registry.py — templates.json is the registry; check it.
 
-The registry is a directory: one name and one GitHub link per skill. Nothing
-about a skill's content lives here, so this checks the LISTING and the trust
-boundary around it, not a pinned tree:
+The registry is a directory: one id and one GitHub link per duty template.
+Nothing about a template's content lives here, so this checks the LISTING
+and the trust boundary around it, not a pinned tree:
 
-  (a) every entry has a valid skill name, unique across the file
+  (a) every entry has a valid template id, unique across the file
   (b) `repo` is an `https://github.com/<owner>/<repo>` URL — no other host, no
       credentials, no query or fragment
   (c) `ref` is a plain branch or tag name
@@ -13,8 +13,11 @@ boundary around it, not a pinned tree:
       fails here rather than at publish time
 
 What a container ends up trusting is the RESOLVED commit and per-file sha256
-that build_index.py writes into the index, not this file — the link is how the
-registry follows a skill, never what a butler executes.
+that build_index.py writes into the index, not this file — the link is how
+the registry follows a template, never what a butler executes. That a
+template's `name` here equals its own recipe.json `id` is checked by
+scripts/validate.py --all, which clones each entry into a directory named
+after this file and compares.
 
 Skipped with --offline (no network), which still runs (a) through (c).
 """
@@ -29,7 +32,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-REGISTRY_PATH = REPO_ROOT / "skills.json"
+REGISTRY_PATH = REPO_ROOT / "templates.json"
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,63}$")
 REF_RE = re.compile(r"^[A-Za-z0-9._/-]{1,100}$")
 REPO_RE = re.compile(r"^https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
@@ -51,15 +54,15 @@ def ref_exists(repo: str, ref: str) -> bool:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Check skills.json")
+    ap = argparse.ArgumentParser(description="Check templates.json")
     ap.add_argument("--offline", action="store_true", help="skip the remote ref check")
     args = ap.parse_args()
 
     with open(REGISTRY_PATH, encoding="utf-8") as f:
         data = json.load(f)
-    rows = data.get("skills")
+    rows = data.get("templates")
     if not isinstance(rows, list) or not rows:
-        fail("skills.json has no `skills` list")
+        fail("templates.json has no `templates` list")
         return 1
 
     problems = 0
@@ -67,7 +70,7 @@ def main() -> int:
     for row in rows:
         name, repo, ref = row.get("name"), row.get("repo"), row.get("ref") or "main"
         if not NAME_RE.match(str(name or "")):
-            fail(f"{name!r} is not a valid skill name"); problems += 1; continue
+            fail(f"{name!r} is not a valid template id"); problems += 1; continue
         if name in seen:
             fail(f"{name}: listed twice"); problems += 1; continue
         seen.add(name)
@@ -81,7 +84,7 @@ def main() -> int:
         print(f"OK    {name} = {repo} @ {ref}")
 
     if sorted(seen) != [r.get("name") for r in rows]:
-        fail("skills.json is not sorted by name"); problems += 1
+        fail("templates.json is not sorted by name"); problems += 1
     return 1 if problems else 0
 
 

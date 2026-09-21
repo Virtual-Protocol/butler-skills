@@ -1,0 +1,7 @@
+{
+  "id": "no-waiter",
+  "version": 1,
+  "description": "Fixture that declares a timer trigger but whose duty.py never calls a waiter — must fail validation.",
+  "triggers": ["timer"],
+  "params": { "type": "object", "properties": {} }
+}

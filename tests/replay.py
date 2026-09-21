@@ -3,7 +3,7 @@
 
 Usage:
     replay.py --standalone <dir> --fixture <name> [--env K=V ...] [--state-dir <dir>] [--fixtures-dir <dir>]
-    tests/replay.py skills/<name> --fixture <name> [...]        # registry mode
+    tests/replay.py templates/<name> --fixture <name> [...]     # registry mode
 
 `--standalone` is the skill-repo form. This file is self-contained: it looks for
 `stub_bevo.py` and `fixtures/` next to itself — `tests/` in a registry checkout,
@@ -18,14 +18,16 @@ https://virtual-protocol.github.io/butler-skills/tools; `file:///...` works for
 offline mirrors); --no-download forbids any fetch.
 
 Puts stub_bevo.py on sys.path as the `bevo` module (recording semantics:
-trade/execute/notify record their call instead of acting; read/rpc answer from
-fixtures/*.json), runs duty.py's __main__ block in a working directory
-(state_dir, default a fresh temp dir) so its state.json lands there, and prints
-the recorded actions as JSON. A skill without a duty.py prints "nothing to
-replay" and exits 0.
+`notify()` records instead of sending; `read()`/`rpc()` answer from
+fixtures/*.json; a shelled `acp trade`/`acp wallet send-transaction`/
+`acp card issue` is intercepted by stub_bevo's subprocess monkeypatch and
+recorded instead of spawned for real), runs duty.py's __main__ block in a
+working directory (state_dir, default a fresh temp dir) so its state.json
+lands there, and prints the recorded actions as JSON. A template without a
+duty.py prints "nothing to replay" and exits 0.
 
-Exits 1 if any recorded trade/execute action lacks an idempotency key, or
-if two actions share the same key.
+Exits 1 if any recorded `acp` money action lacks an idempotency key, or if
+two actions share the same key.
 
 Python 3.11 stdlib only.
 """
@@ -114,25 +116,23 @@ def load_stub_bevo(stub_path: Path, fixture: str, fixtures_dir: Path, allow_down
 
 
 def skill_name_of(skill_dir: Path) -> str | None:
-    """Frontmatter `name:` of skill_dir/SKILL.md, or None — informational only."""
-    skill_md = skill_dir / "SKILL.md"
-    if not skill_md.exists():
+    """recipe.json's `id`, or None — informational only."""
+    recipe = skill_dir / "recipe.json"
+    if not recipe.exists():
         return None
-    for line in skill_md.read_text().splitlines()[1:]:
-        if line.strip() == "---":
-            break
-        if line.startswith("name:"):
-            return line.split(":", 1)[1].strip()
-    return None
+    try:
+        return json.loads(recipe.read_text()).get("id")
+    except (OSError, ValueError):
+        return None
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Replay a skill's duty.py offline against a fixture.")
-    parser.add_argument("skill", help="skills/<name> path, or with --standalone any directory that holds a duty.py")
+    parser.add_argument("skill", help="templates/<name> path, or with --standalone any directory that holds a duty.py")
     parser.add_argument(
         "--standalone",
         action="store_true",
-        help="the path is a skill repository checkout (name from SKILL.md's frontmatter, not the directory)",
+        help="the path is a template repository checkout (id from recipe.json, not the directory)",
     )
     parser.add_argument("--fixture", required=True, help="fixture basename under fixtures/, e.g. trade-activity-page")
     parser.add_argument("--fixtures-dir", default=str(HERE / "fixtures"), help="default: fixtures/ next to this file")
@@ -177,10 +177,10 @@ def main() -> int:
     ok = True
     seen_keys: dict[str, str] = {}
     for action in actions:
-        if action.get("call") in ("trade", "execute"):
+        if action.get("call") == "acp":
             key = action.get("key")
             if not key:
-                print(f"ERROR: {action['call']} action missing an idempotency key: {action}")
+                print(f"ERROR: acp action missing an idempotency key: {action}")
                 ok = False
                 continue
             if key in seen_keys:

@@ -1,26 +1,26 @@
-name: Validate a Butler skill
+name: Validate a Butler duty template
 description: >-
   Checks out the calling repository, fetches the Butler Skill Hub's validator and offline
   replay harness (Virtual-Protocol/butler-skills at main) into the runner's temp directory
-  — never inside the skill tree — and runs `validate.py` and, when the skill has a duty.py,
-  `replay.py` on it. A skill repo's whole CI is one step:
+  — never inside the template tree — and runs `validate.py` and, when the template has a
+  duty.py, `replay.py` on it. A template repo's whole CI is one step:
   `uses: Virtual-Protocol/butler-skills/.github/actions/validate@main`.
 
 inputs:
   path:
-    description: Directory of the skill inside the calling repository (where SKILL.md lives).
+    description: Directory of the template inside the calling repository (where recipe.json lives).
     required: false
     default: "."
   standalone:
     description: >-
-      "true" (default) validates a skill repository — the name comes from the frontmatter.
-      "false" is registry mode: the path is skills/<name> inside a butler-skills checkout.
+      "true" (default) validates a template repository — the id comes from recipe.json.
+      "false" is registry mode: the path is templates/<name> inside a butler-skills checkout.
     required: false
     default: "true"
   maintainer:
     description: >-
-      "true" allows the maintainer-only `butler-` name prefix (the registry PR check decides
-      for real; this only affects the skill repo's own run). `bevo-` names are always refused.
+      "true" allows the maintainer-only `butler-` id prefix (the registry PR check decides
+      for real; this only affects the template repo's own run). `bevo-` ids are always refused.
     required: false
     default: "false"
   fixture:
@@ -37,11 +37,11 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Check out the skill
+    - name: Check out the template
       uses: actions/checkout@v4
 
     # actions/checkout can only place a repository under $GITHUB_WORKSPACE, and anything
-    # inside the skill tree would count against its 50-file / 1 MB rules — so land the hub
+    # inside the template tree would count against its 50-file / 1 MB rules — so land the hub
     # in a scratch path, then move it to $RUNNER_TEMP before validating.
     - name: Fetch the hub tooling (Virtual-Protocol/butler-skills at main)
       uses: actions/checkout@v4
@@ -51,7 +51,7 @@ runs:
         path: .butler-skills-hub
         persist-credentials: false
 
-    - name: Move the hub tooling out of the skill tree
+    - name: Move the hub tooling out of the template tree
       shell: bash
       run: |
         set -eu
@@ -64,18 +64,7 @@ runs:
       with:
         python-version: "3.11"
 
-    - uses: actions/setup-node@v4
-      with:
-        node-version: "20"
-
-    - name: Install viem for the selector check
-      # scripts/check_selectors.mjs is an ES module: `import "viem"` resolves from its own
-      # directory upward, so viem is installed at the hub checkout's root.
-      shell: bash
-      run: npm i --no-save --no-audit --no-fund viem@2 >/dev/null
-      working-directory: ${{ env.BUTLER_SKILLS_HUB }}
-
-    - name: Validate the skill
+    - name: Validate the template
       shell: bash
       env:
         SKILL_PATH: ${{ inputs.path }}
@@ -96,7 +85,7 @@ runs:
       run: |
         set -eu
         if [ ! -f "$SKILL_PATH/duty.py" ]; then
-          echo "no duty.py in $SKILL_PATH — replay skipped (one-off-only skill)"
+          echo "no duty.py in $SKILL_PATH — replay skipped"
           exit 0
         fi
         FLAG=""

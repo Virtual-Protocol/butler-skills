@@ -1,0 +1,16 @@
+{
+  "id": "valid",
+  "version": 1,
+  "description": "A minimal, fully compliant duty-template fixture used to test that the validator passes clean input.",
+  "keywords": ["fixture"],
+  "triggers": ["trade"],
+  "keys": ["copy:<duty>:trade:<eventId>"],
+  "params": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["AMOUNT_USD"],
+    "properties": {
+      "AMOUNT_USD": { "type": "number", "minimum": 1, "maximum": 100, "default": 5, "description": "USD to spend per fire." }
+    }
+  }
+}
