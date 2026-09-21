@@ -133,7 +133,9 @@ def test_read_answers_user_assets_with_or_without_the_fresh_param():
 def test_holdings_reads_the_same_user_assets_fixture():
     rows = stub_bevo.holdings()
     assert isinstance(rows, list)
-    assert any(r.get("symbol") == "VIRTUAL" for r in rows)
+    # `Holding` objects, as the container returns — not the raw wire dict.
+    assert all(isinstance(r, stub_bevo.Holding) for r in rows)
+    assert any(r.symbol == "VIRTUAL" for r in rows)
 
 
 def test_holdings_is_empty_when_there_is_no_user_assets_fixture(tmp_path, monkeypatch):
@@ -181,7 +183,11 @@ def test_trades_replays_the_fixture_jsonl(monkeypatch):
     monkeypatch.setattr(stub_bevo, "FIXTURE_NAME", "trade-activity-page")
     rows = list(stub_bevo.trades())
     assert len(rows) >= 1
-    assert all("direction" in r for r in rows)
+    # Typed objects, not the raw wire dict — the container's waiters yield
+    # TradeEvent, and a stub that yielded dicts made `isinstance(ev,
+    # bevo.TradeEvent)` false for every row.
+    assert all(isinstance(r, stub_bevo.TradeEvent) for r in rows)
+    assert all(r.direction is not None for r in rows)
 
 
 def test_batches_yields_one_batch_per_event(monkeypatch):
@@ -189,3 +195,42 @@ def test_batches_yields_one_batch_per_event(monkeypatch):
     batches = list(stub_bevo.batches())
     assert all(len(b) == 1 for b in batches)
     assert len(batches) == len(list(stub_bevo.events()))
+
+
+def test_typed_returns_the_class_a_duty_isinstance_checks(monkeypatch):
+    """`bevo.typed(raw)` must return a TradeEvent, not the raw envelope.
+
+    butler-skill-copytrade's whole loop is
+
+        for batch in bevo.batches(seconds=3):
+            for raw in batch:
+                ev = bevo.typed(raw)
+                if not isinstance(ev, bevo.TradeEvent) or ev.id is None:
+                    continue
+
+    `typed()` used to return its argument untouched and the module exported no
+    `TradeEvent` at all, so the replay died on `AttributeError: module 'bevo'
+    has no attribute 'TradeEvent'`. Exporting the name alone would have been
+    worse: every row would then have failed the isinstance check silently, the
+    duty would have skipped all of them, and the replay would have reported a
+    pass with zero actions recorded.
+    """
+    monkeypatch.setattr(stub_bevo, "FIXTURE_NAME", "trade-activity-page")
+    raws = [b[0] for b in stub_bevo.batches()]
+    assert raws, "fixture yielded nothing"
+
+    typed = [stub_bevo.typed(raw) for raw in raws]
+    trades = [t for t in typed if isinstance(t, stub_bevo.TradeEvent)]
+    assert trades, "no row survived the isinstance check a real template makes"
+    assert all(t.id is not None for t in trades)
+
+
+def test_every_event_type_the_container_exports_is_exported_here():
+    """A duty may name any of these directly, so a missing one is an
+    AttributeError at replay rather than a diff anyone reads."""
+    for name in (
+        "Asset", "Balance", "GroupMessage", "Holding", "HttpPollEvent",
+        "PerpPosition", "StockHolding", "TimerTick", "TradeEvent",
+        "WalletTransfer", "WebhookEvent", "WebsocketFrame",
+    ):
+        assert hasattr(stub_bevo, name), f"stub_bevo does not export {name}"
