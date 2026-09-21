@@ -126,6 +126,31 @@ def skill_name_of(skill_dir: Path) -> str | None:
         return None
 
 
+
+def defaults_from_recipe(skill_dir: Path) -> dict:
+    """Every `default` declared in recipe.json's params, as a settings dict.
+
+    Only defaults: a REQUIRED setting with no default stays absent, because
+    inventing one would replay a duty nobody could file. Pass those with
+    `--params`.
+    """
+    recipe_path = skill_dir / "recipe.json"
+    if not recipe_path.is_file():
+        return {}
+    try:
+        recipe = json.loads(recipe_path.read_text(encoding="utf-8"))
+    except ValueError:
+        return {}
+    props = ((recipe.get("params") or {}).get("properties") or {})
+    if not isinstance(props, dict):
+        return {}
+    return {
+        name: spec["default"]
+        for name, spec in props.items()
+        if isinstance(spec, dict) and "default" in spec
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Replay a skill's duty.py offline against a fixture.")
     parser.add_argument("skill", help="templates/<name> path, or with --standalone any directory that holds a duty.py")
@@ -139,6 +164,13 @@ def main() -> int:
     parser.add_argument("--env", action="append", default=[], help="K=V, may repeat")
     parser.add_argument("--state-dir", default=None, help="working directory for duty.py's state.json (default: fresh temp dir)")
     parser.add_argument("--no-download", action="store_true", help="never fetch a missing stub_bevo.py or fixture")
+    parser.add_argument(
+        "--params",
+        default=None,
+        help="JSON merged over recipe.json's defaults and exported as PARAMS, "
+        "e.g. '{\"SIZING\":\"fixed\",\"SIZE_USD\":25}'. Use it to reach a money path: a "
+        "required setting with no default is 0/None otherwise, and the duty skips every event.",
+    )
     args = parser.parse_args()
 
     skill_dir = Path(args.skill).resolve()
@@ -150,6 +182,23 @@ def main() -> int:
         return 0
     if args.standalone:
         print(f"# standalone replay of {skill_name_of(skill_dir) or skill_dir.name} from {skill_dir}")
+
+    # PARAMS is how a template's settings reach its code — `duty.py` opens with
+    # `PARAMS = json.loads(os.environ.get("PARAMS", "{}"))`. Nothing set it here
+    # before, so every replay ran a template with NO settings: copytrade skipped
+    # all six fixture rows with "size 0 (SIZING=fixed)" and recorded zero
+    # actions, which the harness reported as a pass. A replay that cannot record
+    # an action cannot fail.
+    params = defaults_from_recipe(skill_dir)
+    if args.params:
+        try:
+            override = json.loads(args.params)
+        except ValueError as exc:
+            parser.error(f"--params is not valid JSON: {exc}")
+        if not isinstance(override, dict):
+            parser.error("--params must be a JSON object")
+        params.update(override)
+    os.environ["PARAMS"] = json.dumps(params)
 
     for kv in args.env:
         if "=" not in kv:

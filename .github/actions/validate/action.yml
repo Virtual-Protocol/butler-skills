@@ -33,6 +33,16 @@ inputs:
       open, a perp close, a liquidation and a tokenized-stock buy and sell.
     required: false
     default: trade-activity-page trade-activity-mixed
+  params:
+    description: >-
+      JSON merged over recipe.json's declared defaults and exported as PARAMS for the
+      replay, e.g. '{"SIZING":"fixed","SIZE_USD":25}'. Set it when the template has a
+      REQUIRED setting with no default: without one the duty runs with that setting
+      unset, skips every event for want of a size, and the replay reports a pass having
+      recorded no action at all. Templates whose settings all have defaults need nothing
+      here.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -74,6 +84,8 @@ runs:
         set -eu
         FLAG=""
         if [ "$STANDALONE" = "true" ]; then FLAG="--standalone"; fi
+        PARAMS_ARG=""
+        if [ -n "$PARAMS_JSON" ]; then PARAMS_ARG="--params"; fi
         python3 "$BUTLER_SKILLS_HUB/scripts/validate.py" $FLAG $MAINTAINER_FLAG "$SKILL_PATH"
 
     - name: Offline replay of duty.py
@@ -82,6 +94,7 @@ runs:
         SKILL_PATH: ${{ inputs.path }}
         STANDALONE: ${{ inputs.standalone }}
         FIXTURES: ${{ inputs.fixture }}
+        PARAMS_JSON: ${{ inputs.params }}
       run: |
         set -eu
         if [ ! -f "$SKILL_PATH/duty.py" ]; then
@@ -96,5 +109,6 @@ runs:
         for FIXTURE in $FIXTURES; do
           echo "--- replay against $FIXTURE"
           # The hub checkout carries stub_bevo.py and every fixture, so nothing is downloaded.
-          python3 "$BUTLER_SKILLS_HUB/tests/replay.py" $FLAG "$SKILL_PATH" --fixture "$FIXTURE" --no-download
+          python3 "$BUTLER_SKILLS_HUB/tests/replay.py" $FLAG "$SKILL_PATH" --fixture "$FIXTURE" --no-download \
+            ${PARAMS_ARG:+"$PARAMS_ARG" "$PARAMS_JSON"}
         done
