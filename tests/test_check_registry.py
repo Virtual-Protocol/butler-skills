@@ -1,5 +1,5 @@
 """test_check_registry.py — scripts/check_registry.py against synthetic
-skills.json files. The registry is a listing, so these are listing checks:
+templates.json files. The registry is a listing, so these are listing checks:
 valid unique names, an https://github.com/<owner>/<repo> URL with nothing
 smuggled into it, a plain ref, and the ref resolving on the remote. The
 remote check is the only one that needs the network; every test here either
@@ -27,19 +27,19 @@ def _load_check_registry():
 check_registry = _load_check_registry()
 
 GOOD = [
-    {"name": "butler-alpha", "repo": "https://github.com/someone/butler-skill-alpha", "ref": "main"},
-    {"name": "butler-beta", "repo": "https://github.com/someone/butler-skill-beta", "ref": "v1.2.0"},
+    {"name": "tmpl-alpha", "repo": "https://github.com/someone/butler-skill-alpha", "ref": "main"},
+    {"name": "tmpl-beta", "repo": "https://github.com/someone/butler-skill-beta", "ref": "v1.2.0"},
 ]
 
 
 def write_registry(tmp_path: Path, skills: list[dict]) -> Path:
-    path = tmp_path / "skills.json"
-    path.write_text(json.dumps({"skills": skills}, indent=2) + "\n")
+    path = tmp_path / "templates.json"
+    path.write_text(json.dumps({"templates": skills}, indent=2) + "\n")
     return path
 
 
 def run(monkeypatch, tmp_path, skills, *argv, ref_exists=True) -> int:
-    """Point the module at a synthetic skills.json and run its main().
+    """Point the module at a synthetic templates.json and run its main().
 
     check_registry resolves REGISTRY_PATH at import time from its own
     location, so the file under test is swapped by monkeypatching that
@@ -60,23 +60,23 @@ def run(monkeypatch, tmp_path, skills, *argv, ref_exists=True) -> int:
 def test_valid_registry_passes(monkeypatch, tmp_path, capsys):
     assert run(monkeypatch, tmp_path, GOOD, "--offline") == 0
     out = capsys.readouterr().out
-    assert "OK    butler-alpha = https://github.com/someone/butler-skill-alpha @ main" in out
-    assert "OK    butler-beta = https://github.com/someone/butler-skill-beta @ v1.2.0" in out
+    assert "OK    tmpl-alpha = https://github.com/someone/butler-skill-alpha @ main" in out
+    assert "OK    tmpl-beta = https://github.com/someone/butler-skill-beta @ v1.2.0" in out
 
 
 def test_bad_name_fails(monkeypatch, tmp_path, capsys):
     bad = [{"name": "Butler_Alpha", "repo": "https://github.com/someone/butler-skill-alpha", "ref": "main"}]
     assert run(monkeypatch, tmp_path, bad, "--offline") == 1
-    assert "is not a valid skill name" in capsys.readouterr().out
+    assert "is not a valid template id" in capsys.readouterr().out
 
 
 def test_duplicate_name_fails(monkeypatch, tmp_path, capsys):
     dupe = [
-        {"name": "butler-alpha", "repo": "https://github.com/someone/butler-skill-alpha", "ref": "main"},
-        {"name": "butler-alpha", "repo": "https://github.com/someone/butler-skill-alpha-fork", "ref": "main"},
+        {"name": "tmpl-alpha", "repo": "https://github.com/someone/butler-skill-alpha", "ref": "main"},
+        {"name": "tmpl-alpha", "repo": "https://github.com/someone/butler-skill-alpha-fork", "ref": "main"},
     ]
     assert run(monkeypatch, tmp_path, dupe, "--offline") == 1
-    assert "butler-alpha: listed twice" in capsys.readouterr().out
+    assert "tmpl-alpha: listed twice" in capsys.readouterr().out
 
 
 def test_non_github_url_fails(monkeypatch, tmp_path, capsys):
@@ -85,7 +85,7 @@ def test_non_github_url_fails(monkeypatch, tmp_path, capsys):
         "http://github.com/someone/butler-skill-alpha",
         "git@github.com:someone/butler-skill-alpha.git",
     ):
-        rows = [{"name": "butler-alpha", "repo": repo, "ref": "main"}]
+        rows = [{"name": "tmpl-alpha", "repo": repo, "ref": "main"}]
         assert run(monkeypatch, tmp_path, rows, "--offline") == 1, repo
         assert "must be https://github.com/<owner>/<repo>" in capsys.readouterr().out
 
@@ -96,14 +96,14 @@ def test_url_with_credentials_or_query_fails(monkeypatch, tmp_path, capsys):
         "https://github.com/someone/butler-skill-alpha?ref=evil",
         "https://github.com/someone/butler-skill-alpha#frag",
     ):
-        rows = [{"name": "butler-alpha", "repo": repo, "ref": "main"}]
+        rows = [{"name": "tmpl-alpha", "repo": repo, "ref": "main"}]
         assert run(monkeypatch, tmp_path, rows, "--offline") == 1, repo
         assert "must be https://github.com/<owner>/<repo>" in capsys.readouterr().out
 
 
 def test_bad_ref_fails(monkeypatch, tmp_path, capsys):
     for ref in ("main branch", "main;rm -rf /", "--upload-pack=x", "v1.0.0" + "x" * 100):
-        rows = [{"name": "butler-alpha", "repo": "https://github.com/someone/butler-skill-alpha", "ref": ref}]
+        rows = [{"name": "tmpl-alpha", "repo": "https://github.com/someone/butler-skill-alpha", "ref": ref}]
         assert run(monkeypatch, tmp_path, rows, "--offline") == 1, ref
         assert "bad ref" in capsys.readouterr().out
 
@@ -113,13 +113,13 @@ def test_unsorted_registry_fails(monkeypatch, tmp_path, capsys):
     assert "not sorted by name" in capsys.readouterr().out
 
 
-def test_missing_skills_list_fails(monkeypatch, tmp_path, capsys):
-    registry = tmp_path / "skills.json"
-    registry.write_text(json.dumps({"comment": "no skills here"}) + "\n")
+def test_missing_templates_list_fails(monkeypatch, tmp_path, capsys):
+    registry = tmp_path / "templates.json"
+    registry.write_text(json.dumps({"comment": "no templates here"}) + "\n")
     monkeypatch.setattr(check_registry, "REGISTRY_PATH", registry)
     monkeypatch.setattr(sys, "argv", ["check_registry.py", "--offline"])
     assert check_registry.main() == 1
-    assert "no `skills` list" in capsys.readouterr().out
+    assert "no `templates` list" in capsys.readouterr().out
 
 
 def test_offline_skips_the_remote_check(monkeypatch, tmp_path):
@@ -135,7 +135,7 @@ def test_online_checks_every_ref_on_the_remote(monkeypatch, tmp_path):
 
 
 def test_ref_that_does_not_resolve_fails(monkeypatch, tmp_path, capsys):
-    rows = [{"name": "butler-alpha", "repo": "https://github.com/someone/butler-skill-alpha", "ref": "no-such-ref"}]
+    rows = [{"name": "tmpl-alpha", "repo": "https://github.com/someone/butler-skill-alpha", "ref": "no-such-ref"}]
     assert run(monkeypatch, tmp_path, rows, ref_exists=False) == 1
     assert "has no ref 'no-such-ref'" in capsys.readouterr().out
 

@@ -5,21 +5,20 @@ Usage:
     scripts/publish_tools.py [--dist <dir>]      # default: <repo>/dist
 
 publish.yml runs this after building the index, so the Pages site serves, next to
-stable/ and canary/:
+templates/:
 
     tools/validate.py            <- scripts/validate.py        (single-file validator)
     tools/replay.py              <- tests/replay.py            (offline replay harness)
     tools/stub_bevo.py           <- tests/stub_bevo.py         (the `bevo` stand-in replay.py loads)
-    tools/check_selectors.mjs    <- scripts/check_selectors.mjs
     tools/fixtures/<file>        <- every regular file directly under tests/fixtures/
 
-A skill author needs only the first two:
+A template author needs only the first two:
 
     curl -sSLO https://virtual-protocol.github.io/butler-skills/tools/validate.py
     curl -sSLO https://virtual-protocol.github.io/butler-skills/tools/replay.py
 
 replay.py downloads stub_bevo.py and any fixture it needs from this same layout when
-they are not already next to it. Nobody has to clone the registry to validate a skill.
+they are not already next to it. Nobody has to clone the registry to validate a template.
 
 Python 3.11 stdlib only.
 """
@@ -36,7 +35,6 @@ TOOL_FILES: list[tuple[str, str]] = [
     ("scripts/validate.py", "validate.py"),
     ("tests/replay.py", "replay.py"),
     ("tests/stub_bevo.py", "stub_bevo.py"),
-    ("scripts/check_selectors.mjs", "check_selectors.mjs"),
 ]
 FIXTURES_SRC = "tests/fixtures"
 

@@ -1,0 +1,12 @@
+{
+  "id": "undeclared-env",
+  "version": 1,
+  "description": "Fixture whose duty.py reads an environment key not declared in params — must fail validation.",
+  "triggers": ["timer"],
+  "params": {
+    "type": "object",
+    "properties": {
+      "KNOWN_PARAM": { "type": "string", "default": "x" }
+    }
+  }
+}

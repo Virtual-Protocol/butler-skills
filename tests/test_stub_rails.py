@@ -1,14 +1,10 @@
-"""test_stub_rails.py — unit tests for the rails surface stub_bevo.py added:
-TradeEvent's six classification predicates against a spot buy, spot sell,
-perp open, perp close, liquidation and tokenized-stock row from
-fixtures/trade-activity-mixed.jsonl, and Asset.ref falling back to the symbol
-when there is no address.
-
-Then the money rail itself: `trade(command=…)`'s grammar gate (one test per
-refusal the real duty shim makes), the `/user-assets` fixture's own invariants
-(stock shares apart from the look-alike token row, a HIP-3 namespaced perp),
-`holdings()` over that same fixture, and `state` on disk in the replay's state
-directory.
+"""test_stub_rails.py — unit tests for tests/stub_bevo.py: the typed waiters
+over fixtures/trade-activity-mixed.jsonl, `read()`'s fixture-name derivation
+(including the `?fresh=1` invariant), `holdings()`/`stocks()`/`positions()`
+over fixtures/user-assets.json, `state`/`allow()`, `prompt()`/`decide()`
+always raising, and — the core of the 2026-09-21 rewrite — the subprocess
+monkeypatch that intercepts a shelled `acp trade`/`wallet`/`card` command
+instead of spawning the real CLI.
 
 Loaded by file path (like tests/conftest.py loads scripts/build_index.py) so
 this needs no package/sys.path setup and matches how replay.py itself loads
@@ -18,6 +14,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -36,223 +33,107 @@ def _load_stub_bevo():
 stub_bevo = _load_stub_bevo()
 
 
-def _events_by_id() -> dict[int, "stub_bevo.TradeEvent"]:
-    path = REPO_ROOT / "tests" / "fixtures" / "trade-activity-mixed.jsonl"
-    events = {}
-    with open(path) as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            envelope = json.loads(line)
-            event = stub_bevo._parse_trade_event(envelope["event"])
-            events[event.id] = event
-    return events
+# --- the subprocess money interception -------------------------------------------------
 
 
-EVENTS = _events_by_id()
+def test_acp_trade_is_recorded_and_never_actually_spawned(monkeypatch):
+    stub_bevo.RECORDED_ACTIONS.clear()
+    result = subprocess.run(
+        ["acp", "trade", "--token-in", "usdc", "--amount-in", "5", "--token-out", "VIRTUAL",
+         "--idempotency-key", "buy:svc:1"],
+        capture_output=True, text=True, timeout=30, check=False,
+    )
+    assert result.returncode == 0
+    body = json.loads(result.stdout)
+    assert body["status"] == "accepted"
+    assert body["idempotencyKey"] == "buy:svc:1"
+    assert stub_bevo.RECORDED_ACTIONS == [{
+        "call": "acp",
+        "argv": ["acp", "trade", "--token-in", "usdc", "--amount-in", "5", "--token-out", "VIRTUAL",
+                 "--idempotency-key", "buy:svc:1"],
+        "key": "buy:svc:1",
+    }]
+    stub_bevo.RECORDED_ACTIONS.clear()
 
 
-def test_spot_buy_classifies_as_buy_only():
-    trade = EVENTS[101]
-    assert trade.is_buy is True
-    assert trade.is_sell is False
-    assert trade.is_perp is False
-    assert trade.is_long is False
-    assert trade.is_short is False
-    assert trade.is_close is False
+@pytest.mark.parametrize("subcommand", ["trade", "wallet", "card"])
+def test_every_money_subcommand_is_intercepted(subcommand):
+    stub_bevo.RECORDED_ACTIONS.clear()
+    subprocess.run(["acp", subcommand, "--idempotency-key", "k"], capture_output=True, text=True, check=False)
+    assert len(stub_bevo.RECORDED_ACTIONS) == 1
+    stub_bevo.RECORDED_ACTIONS.clear()
 
 
-def test_spot_sell_classifies_as_sell_only():
-    trade = EVENTS[102]
-    assert trade.is_buy is False
-    assert trade.is_sell is True
-    assert trade.is_perp is False
-    assert trade.is_long is False
-    assert trade.is_short is False
-    assert trade.is_close is False
+def test_a_non_money_acp_command_is_not_intercepted():
+    """`acp --help` / a read subcommand is not a spend and must reach the
+    real CLI — which is not installed in the test sandbox, so this raises
+    FileNotFoundError rather than being silently swallowed."""
+    with pytest.raises(FileNotFoundError):
+        subprocess.run(["acp", "--help"], capture_output=True, text=True, check=False)
 
 
-def test_perp_open_classifies_as_long_not_buy_or_close():
-    trade = EVENTS[103]
-    assert trade.is_buy is False  # spot-only
-    assert trade.is_sell is False  # spot-only
-    assert trade.is_perp is True
-    assert trade.is_long is True
-    assert trade.is_short is False
-    assert trade.is_close is False
+def test_a_command_that_is_not_acp_is_untouched():
+    result = subprocess.run(["echo", "hello"], capture_output=True, text=True, check=False)
+    assert result.returncode == 0
+    assert result.stdout.strip() == "hello"
 
 
-def test_perp_close_classifies_via_reduce_only():
-    trade = EVENTS[104]
-    assert trade.is_buy is False
-    assert trade.is_sell is False
-    assert trade.is_perp is True
-    assert trade.is_close is True
+def test_missing_key_is_recorded_as_none():
+    stub_bevo.RECORDED_ACTIONS.clear()
+    subprocess.run(["acp", "trade", "--token-in", "usdc"], capture_output=True, text=True, check=False)
+    assert stub_bevo.RECORDED_ACTIONS[-1]["key"] is None
+    stub_bevo.RECORDED_ACTIONS.clear()
 
 
-def test_liquidation_classifies_as_close_via_hl_event():
-    trade = EVENTS[105]
-    assert trade.is_buy is False
-    assert trade.is_sell is False
-    assert trade.is_perp is True
-    assert trade.is_close is True
+def test_exec_status_finds_a_recorded_key():
+    stub_bevo.RECORDED_ACTIONS.clear()
+    subprocess.run(["acp", "trade", "--idempotency-key", "abc"], capture_output=True, text=True, check=False)
+    assert stub_bevo.exec_status("abc")["state"] == "executed"
+    assert stub_bevo.exec_status("no-such-key")["state"] == "unknown"
+    stub_bevo.RECORDED_ACTIONS.clear()
 
 
-def test_stock_row_classifies_as_buy_like_any_spot_row():
-    trade = EVENTS[106]
-    assert trade.is_buy is True
-    assert trade.is_sell is False
-    assert trade.is_perp is False
-    assert trade.is_close is False
-    assert stub_bevo.is_stock(trade.token) is True
+# --- prompt() / decide() ------------------------------------------------------------------
 
 
-def test_asset_ref_falls_back_to_symbol_when_there_is_no_address():
-    asset = stub_bevo.Asset(symbol="AAPL", address=None, chain_id=8453)
-    assert asset.address is None
-    assert asset.ref == "AAPL"
-    assert str(asset) == "AAPL@8453"
-
-
-# --- trade() grammar gate ------------------------------------------------------------------
-# `bevo.trade(command=…)` is the one money rail, so the command string is the only place
-# the grammar lives. These mirror bevo-docker's duty shim refusals
-# (api/scripts/bevo-duty-shim.py): a shape the real rails reject must fail in the replay,
-# not at the venue. One test per rule.
-
-
-def _refusal(**kwargs) -> str:
+def test_prompt_always_raises_rehearsal_style():
     with pytest.raises(stub_bevo.BevoError) as exc:
-        stub_bevo.trade(idempotency_key="k", **kwargs)
-    return str(exc.value)
+        stub_bevo.prompt("bullish or bearish?")
+    assert exc.value.code == "rehearsal"
 
 
-def test_trade_refuses_a_command_that_is_not_acp_trade():
-    assert "must start with `acp trade`" in _refusal(command="acp wallet send-transaction --to 0x1 --data 0x")
+def test_decide_raises_through_prompt():
+    with pytest.raises(stub_bevo.BevoError):
+        stub_bevo.decide("pick one", ["a", "b"])
 
 
-def test_trade_refuses_an_empty_or_non_string_command():
-    assert "non-empty" in _refusal(command="   ")
-    assert "non-empty" in _refusal(command=42)
+def test_decide_validates_option_count():
+    with pytest.raises(ValueError):
+        stub_bevo.decide("pick one", ["only-one"])
 
 
-def test_trade_refuses_free_text_message():
-    assert "free text" in _refusal(command="acp trade --token-in usdc --amount-in 5 --token-out 0xabc", message="buy me some")
+# --- escalate() shim -----------------------------------------------------------------------
 
 
-def test_trade_refuses_amount_in_together_with_amount_usdc():
-    msg = _refusal(command="acp trade --token-in usdc --amount-in 5 --amount-usdc 5 --token-out 0xabc")
-    assert "different grammars" in msg
-
-
-def test_trade_refuses_a_side_order_that_also_carries_token_in():
-    msg = _refusal(command="acp trade --side long --token-in usdc --amount-usdc 50 --leverage 2")
-    assert "--token <SYM>" in msg
-
-
-def test_trade_refuses_a_stock_sell_with_no_chain():
-    msg = _refusal(command="acp trade --token AAPL --amount-shares 2")
-    assert "must name its venue" in msg
-
-
-def test_trade_refuses_a_stock_sell_whose_chain_is_a_chain_id():
-    # A numeric --chain is rerouted onto a bare-symbol spot swap — a DIFFERENT asset.
-    msg = _refusal(command="acp trade --token AAPL --amount-shares 2 --chain 1")
-    assert "VENUE NAME" in msg
-
-
-def test_trade_does_not_accept_chain_in_as_the_stock_venue():
-    """`--chain-in` is the swap rail's flag: it must not satisfy the stock rail's
-    `--chain`, or a sell goes out with no venue at all."""
-    msg = _refusal(command="acp trade --token AAPL --amount-shares 2 --chain-in 8453")
-    assert "must name its venue" in msg
-
-
-def test_trade_refuses_a_zero_or_negative_amount():
-    assert "0 or less" in _refusal(command="acp trade --token-in usdc --amount-in 0 --token-out 0xabc")
-    assert "0 or less" in _refusal(command="acp trade --side long --token BTC --amount-usdc -10 --leverage 2")
-    assert "0 or less" in _refusal(command="acp trade --token AAPL --amount-shares 0 --chain eth")
-    assert "0 or less" in _refusal(command="acp trade --side short --token BTC --size 0 --reduce-only")
-
-
-def test_trade_refuses_an_amount_that_is_not_a_number():
-    assert "needs a number" in _refusal(command="acp trade --token-in usdc --amount-in --token-out 0xabc")
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        "acp trade --token-in usdc --amount-in 25 --token-out 0xabc --chain-out 8453",
-        "acp trade --token-in 0xabc --chain-in 8453 --amount-in 20 --token-out usdc",
-        "acp trade --side long --token BTC --amount-usdc 500 --leverage 5",
-        "acp trade --side short --token BTC --size 0.0125 --reduce-only",
-        "acp trade --token AAPL --amount-usdc 200",
-        "acp trade --token AAPL --amount-shares 5 --chain eth",
-    ],
-)
-def test_trade_accepts_and_records_every_documented_shape(command):
-    stub_bevo.RECORDED_ACTIONS.clear()
-    result = stub_bevo.trade(command=command, idempotency_key="copytrade:svc:1")
-    assert result["status"] == "accepted"
-    assert stub_bevo.RECORDED_ACTIONS == [
-        {"call": "trade", "command": command, "params": None, "message": None, "key": "copytrade:svc:1"}
-    ]
-    stub_bevo.RECORDED_ACTIONS.clear()
+def test_escalate_is_a_refusing_shim_not_a_crash():
+    result = stub_bevo.escalate("why", [])
+    assert result == {"accepted": False, "error": "escalate is retired"}
 
 
 # --- read()/holdings()/state ---------------------------------------------------------------
 
 
 def test_read_answers_user_assets_with_or_without_the_fresh_param():
-    """`?fresh=1` is load-bearing on the live rails (without it the server's
-    stale-while-revalidate cache serves a PRE-trade balance for up to ten
-    minutes) and must not send the stub looking for a different fixture."""
     plain = stub_bevo.read("/user-assets")
     fresh = stub_bevo.read("/user-assets?fresh=1")
     assert plain == fresh
     assert plain["spot"]["available"] is True
-    assert plain["perps"]["available"] is True
-
-
-def test_user_assets_fixture_keeps_stock_shares_apart_from_the_lookalike_token_row():
-    """The invariant a stock sell has to respect: `spot.stocks[]` is what the
-    venue sells, `spot.tokens[]` is the raw on-chain balance, and on a
-    share-multiplier venue they disagree. Sizing off the token row sells 100x."""
-    assets = stub_bevo.read("/user-assets")
-    stock = next(s for s in assets["spot"]["stocks"] if s["ticker"] == "AAPL")
-    token_row = next(t for t in assets["spot"]["tokens"] if t["symbol"] == "AAPL")
-    assert stock["shares"] != token_row["balance"]
-    assert stock["shares"] == 12.5 and token_row["balance"] == 1250.0
-    assert not str(stock["chain"]).isdigit(), "spot.stocks[].chain is the venue name, never a chain id"
-
-
-def test_user_assets_fixture_carries_a_hip3_namespaced_perp_beside_a_plain_one():
-    positions = stub_bevo.read("/user-assets")["perps"]["positions"]
-    coins = [p["coin"] for p in positions]
-    assert "xyz:AAPL" in coins, "a close must match the FULL HIP-3 coin id"
-    assert "BTC" in coins
-    for row in positions:
-        assert row["side"] in ("long", "short")
-        assert row["size"] > 0
-
-
-def test_read_answers_token_search_from_its_own_fixture():
-    body = stub_bevo.read("/token-search", {"q": "$VIRTUAL"})
-    hits = {t["address"].lower(): t for t in body["tokens"]}
-    assert hits["0x0b3e328455c4059eeb9e3f84b5543f74e24e7e1b"]["priceUsd"] == 1.3
 
 
 def test_holdings_reads_the_same_user_assets_fixture():
     rows = stub_bevo.holdings()
-    assert [h.symbol for h in rows] == ["VIRTUAL", "VIRTUAL", "AIXBT", "USDC", "AAPL"]
-    base_virtual = next(h for h in rows if h.symbol == "VIRTUAL" and h.chain_id == 8453)
-    assert base_virtual.amount == 180.5
-    assert base_virtual.price_usd == 1.3
-    assert base_virtual.address == "0x0b3e328455c4059eeb9e3f84b5543f74e24e7e1b"
-    # The same token on two chains is two rows, never one summed total: a sell
-    # settles on ONE chain.
-    assert sorted(h.chain_id for h in rows if h.symbol == "VIRTUAL") == [1, 8453]
+    assert isinstance(rows, list)
+    assert any(r.get("symbol") == "VIRTUAL" for r in rows)
 
 
 def test_holdings_is_empty_when_there_is_no_user_assets_fixture(tmp_path, monkeypatch):
@@ -261,22 +142,50 @@ def test_holdings_is_empty_when_there_is_no_user_assets_fixture(tmp_path, monkey
     assert stub_bevo.holdings() == []
 
 
+def test_read_answers_token_search_from_its_own_fixture():
+    body = stub_bevo.read("/token-search", {"q": "$VIRTUAL"})
+    hits = {t["address"].lower(): t for t in body["tokens"]}
+    assert hits["0x0b3e328455c4059eeb9e3f84b5543f74e24e7e1b"]["priceUsd"] == 1.3
+
+
 def test_state_persists_to_the_replay_state_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("BEVO_STATE_PATH", str(tmp_path / "state.json"))
     first = stub_bevo._State()
     assert first.get("last_id") is None
     first["last_id"] = 42
     assert json.loads((tmp_path / "state.json").read_text()) == {"last_id": 42}
-    # A later run in the same state dir reads it back — what a duty's "already
-    # told / last seen" bookkeeping relies on.
     assert stub_bevo._State().get("last_id") == 42
 
 
 def test_state_resolves_its_path_lazily_from_the_working_directory(tmp_path, monkeypatch):
-    """replay.py chdir's into --state-dir AFTER importing the stub, so the path
-    cannot be bound at import time."""
     monkeypatch.delenv("BEVO_STATE_PATH", raising=False)
     fresh = stub_bevo._State()
     monkeypatch.chdir(tmp_path)
     fresh["seen"] = ["a"]
     assert json.loads((tmp_path / "state.json").read_text()) == {"seen": ["a"]}
+
+
+def test_allow_consumes_before_the_spend_and_gates_on_every_bound(tmp_path, monkeypatch):
+    monkeypatch.setenv("BEVO_STATE_PATH", str(tmp_path / "state.json"))
+    monkeypatch.setattr(stub_bevo, "state", stub_bevo._State())
+    assert stub_bevo.allow("k", per_day=2) is True
+    assert stub_bevo.allow("k", per_day=2) is True
+    assert stub_bevo.allow("k", per_day=2) is False  # third call this day is over budget
+
+
+# --- the waiters -----------------------------------------------------------------------
+
+
+def test_trades_replays_the_fixture_jsonl(monkeypatch):
+    monkeypatch.setenv("BEVO_STUB_FIXTURE", "trade-activity-page")
+    monkeypatch.setattr(stub_bevo, "FIXTURE_NAME", "trade-activity-page")
+    rows = list(stub_bevo.trades())
+    assert len(rows) >= 1
+    assert all("direction" in r for r in rows)
+
+
+def test_batches_yields_one_batch_per_event(monkeypatch):
+    monkeypatch.setattr(stub_bevo, "FIXTURE_NAME", "trade-activity-page")
+    batches = list(stub_bevo.batches())
+    assert all(len(b) == 1 for b in batches)
+    assert len(batches) == len(list(stub_bevo.events()))

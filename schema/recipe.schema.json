@@ -1,0 +1,56 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/Virtual-Protocol/butler-skills/main/schema/recipe.schema.json",
+  "title": "Butler duty template",
+  "description": "Schema for recipe.json, the manifest at the root of a duty-template bundle (recipe.json, duty.py, README.md). This shape is fixed by the container's template installer — a field outside it is refused, never merged in.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "version", "description", "params"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,63}$",
+      "description": "Must equal the `name` this template is listed under in templates.json — that is the ref a duty is created with (<id>@<version>)."
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "A plain, monotonic integer — not semver. A ref is `<id>@<version>`."
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "Composed into a 280-char field with a settings clause appended — a longer one is silently dropped by the caller, so the validator refuses it here instead."
+    },
+    "keywords": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "triggers": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["timer", "group", "trade"] }
+    },
+    "supersedes": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,63}@\\d+$" },
+      "description": "Older refs this version replaces, e.g. [\"dca@1\"]. Flattened into the published index's top-level `aliases`."
+    },
+    "keys": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "The stable idempotency-key format(s) this template's duty.py uses, documentation only — e.g. \"buy:<duty>:slot:<slot>\"."
+    },
+    "params": {
+      "type": "object",
+      "description": "A JSON-Schema OBJECT describing the settings a duty created from this template takes. Only the subset of JSON-Schema the container's params checker supports may appear anywhere in this tree (see recipe-params-subset.schema.json for the exact keyword allowlist, enforced recursively by scripts/validate.py's check_params_schema).",
+      "properties": {
+        "type": { "const": "object" },
+        "properties": { "type": "object" },
+        "required": { "type": "array", "items": { "type": "string" } },
+        "additionalProperties": { "type": "boolean" }
+      },
+      "required": ["type", "properties"]
+    }
+  }
+}

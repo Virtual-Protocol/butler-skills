@@ -1,17 +1,16 @@
 """test_validate.py — pytest coverage for scripts/validate.py against the
-fixture skills under tests/fixtures/skills/{valid, missing-key,
-bad-frontmatter, oversize-description, banned-command, undeclared-param,
-unmarked-step}, plus the git-backed rules: --standalone mode (name from the
-frontmatter), the tree rules (symlinks, nested submodules/repos, the 50-file
-and 1 MB caps) and registry mode (the checkout is named after its skills.json
-entry; `--all` clones every entry).
+fixture templates under tests/fixtures/templates/{valid, missing-key,
+dynamic-argv, retired-sdk, undeclared-env, oversize-description, no-waiter,
+bad-params}, plus the git-backed rules: --standalone mode (id from
+recipe.json), the tree rules (symlinks, nested submodules/repos, the 50-file
+and 1 MB caps) and registry mode (the checkout is named after its
+templates.json entry; `--all` clones every entry).
 """
 from __future__ import annotations
 
 import importlib.util
 import json
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -19,7 +18,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-FIXTURES = REPO_ROOT / "tests" / "fixtures" / "skills"
+FIXTURES = REPO_ROOT / "tests" / "fixtures" / "templates"
 
 
 def _load_validate_module():
@@ -33,29 +32,42 @@ def _load_validate_module():
 validate = _load_validate_module()
 
 
-def run(name: str, maintainer: bool = False):
+def run(name: str, maintainer: bool = False, standalone: bool = True):
     reserved = validate.load_reserved()
-    skill_dir = FIXTURES / name
-    ok, result = validate.validate_skill(skill_dir, reserved, maintainer, json_mode=True)
+    template_dir = FIXTURES / name
+    ok, result = validate.validate_template(template_dir, reserved, maintainer, json_mode=True, standalone=standalone)
     return ok, result
 
 
-def test_valid_skill_passes():
+def test_valid_template_passes():
     ok, result = run("valid")
     assert ok, result["errors"]
     assert result["errors"] == []
+    assert result["warnings"] == []
 
 
 def test_missing_idempotency_key_fails():
     ok, result = run("missing-key")
     assert not ok
-    assert any("idempotency_key" in e for e in result["errors"])
+    assert any("idempotency-key" in e for e in result["errors"])
 
 
-def test_bad_frontmatter_fails():
-    ok, result = run("bad-frontmatter")
+def test_dynamic_argv_warns_but_does_not_refuse():
+    ok, result = run("dynamic-argv")
+    assert ok, result["errors"]
+    assert any("partly dynamic" in w for w in result["warnings"])
+
+
+def test_retired_sdk_call_fails_with_the_replacement_named():
+    ok, result = run("retired-sdk")
     assert not ok
-    assert any(e.startswith("metadata") for e in result["errors"])
+    assert any("bevo.trade(...) is retired" in e and "acp trade" in e for e in result["errors"])
+
+
+def test_undeclared_env_key_fails():
+    ok, result = run("undeclared-env")
+    assert not ok
+    assert any("SECRET_PARAM" in e for e in result["errors"])
 
 
 def test_oversize_description_fails():
@@ -64,90 +76,48 @@ def test_oversize_description_fails():
     assert any(e.startswith("description") for e in result["errors"])
 
 
-def test_banned_command_fails():
-    ok, result = run("banned-command")
+def test_no_waiter_fails():
+    ok, result = run("no-waiter")
     assert not ok
-    assert any(e.startswith("command-allowlist") for e in result["errors"])
-    assert any("curl" in e for e in result["errors"])
-    assert any("--help" in e for e in result["errors"])
+    assert any("never calls a waiter" in e for e in result["errors"])
 
 
-def test_undeclared_param_fails():
-    ok, result = run("undeclared-param")
+def test_bad_params_schema_fails():
+    ok, result = run("bad-params")
     assert not ok
-    assert any("SECRET_PARAM" in e for e in result["errors"])
+    assert any("unsupported JSON-Schema keyword" in e for e in result["errors"])
 
 
-def test_unmarked_step_fails():
-    ok, result = run("unmarked-step")
-    assert not ok
-    assert any(e.startswith("steps") for e in result["errors"])
-
-
-def test_the_pre_rename_bevo_block_is_rejected(tmp_path):
-    """The namespace key is `metadata.butler`. `metadata.bevo` is the
-    pre-rename spelling and is refused outright — this is a hard cut, so a
-    skill carrying the old key must fail here rather than validate and then
-    read as an empty block in the container."""
-    skill_dir = tmp_path / "butler-old-key"
-    skill_dir.mkdir()
-    (skill_dir / "SKILL.md").write_text(
-        '---\nname: butler-old-key\ndescription: x\nversion: 1.0.0\n'
-        'metadata: {"bevo":{"tier":"on-demand","modes":["one-off"],"moneyMoving":false}}\n---\n\n'
-        "## When to use\nx\n## Before you start\nx\n## Customize\nx\n"
-        "## One-off procedure\n1. [FIXED] x\n## Failure handling\n|a|b|\n|-|-|\n## Limits\nx\n"
-        "## Say to the owner\nx\n"
-    )
-    (skill_dir / "CHANGELOG.md").write_text("# Changelog\n")
-    ok, result = validate.validate_skill(skill_dir, set(), maintainer=True, json_mode=True)
-    assert not ok
-    assert any(e.startswith("metadata.butler: required block missing") for e in result["errors"])
-
-
-def test_reserved_name_rejected(tmp_path):
+def test_reserved_id_rejected(tmp_path):
     reserved = {"web-checkout"}
-    skill_dir = tmp_path / "web-checkout"
-    skill_dir.mkdir()
-    (skill_dir / "SKILL.md").write_text(
-        '---\nname: web-checkout\ndescription: x\nversion: 1.0.0\n'
-        'metadata: {"butler":{"tier":"on-demand","modes":["one-off"],"moneyMoving":false}}\n---\n\n'
-        "## When to use\nx\n## Before you start\nx\n## Customize\nx\n"
-        "## One-off procedure\n1. [FIXED] x\n## Failure handling\n|a|b|\n|-|-|\n## Limits\nx\n"
-        "## Say to the owner\nx\n"
-    )
-    (skill_dir / "CHANGELOG.md").write_text("# Changelog\n")
-    ok, result = validate.validate_skill(skill_dir, reserved, maintainer=False, json_mode=True)
+    _write_minimal_template(tmp_path / "web-checkout", "web-checkout")
+    ok, result = validate.validate_template(tmp_path / "web-checkout", reserved, maintainer=False, json_mode=True, standalone=True)
     assert not ok
     assert any("reserved" in e for e in result["errors"])
 
 
 def test_butler_prefix_requires_maintainer(tmp_path):
     reserved: set[str] = set()
-    skill_dir = tmp_path / "butler-new-thing"
-    _write_minimal_skill(skill_dir, "butler-new-thing")
-    ok, result = validate.validate_skill(skill_dir, reserved, maintainer=False, json_mode=True)
+    template_dir = tmp_path / "butler-new-thing"
+    _write_minimal_template(template_dir, "butler-new-thing")
+    ok, result = validate.validate_template(template_dir, reserved, maintainer=False, json_mode=True, standalone=True)
     assert not ok
     assert any("maintainer-only 'butler-' prefix" in e for e in result["errors"])
-    ok2, _ = validate.validate_skill(skill_dir, reserved, maintainer=True, json_mode=True)
+    ok2, _ = validate.validate_template(template_dir, reserved, maintainer=True, json_mode=True, standalone=True)
     assert ok2
 
 
 def test_bevo_prefix_is_refused_even_for_maintainers(tmp_path):
-    # bevo-* is the container's bundled-skill namespace (bevo-hub, bevo-onchain, ...).
-    skill_dir = tmp_path / "bevo-new-thing"
-    _write_minimal_skill(skill_dir, "bevo-new-thing")
+    template_dir = tmp_path / "bevo-new-thing"
+    _write_minimal_template(template_dir, "bevo-new-thing")
     for maintainer in (False, True):
-        ok, result = validate.validate_skill(skill_dir, set(), maintainer=maintainer, json_mode=True)
+        ok, result = validate.validate_template(template_dir, set(), maintainer=maintainer, json_mode=True, standalone=True)
         assert not ok
-        assert any(e.startswith("name:") and "bundled-skill namespace" in e for e in result["errors"]), result["errors"]
+        assert any(e.startswith("id:") and "bundled-command" in e for e in result["errors"]), result["errors"]
         assert not any("maintainer-only" in e for e in result["errors"])
 
 
 def test_embedded_reserved_list_matches_schema_json():
-    # validate.py is published as a single standalone file, so it carries a mirror of
-    # schema/reserved-names.json; this is the only thing keeping the two in sync.
-    import json
-
     on_disk = set(json.loads((REPO_ROOT / "schema" / "reserved-names.json").read_text())["reserved"])
     assert set(validate.RESERVED_NAMES_BUILTIN) == on_disk
     assert validate.load_reserved() == on_disk
@@ -158,205 +128,181 @@ def test_load_reserved_falls_back_to_embedded_list_without_schema_dir(tmp_path, 
     assert validate.load_reserved() == set(validate.RESERVED_NAMES_BUILTIN)
 
 
-def _write_web3_skill(skill_dir: Path, contracts_json: str, with_contracts_section: bool) -> None:
-    skill_dir.mkdir(parents=True, exist_ok=True)
-    section = "## Contracts\n|a|b|\n|-|-|\n" if with_contracts_section else ""
-    (skill_dir / "SKILL.md").write_text(
-        "---\nname: foo\ndescription: x\nversion: 1.0.0\n"
-        'metadata: {"butler":{"tier":"on-demand","modes":["one-off"],"moneyMoving":true,'
-        '"web3":{"chains":[8453],"contracts":' + contracts_json + "}}}\n---\n\n"
-        "## When to use\nx\n## Before you start\nx\n## Customize\nx\n" + section +
-        "## One-off procedure\n1. [FIXED] x\n\n   ```bash\n   acp wallet send-transaction --chain-id 8453 --to 0x --data 0x --idempotency-key k\n   ```\n\n"
-        "## Idempotency and retries\ndo not re-run\n## Failure handling\n|a|b|\n|-|-|\n## Limits\nx\n"
-        "## Say to the owner\nx\n"
-    )
-    (skill_dir / "CHANGELOG.md").write_text("# Changelog\n")
-
-
-def test_web3_skill_with_empty_contracts_needs_no_contracts_section(tmp_path):
-    # A skill that takes the contract address as an owner-supplied param: contracts: [] is fine.
-    skill_dir = tmp_path / "foo"
-    _write_web3_skill(skill_dir, "[]", with_contracts_section=False)
-    ok, result = validate.validate_skill(skill_dir, set(), maintainer=False, json_mode=True, standalone=True)
-    assert ok, result["errors"]
-
-
-def test_web3_skill_with_listed_contracts_still_needs_contracts_section(tmp_path):
-    skill_dir = tmp_path / "foo"
-    contracts = '[{"name":"USDC","chainId":8453,"address":"0x833589fCD6eDb6e08f4c7C32D4f71b54bdA02913","functions":[]}]'
-    _write_web3_skill(skill_dir, contracts, with_contracts_section=False)
-    ok, result = validate.validate_skill(skill_dir, set(), maintainer=False, json_mode=True, standalone=True)
-    assert not ok
-    assert any(e.startswith("web3:") and "## Contracts" in e for e in result["errors"])
-    _write_web3_skill(skill_dir, contracts, with_contracts_section=True)
-    ok2, result2 = validate.validate_skill(skill_dir, set(), maintainer=False, json_mode=True, standalone=True)
-    assert ok2, result2["errors"]
-
-
-def test_send_transaction_without_any_web3_block_is_still_refused(tmp_path):
-    skill_dir = tmp_path / "foo"
-    _write_web3_skill(skill_dir, "[]", with_contracts_section=False)
-    text = (skill_dir / "SKILL.md").read_text().replace(',"web3":{"chains":[8453],"contracts":[]}', "")
-    (skill_dir / "SKILL.md").write_text(text)
-    ok, result = validate.validate_skill(skill_dir, set(), maintainer=False, json_mode=True, standalone=True)
-    assert not ok
-    assert any(e.startswith("web3:") and "declares no metadata.butler.web3 block" in e for e in result["errors"])
-
-
 def test_downloaded_tooling_in_the_tree_is_a_warning_not_an_error(tmp_path):
-    skill_dir = tmp_path / "foo"
-    _write_minimal_skill(skill_dir, "foo")
-    (skill_dir / "validate.py").write_text("# downloaded\n")
-    (skill_dir / "replay.py").write_text("# downloaded\n")
-    ok, result = validate.validate_skill(skill_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    template_dir = tmp_path / "foo"
+    _write_minimal_template(template_dir, "foo")
+    (template_dir / "validate.py").write_text("# downloaded\n")
+    (template_dir / "replay.py").write_text("# downloaded\n")
+    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
     assert ok, result["errors"]
     assert any("validate.py looks like downloaded hub tooling" in w for w in result["warnings"])
     assert any("replay.py looks like downloaded hub tooling" in w for w in result["warnings"])
 
 
-# --- git-backed registry: --standalone mode, tree rules, pin rules -----------------
+# --- git-backed registry: --standalone mode, tree rules, layout rules --------------------
 
 
-def _write_minimal_skill(skill_dir: Path, name: str) -> None:
-    skill_dir.mkdir(parents=True, exist_ok=True)
-    (skill_dir / "SKILL.md").write_text(
-        f'---\nname: {name}\ndescription: x\nversion: 1.0.0\n'
-        'metadata: {"butler":{"tier":"on-demand","modes":["one-off"],"moneyMoving":false}}\n---\n\n'
-        "## When to use\nx\n## Before you start\nx\n## Customize\nx\n"
-        "## One-off procedure\n1. [FIXED] x\n## Failure handling\n|a|b|\n|-|-|\n## Limits\nx\n"
-        "## Say to the owner\nx\n"
-    )
-    (skill_dir / "CHANGELOG.md").write_text("# Changelog\n")
+def _write_minimal_template(template_dir: Path, tid: str, triggers=None) -> None:
+    template_dir.mkdir(parents=True, exist_ok=True)
+    recipe = {
+        "id": tid,
+        "version": 1,
+        "description": "A minimal fixture template.",
+        "params": {"type": "object", "properties": {}},
+    }
+    if triggers is not None:
+        recipe["triggers"] = triggers
+    (template_dir / "recipe.json").write_text(json.dumps(recipe))
+    (template_dir / "duty.py").write_text("import bevo\nbevo.log('x')\n")
+    (template_dir / "README.md").write_text("# fixture\n")
 
 
-def test_standalone_takes_name_from_frontmatter_not_directory(tmp_path):
-    # An author's clone can be called anything (butler-skill-foo, my-checkout, ...).
-    skill_dir = tmp_path / "butler-skill-foo-checkout"
-    _write_minimal_skill(skill_dir, "foo")
-    ok, result = validate.validate_skill(skill_dir, set(), maintainer=False, json_mode=True, standalone=True)
+def test_standalone_takes_id_from_recipe_json_not_directory(tmp_path):
+    template_dir = tmp_path / "butler-skill-foo-checkout"
+    _write_minimal_template(template_dir, "foo")
+    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
     assert ok, result["errors"]
-    assert result["skill"] == "foo"
-    assert result["promptCost"] == validate.prompt_cost("foo", "x", "skills/foo/SKILL.md")
+    assert result["template"] == "foo"
 
-    # Registry mode on the same directory still enforces name == directory.
-    ok2, result2 = validate.validate_skill(skill_dir, set(), maintainer=False, json_mode=True, standalone=False)
+    # Registry mode on the same directory still enforces id == directory.
+    ok2, result2 = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=False)
     assert not ok2
-    assert any(e.startswith("name:") and "must equal directory name" in e for e in result2["errors"])
+    assert any(e.startswith("id:") and "must equal directory name" in e for e in result2["errors"])
 
 
-def test_standalone_still_requires_a_valid_skill_name(tmp_path):
-    skill_dir = tmp_path / "anything"
-    _write_minimal_skill(skill_dir, "_template")
-    ok, result = validate.validate_skill(skill_dir, set(), maintainer=False, json_mode=True, standalone=True)
+def test_standalone_still_requires_a_valid_template_id(tmp_path):
+    template_dir = tmp_path / "anything"
+    _write_minimal_template(template_dir, "_template")
+    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
     assert not ok
-    assert any(e.startswith("name:") and "must match" in e for e in result["errors"])
+    assert any(e.startswith("id:") and "must match" in e for e in result["errors"])
 
 
 def test_standalone_ignores_the_authors_git_dir_and_pycache(tmp_path):
-    skill_dir = tmp_path / "repo"
-    _write_minimal_skill(skill_dir, "foo")
-    (skill_dir / ".git").mkdir()
-    (skill_dir / ".git" / "big.pack").write_bytes(b"\0" * (validate.MAX_TREE_BYTES + 1))
-    (skill_dir / "__pycache__").mkdir()
-    (skill_dir / "__pycache__" / "duty.cpython-311.pyc").write_bytes(b"\0" * 10)
-    ok, result = validate.validate_skill(skill_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    template_dir = tmp_path / "repo"
+    _write_minimal_template(template_dir, "foo")
+    (template_dir / ".git").mkdir()
+    (template_dir / ".git" / "big.pack").write_bytes(b"\0" * (validate.MAX_TREE_BYTES + 1))
+    (template_dir / "__pycache__").mkdir()
+    (template_dir / "__pycache__" / "duty.cpython-311.pyc").write_bytes(b"\0" * 10)
+    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
     assert ok, result["errors"]
 
 
 def test_symlink_anywhere_is_refused(tmp_path):
-    skill_dir = tmp_path / "foo"
-    _write_minimal_skill(skill_dir, "foo")
-    (skill_dir / "docs").mkdir()
-    os.symlink(skill_dir / "SKILL.md", skill_dir / "docs" / "link.md")
-    ok, result = validate.validate_skill(skill_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    template_dir = tmp_path / "foo"
+    _write_minimal_template(template_dir, "foo")
+    (template_dir / "docs").mkdir()
+    os.symlink(template_dir / "recipe.json", template_dir / "docs" / "link.json")
+    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
     assert not ok
-    assert any(e.startswith("tree:") and "symlink" in e and "docs/link.md" in e for e in result["errors"])
+    assert any(e.startswith("layout:") and "symlink" in e and "docs/link.json" in e for e in result["errors"])
 
 
 def test_symlinked_directory_is_refused_and_not_followed(tmp_path):
-    skill_dir = tmp_path / "foo"
-    _write_minimal_skill(skill_dir, "foo")
+    template_dir = tmp_path / "foo"
+    _write_minimal_template(template_dir, "foo")
     outside = tmp_path / "outside"
     outside.mkdir()
     (outside / "x.md").write_text("x")
-    os.symlink(outside, skill_dir / "vendor", target_is_directory=True)
-    ok, result = validate.validate_skill(skill_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    os.symlink(outside, template_dir / "vendor", target_is_directory=True)
+    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
     assert not ok
-    assert any(e.startswith("tree:") and "symlink" in e and "vendor" in e for e in result["errors"])
+    assert any(e.startswith("layout:") and "symlink" in e and "vendor" in e for e in result["errors"])
 
 
 def test_nested_gitmodules_is_refused(tmp_path):
-    skill_dir = tmp_path / "foo"
-    _write_minimal_skill(skill_dir, "foo")
-    (skill_dir / ".gitmodules").write_text('[submodule "x"]\n\tpath = x\n\turl = https://github.com/a/b\n')
-    ok, result = validate.validate_skill(skill_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    template_dir = tmp_path / "foo"
+    _write_minimal_template(template_dir, "foo")
+    (template_dir / ".gitmodules").write_text('[submodule "x"]\n\tpath = x\n\turl = https://github.com/a/b\n')
+    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
     assert not ok
-    assert any(e.startswith("tree:") and "nested submodules" in e for e in result["errors"])
+    assert any(e.startswith("layout:") and "nested submodules" in e for e in result["errors"])
 
 
 def test_nested_git_repository_is_refused(tmp_path):
-    skill_dir = tmp_path / "foo"
-    _write_minimal_skill(skill_dir, "foo")
-    (skill_dir / "vendor" / ".git").mkdir(parents=True)
-    (skill_dir / "vendor" / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
-    ok, result = validate.validate_skill(skill_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    template_dir = tmp_path / "foo"
+    _write_minimal_template(template_dir, "foo")
+    (template_dir / "vendor" / ".git").mkdir(parents=True)
+    (template_dir / "vendor" / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
     assert not ok
-    assert any(e.startswith("tree:") and "nested git repository" in e and "vendor/.git" in e for e in result["errors"])
+    assert any(e.startswith("layout:") and "nested git repository" in e and "vendor/.git" in e for e in result["errors"])
 
 
 def test_more_than_50_files_is_refused(tmp_path):
-    skill_dir = tmp_path / "foo"
-    _write_minimal_skill(skill_dir, "foo")
-    (skill_dir / "fixtures").mkdir()
-    for i in range(validate.MAX_TREE_FILES):  # 2 skill files + 50 = 52 > 50
-        (skill_dir / "fixtures" / f"f{i}.json").write_text("{}")
-    ok, result = validate.validate_skill(skill_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    template_dir = tmp_path / "foo"
+    _write_minimal_template(template_dir, "foo")
+    (template_dir / "fixtures").mkdir()
+    for i in range(validate.MAX_TREE_FILES):
+        (template_dir / "fixtures" / f"f{i}.json").write_text("{}")
+    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
     assert not ok
-    assert any(e.startswith("tree:") and f"must be <= {validate.MAX_TREE_FILES}" in e for e in result["errors"])
+    assert any(e.startswith("layout:") and f"must be <= {validate.MAX_TREE_FILES}" in e for e in result["errors"])
 
 
 def test_more_than_1mb_is_refused(tmp_path):
-    skill_dir = tmp_path / "foo"
-    _write_minimal_skill(skill_dir, "foo")
-    (skill_dir / "notes.md").write_bytes(b"x" * (validate.MAX_TREE_BYTES + 1))
-    ok, result = validate.validate_skill(skill_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    template_dir = tmp_path / "foo"
+    _write_minimal_template(template_dir, "foo")
+    (template_dir / "notes.md").write_bytes(b"x" * (validate.MAX_TREE_BYTES + 1))
+    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
     assert not ok
-    assert any(e.startswith("tree:") and f"must be <= {validate.MAX_TREE_BYTES}" in e for e in result["errors"])
-    assert any(e.startswith("bundle-size:") for e in result["errors"])  # the older 200 KB rule still fires too
+    assert any(e.startswith("layout:") and f"must be <= {validate.MAX_TREE_BYTES}" in e for e in result["errors"])
 
 
-def test_registry_mode_requires_the_frontmatter_name_to_match_the_registry_name(tmp_path):
-    """Registry mode's remaining directory rule: `--all` clones each entry into a
-    directory named after its skills.json entry, so a skill whose frontmatter
-    disagrees would be installed under a name the registry never listed."""
-    skill_dir = tmp_path / "foo"
-    _write_minimal_skill(skill_dir, "bar")
-    ok, result = validate.validate_skill(skill_dir, set(), maintainer=False, json_mode=True, standalone=False)
+def test_missing_required_file_is_refused(tmp_path):
+    template_dir = tmp_path / "foo"
+    _write_minimal_template(template_dir, "foo")
+    (template_dir / "README.md").unlink()
+    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
     assert not ok
-    assert any(e.startswith("name:") and "must equal directory name" in e for e in result["errors"])
-    # --standalone drops that rule: the author's checkout is named whatever they cloned it as.
-    ok2, _ = validate.validate_skill(skill_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    assert any("missing required file: README.md" in e for e in result["errors"])
+
+
+def test_registry_mode_requires_the_recipe_id_to_match_the_registry_name(tmp_path):
+    template_dir = tmp_path / "foo"
+    _write_minimal_template(template_dir, "bar")
+    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=False)
+    assert not ok
+    assert any(e.startswith("id:") and "must equal directory name" in e for e in result["errors"])
+    ok2, _ = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
     assert ok2
 
 
-def test_load_registry_reads_skills_json(tmp_path):
-    registry = tmp_path / "skills.json"
+def test_triggers_outside_the_three_kinds_is_refused(tmp_path):
+    template_dir = tmp_path / "foo"
+    _write_minimal_template(template_dir, "foo", triggers=["timer", "price"])
+    (template_dir / "duty.py").write_text("import bevo\nfor t in bevo.ticks():\n    bevo.log(t)\n")
+    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    assert not ok
+    assert any("unknown trigger kind" in e and "price" in e for e in result["errors"])
+
+
+def test_load_registry_reads_templates_json(tmp_path):
+    registry = tmp_path / "templates.json"
     rows = [{"name": "foo", "repo": "https://github.com/someone/butler-skill-foo", "ref": "main"}]
-    registry.write_text(json.dumps({"skills": rows}))
+    registry.write_text(json.dumps({"templates": rows}))
     assert validate.load_registry(registry) == rows
 
+    # Empty is a legitimate registry — day one, or every template yanked — so
+    # it reads as an empty list rather than an error. A MISSING key is still a
+    # malformed file, and so is a missing registry.
     empty = tmp_path / "empty.json"
-    empty.write_text(json.dumps({"skills": []}))
+    empty.write_text(json.dumps({"templates": []}))
+    assert validate.load_registry(empty) == []
+
+    malformed = tmp_path / "malformed.json"
+    malformed.write_text(json.dumps({"skills": []}))
     with pytest.raises(SystemExit):
-        validate.load_registry(empty)
+        validate.load_registry(malformed)
     with pytest.raises(SystemExit):
         validate.load_registry(tmp_path / "missing.json")
 
 
-def _make_skill_repo(root: Path, name: str) -> str:
-    """A real local git repo holding one skill, so clone_registry_skills has
-    something to clone without touching the network."""
-    _write_minimal_skill(root, name)
+def _make_template_repo(root: Path, tid: str) -> str:
+    """A real local git repo holding one template, so clone_registry_templates
+    has something to clone without touching the network."""
+    _write_minimal_template(root, tid, triggers=[])
     env = {
         **os.environ,
         "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com",
@@ -368,109 +314,44 @@ def _make_skill_repo(root: Path, name: str) -> str:
 
 
 def test_all_clones_every_registry_entry_into_a_directory_named_for_it(tmp_path, monkeypatch):
-    """No skill is checked out here, so `--all` fetches what it validates. The
-    clone directory takes the registry name, which is what makes the
-    frontmatter-name check above mean anything."""
-    registry = tmp_path / "skills.json"
-    registry.write_text(json.dumps({"skills": [
-        {"name": "foo", "repo": _make_skill_repo(tmp_path / "src-foo", "foo"), "ref": "main"},
-        {"name": "bar", "repo": _make_skill_repo(tmp_path / "src-bar", "bar"), "ref": "main"},
+    registry = tmp_path / "templates.json"
+    registry.write_text(json.dumps({"templates": [
+        {"name": "foo", "repo": _make_template_repo(tmp_path / "src-foo", "foo"), "ref": "main"},
+        {"name": "bar", "repo": _make_template_repo(tmp_path / "src-bar", "bar"), "ref": "main"},
     ]}))
     monkeypatch.setattr(validate, "REGISTRY_PATH", registry)
 
     work = tmp_path / "work"
     work.mkdir()
-    dirs = validate.clone_registry_skills(work)
+    dirs = validate.clone_registry_templates(work)
     assert [d.name for d in dirs] == ["bar", "foo"]  # sorted
     for d in dirs:
-        assert (d / "SKILL.md").exists()
-        ok, result = validate.validate_skill(d, set(), maintainer=False, json_mode=True, standalone=False)
+        assert (d / "recipe.json").exists()
+        ok, result = validate.validate_template(d, set(), maintainer=False, json_mode=True, standalone=False)
         assert ok, (d, result["errors"])
 
 
-def test_clone_registry_skills_fails_loudly_on_a_ref_that_does_not_resolve(tmp_path, monkeypatch):
-    registry = tmp_path / "skills.json"
-    registry.write_text(json.dumps({"skills": [
-        {"name": "foo", "repo": _make_skill_repo(tmp_path / "src-foo", "foo"), "ref": "no-such-ref"},
+def test_clone_registry_templates_fails_loudly_on_a_ref_that_does_not_resolve(tmp_path, monkeypatch):
+    registry = tmp_path / "templates.json"
+    registry.write_text(json.dumps({"templates": [
+        {"name": "foo", "repo": _make_template_repo(tmp_path / "src-foo", "foo"), "ref": "no-such-ref"},
     ]}))
     monkeypatch.setattr(validate, "REGISTRY_PATH", registry)
     work = tmp_path / "work"
     work.mkdir()
     with pytest.raises(SystemExit) as e:
-        validate.clone_registry_skills(work)
+        validate.clone_registry_templates(work)
     assert "no-such-ref" in str(e.value)
 
 
-def test_the_real_copytrade_skill_passes_in_both_modes(copytrade_checkout):
-    """The registry's own butler-copytrade, cloned at the ref skills.json
-    follows (tests/conftest.py), through both modes of the validator."""
+def test_the_local_valid_fixture_passes_in_both_modes(template_checkout):
     reserved = validate.load_reserved()
-    ok, result = validate.validate_skill(copytrade_checkout, reserved, maintainer=True, json_mode=True)
+    ok, result = validate.validate_template(template_checkout, reserved, maintainer=True, json_mode=True)
     assert ok, result["errors"]
-    ok2, result2 = validate.validate_skill(copytrade_checkout, reserved, maintainer=True, json_mode=True, standalone=True)
+    ok2, result2 = validate.validate_template(template_checkout, reserved, maintainer=True, json_mode=True, standalone=True)
     assert ok2, result2["errors"]
-    assert result2["skill"] == "butler-copytrade"
+    assert result2["template"] == "valid"
 
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))
-
-
-# ── The duty CLI's two spellings (bevo-docker#178) ───────────────────────────
-# The container renamed `bevo-automation` to `bevo-duty` and kept the old name
-# on PATH as an undocumented alias. The validator must accept BOTH: every
-# already-published skill spells it the old way, and a skill can only adopt
-# the new one once the renamed image has reached the fleet.
-
-def test_both_duty_cli_spellings_share_one_subcommand_grammar():
-    assert validate.BEVO_AUTOMATION_SUBCOMMANDS is validate.BEVO_DUTY_SUBCOMMANDS
-    for name in ("bevo-duty", "bevo-automation"):
-        assert name in validate.TOOLBOX_FIRST_TOKENS
-
-
-def test_both_duty_cli_spellings_pass_the_command_allowlist(tmp_path):
-    for name in ("bevo-duty", "bevo-automation"):
-        issues = validate.Issues()
-        validate.check_command_allowlist(f"```sh\n{name} create '{{}}'\n```", issues)
-        assert not [e for e in issues.errors if "command-allowlist" in e], (name, issues.errors)
-
-
-def test_an_unknown_subcommand_is_still_rejected_under_the_new_name():
-    issues = validate.Issues()
-    validate.check_command_allowlist("```sh\nbevo-duty frobnicate '{}'\n```", issues)
-    assert any("command-allowlist" in e and "frobnicate" in e for e in issues.errors), issues.errors
-
-
-def test_the_renamed_creator_skill_dir_is_reserved():
-    reserved = validate.load_reserved()
-    assert "bevo-duty-creator" in reserved
-    # the pre-rename dir persists on older consoles, so it stays reserved too
-    assert "bevo-automation-creator" in reserved
-
-# ── The phone rail's container primitive (bevo-docker#138) ───────────────────
-# `app-checkout` drives a cloud Android phone brokered by bevo-server. Same
-# split as `web-checkout`: the command is baked into the image, the how-to is
-# the hub skill butler-app-checkout, so a SKILL.md must be allowed to spell it.
-
-def test_app_checkout_is_in_the_toolbox():
-    assert "app-checkout" in validate.TOOLBOX_FIRST_TOKENS
-
-
-def test_app_checkout_command_lines_pass_the_allowlist():
-    issues = validate.Issues()
-    body = (
-        "```sh\n"
-        "app-checkout start --app grabfood --country MY\n"
-        "app-checkout screen\n"
-        'app-checkout checkpoint --app GrabFood --summary "1x coffee" --amount 12.40 --currency MYR\n'
-        "app-checkout end\n"
-        "```"
-    )
-    validate.check_command_allowlist(body, issues)
-    assert not [e for e in issues.errors if "command-allowlist" in e], issues.errors
-
-
-def test_the_phone_rail_skill_name_is_not_the_command_name():
-    # `butler-app-checkout` is the hub name; `app-checkout` is the container
-    # command. A skill may not claim the command's name as its own.
-    assert validate.NAME_RE.match("butler-app-checkout")

@@ -1,0 +1,12 @@
+{
+  "id": "dynamic-argv",
+  "version": 1,
+  "description": "Fixture whose acp trade argv is built with a dynamic element — the validator must warn, not refuse.",
+  "triggers": ["timer"],
+  "params": {
+    "type": "object",
+    "properties": {
+      "AMOUNT_USD": { "type": "number", "default": 5 }
+    }
+  }
+}
