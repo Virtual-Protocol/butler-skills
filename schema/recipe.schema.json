@@ -43,12 +43,17 @@
     },
     "params": {
       "type": "object",
-      "description": "A JSON-Schema OBJECT describing the settings a duty created from this template takes. Only the subset of JSON-Schema the container's params checker supports may appear anywhere in this tree (see recipe-params-subset.schema.json for the exact keyword allowlist, enforced recursively by scripts/validate.py's check_params_schema).",
+      "description": "A JSON-Schema OBJECT describing the settings a duty created from this template takes. Only the subset of JSON-Schema the container's params checker supports may appear anywhere in this tree (see recipe-params-subset.schema.json for the exact keyword allowlist, enforced recursively by scripts/validate.py's check_params_schema), plus one root-only conditional-required escape hatch, `allOf` (see below).",
       "properties": {
         "type": { "const": "object" },
         "properties": { "type": "object" },
         "required": { "type": "array", "items": { "type": "string" } },
-        "additionalProperties": { "type": "boolean" }
+        "additionalProperties": { "type": "boolean" },
+        "allOf": {
+          "type": "array",
+          "items": { "type": "object" },
+          "description": "Root-only conditional-required subset the container's params checker enforces (conditionalClauses in recipe-params.mjs) and scripts/validate.py's check_params_conditionals validates: [{if: {properties: {<name>: {const: ...} | {enum: [...]}}}, then: {required: [...]}}, ...]. A condition holds only when the named property is present; `then` contributes `required` alone. Refused anywhere below the root."
+        }
       },
       "required": ["type", "properties"]
     }

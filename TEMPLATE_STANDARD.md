@@ -102,8 +102,33 @@ default, required, additionalProperties, description, properties
 ```
 
 `type`, where present, must be one of `object, string, number, integer, boolean, array`.
-There is no `pattern`, no `oneOf`/`anyOf`/`allOf`, no `$ref` — write the constraint you
-need with what is supported, or check it in `duty.py` itself.
+There is no `pattern`, no `oneOf`/`anyOf`, no `$ref` — write the constraint you need
+with what is supported, or check it in `duty.py` itself. `allOf` is allowed in exactly
+one shape, only at the root of `params` — see "Conditional required settings" below;
+anywhere else it is refused like any other unsupported keyword.
+
+### Conditional required settings
+
+The container's params checker implements ONE conditional: a `params.allOf` list of
+clauses, each `{if: {properties: {<name>: {const: <value>} | {enum: [<value>, ...]}}},
+then: {required: [<name>, ...]}}`, declared at the **root** of `params` only:
+
+```json
+"allOf": [
+  { "if": { "properties": { "SIZING": { "const": "fixed" } } }, "then": { "required": ["SIZE_USD"] } },
+  { "if": { "properties": { "SIZING": { "enum": ["cash_share", "leader_share"] } } }, "then": { "required": ["SHARE"] } }
+]
+```
+
+Semantics: a condition holds only when the named property is present on the filed
+params (a `const` or non-empty `enum` match against a *declared* property); `then`
+contributes `required` alone — no other JSON-Schema effect. This exists so a setting
+that only matters under one choice (e.g. `SIZE_USD` only when `SIZING: fixed`) can be
+asked for, rather than filed empty or always required. Nothing else — nested `allOf`,
+`else`, `if`/`then` keys beyond `properties`/`required`, or an `if` condition that is
+neither `const` nor `enum` — is implemented; `scripts/validate.py`'s
+`check_params_conditionals` refuses it so a template author never believes a broader
+shape works.
 
 A duty created from a template reads its settings with
 `PARAMS = json.loads(os.environ["PARAMS"])` — there is no render step and no second
