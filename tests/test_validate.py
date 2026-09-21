@@ -88,6 +88,135 @@ def test_bad_params_schema_fails():
     assert any("unsupported JSON-Schema keyword" in e for e in result["errors"])
 
 
+# --- params.allOf (root-only conditional-required) -----------------------------------------
+
+
+def _write_params_template(tmp_path, tid: str, params: dict):
+    template_dir = tmp_path / tid
+    template_dir.mkdir(parents=True, exist_ok=True)
+    recipe = {
+        "id": tid,
+        "version": 1,
+        "description": "A conditional-params fixture template.",
+        "params": params,
+    }
+    (template_dir / "recipe.json").write_text(json.dumps(recipe))
+    (template_dir / "duty.py").write_text("import bevo\nbevo.log('x')\n")
+    (template_dir / "README.md").write_text("# fixture\n")
+    return template_dir
+
+
+_VALID_ALLOF_PARAMS = {
+    "type": "object",
+    "properties": {
+        "SIZING": {"type": "string", "enum": ["fixed", "cash_share", "leader_share"]},
+        "SIZE_USD": {"type": "number", "minimum": 1},
+        "SHARE": {"type": "number", "minimum": 0.01, "maximum": 1},
+    },
+    "required": ["SIZING"],
+    "allOf": [
+        {"if": {"properties": {"SIZING": {"const": "fixed"}}}, "then": {"required": ["SIZE_USD"]}},
+        {
+            "if": {"properties": {"SIZING": {"enum": ["cash_share", "leader_share"]}}},
+            "then": {"required": ["SHARE"]},
+        },
+    ],
+}
+
+
+def test_valid_allof_conditional_required_passes(tmp_path):
+    template_dir = _write_params_template(tmp_path, "valid-allof", _VALID_ALLOF_PARAMS)
+    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    assert ok, result["errors"]
+    assert not any(e.startswith("params") for e in result["errors"])
+
+
+def test_allof_nested_under_a_property_is_refused(tmp_path):
+    params = {
+        "type": "object",
+        "properties": {
+            "SIZING": {
+                "type": "string",
+                "allOf": [{"if": {"properties": {}}, "then": {"required": []}}],
+            }
+        },
+    }
+    template_dir = _write_params_template(tmp_path, "nested-allof", params)
+    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    assert not ok
+    assert any("unsupported JSON-Schema keyword" in e and "allOf" in e for e in result["errors"])
+
+
+def test_allof_clause_with_extra_key_is_refused(tmp_path):
+    import copy
+
+    params = copy.deepcopy(_VALID_ALLOF_PARAMS)
+    params["allOf"][0]["else"] = {"required": []}
+    template_dir = _write_params_template(tmp_path, "extra-key-allof", params)
+    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    assert not ok
+    assert any("params.allOf[0]: unsupported key" in e for e in result["errors"])
+
+
+def test_allof_if_condition_using_minimum_is_refused(tmp_path):
+    import copy
+
+    params = copy.deepcopy(_VALID_ALLOF_PARAMS)
+    params["allOf"][0]["if"]["properties"]["SIZING"] = {"minimum": 1}
+    template_dir = _write_params_template(tmp_path, "minimum-allof", params)
+    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    assert not ok
+    assert any("must be an object with exactly one key, 'const' or 'enum'" in e for e in result["errors"])
+
+
+def test_allof_then_with_anything_but_required_is_refused(tmp_path):
+    import copy
+
+    params = copy.deepcopy(_VALID_ALLOF_PARAMS)
+    params["allOf"][0]["then"] = {"default": {"SIZE_USD": 5}}
+    template_dir = _write_params_template(tmp_path, "bad-then-allof", params)
+    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    assert not ok
+    assert any("params.allOf[0].then: must be an object with exactly the key 'required'" in e for e in result["errors"])
+
+
+def test_allof_undeclared_required_name_is_refused(tmp_path):
+    import copy
+
+    params = copy.deepcopy(_VALID_ALLOF_PARAMS)
+    params["allOf"][0]["then"]["required"] = ["NOT_DECLARED"]
+    template_dir = _write_params_template(tmp_path, "undeclared-required-allof", params)
+    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    assert not ok
+    assert any(
+        "params.allOf[0].then.required: 'NOT_DECLARED' is not declared" in e for e in result["errors"]
+    )
+
+
+def test_allof_undeclared_condition_name_is_refused(tmp_path):
+    import copy
+
+    params = copy.deepcopy(_VALID_ALLOF_PARAMS)
+    params["allOf"][0]["if"]["properties"] = {"NOT_DECLARED": {"const": "fixed"}}
+    template_dir = _write_params_template(tmp_path, "undeclared-condition-allof", params)
+    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    assert not ok
+    assert any(
+        "params.allOf[0].if.properties.NOT_DECLARED" in e and "is not declared" in e for e in result["errors"]
+    )
+
+
+def test_allof_const_outside_property_enum_is_refused(tmp_path):
+    import copy
+
+    params = copy.deepcopy(_VALID_ALLOF_PARAMS)
+    params["allOf"][0]["if"]["properties"]["SIZING"] = {"const": "not-a-valid-option"}
+    template_dir = _write_params_template(tmp_path, "bad-const-allof", params)
+    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    assert not ok
+    assert any("not in 'SIZING'" in e and "own enum" in e for e in result["errors"])
+
+
 def test_reserved_id_rejected(tmp_path):
     reserved = {"web-checkout"}
     _write_minimal_template(tmp_path / "web-checkout", "web-checkout")

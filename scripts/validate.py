@@ -295,6 +295,87 @@ def check_params_schema(node, path: str, issues: Issues) -> None:
         issues.error("params", f"{path}.required: must be an array")
 
 
+def check_params_conditionals(params: dict, issues: Issues) -> None:
+    """Validate `params.allOf` — the ONE conditional shape the container's params
+    checker implements (`conditionalClauses` in
+    virtuals-agent/src/integrations/butler/bin/automation/recipe-params.mjs): a
+    list of `{if: {properties: {<name>: {const: ...} | {enum: [...]}}}, then:
+    {required: [...]}}` clauses at the ROOT of `params` only. `allOf` anywhere
+    else in the tree stays refused by check_params_schema's keyword allowlist —
+    this function is only ever called on the root node, never recursively.
+
+    Semantics enforced here match the container exactly: a condition holds only
+    when the named property is present on the filed params, and `then`
+    contributes `required` alone (no other JSON-Schema effect). Anything wider
+    (nested allOf, else, other if/then keywords, non-const/enum conditions) is
+    refused so a template author can never believe a broader shape works.
+    """
+    all_of = params.get("allOf")
+    if not isinstance(all_of, list) or not all_of:
+        issues.error("params", "params.allOf: must be a non-empty array")
+        return
+
+    declared_props = params.get("properties")
+    declared_props = declared_props if isinstance(declared_props, dict) else {}
+
+    for i, clause in enumerate(all_of):
+        prefix = f"params.allOf[{i}]"
+        if not isinstance(clause, dict):
+            issues.error("params", f"{prefix}: must be an object, got {type(clause).__name__}")
+            continue
+        extra = set(clause.keys()) - {"if", "then"}
+        if extra:
+            issues.error("params", f"{prefix}: unsupported key(s) {sorted(extra)} — only 'if' and 'then'")
+
+        cond = clause.get("if")
+        if not isinstance(cond, dict) or set(cond.keys()) != {"properties"}:
+            issues.error("params", f"{prefix}.if: must be an object with exactly the key 'properties'")
+        else:
+            cond_props = cond.get("properties")
+            if not isinstance(cond_props, dict) or not cond_props:
+                issues.error("params", f"{prefix}.if.properties: must be a non-empty object")
+            else:
+                for name, sub in cond_props.items():
+                    cprefix = f"{prefix}.if.properties.{name}"
+                    if name not in declared_props:
+                        issues.error("params", f"{cprefix}: {name!r} is not declared in params.properties")
+                        continue
+                    if not isinstance(sub, dict) or len(sub) != 1 or next(iter(sub)) not in ("const", "enum"):
+                        issues.error(
+                            "params",
+                            f"{cprefix}: must be an object with exactly one key, 'const' or 'enum'",
+                        )
+                        continue
+                    key = next(iter(sub))
+                    value = sub[key]
+                    if key == "enum" and (not isinstance(value, list) or not value):
+                        issues.error("params", f"{cprefix}.enum: must be a non-empty array")
+                        continue
+                    prop_enum = declared_props[name].get("enum") if isinstance(declared_props[name], dict) else None
+                    if isinstance(prop_enum, list) and prop_enum:
+                        candidates = value if key == "enum" else [value]
+                        bad = [v for v in candidates if v not in prop_enum]
+                        if bad:
+                            issues.error(
+                                "params",
+                                f"{cprefix}.{key}: value(s) {bad!r} not in {name!r}'s own enum {prop_enum!r}",
+                            )
+
+        then = clause.get("then")
+        if not isinstance(then, dict) or set(then.keys()) != {"required"}:
+            issues.error("params", f"{prefix}.then: must be an object with exactly the key 'required'")
+        else:
+            required = then.get("required")
+            if not isinstance(required, list) or not required or not all(isinstance(r, str) for r in required):
+                issues.error("params", f"{prefix}.then.required: must be a non-empty array of strings")
+            else:
+                for name in required:
+                    if name not in declared_props:
+                        issues.error(
+                            "params", f"{prefix}.then.required: {name!r} is not declared in params.properties"
+                        )
+
+
 def check_recipe_json(recipe: dict, expected_id: str | None, issues: Issues) -> None:
     """expected_id is the directory/registry name in registry mode, or None
     in --standalone mode (the id only has to be a valid template id there)."""
@@ -348,7 +429,17 @@ def check_recipe_json(recipe: dict, expected_id: str | None, issues: Issues) -> 
 
     params = recipe.get("params")
     if params is not None:
-        check_params_schema(params, "params", issues)
+        # `allOf` is a root-only escape hatch (see check_params_conditionals):
+        # validate it separately, then run the normal recursive keyword check
+        # on a copy without `allOf` so the root's other keywords are still
+        # checked and `allOf` never has to be added to PARAM_SCHEMA_KEYWORDS
+        # (which would wrongly let it appear nested under `properties`/`items`
+        # too — the container's conditionalClauses only reads it at the root).
+        if isinstance(params, dict) and "allOf" in params:
+            check_params_conditionals(params, issues)
+            check_params_schema({k: v for k, v in params.items() if k != "allOf"}, "params", issues)
+        else:
+            check_params_schema(params, "params", issues)
 
 
 # README.md is returned verbatim to the model by the container's `recipe_show`,
