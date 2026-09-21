@@ -543,7 +543,11 @@ def check_duty_py(template_dir: Path, recipe: dict, issues: Issues) -> None:
                 fname = attr
                 if base == "os" and attr in ("system", "popen"):
                     issues.error("duty.py", f"line {node.lineno}: forbidden call: os.{attr}(...)")
-            if fname in FORBIDDEN_CALLS:
+            # Only a BARE call is the builtin. `re.compile(...)` is an attribute
+            # call on an allowed module and is used by every shipped template to
+            # precompile an address pattern; reading it as the builtin `compile`
+            # refused the two templates this registry exists to serve.
+            if isinstance(node.func, ast.Name) and fname in FORBIDDEN_CALLS:
                 issues.error("duty.py", f"line {node.lineno}: forbidden call: {fname}(...)")
             if base in FORBIDDEN_MODULES:
                 issues.error("duty.py", f"line {node.lineno}: forbidden call into {base}.{attr}(...)")

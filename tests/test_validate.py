@@ -427,3 +427,31 @@ def test_readme_warns_then_refuses_on_size(tmp_path):
     )
     assert not ok
     assert any("README.md" in e for e in result["errors"])
+
+
+def test_re_compile_is_not_the_builtin_compile(tmp_path):
+    """`re.compile(...)` is an attribute call on an allowed module.
+
+    Reading it as the builtin `compile` refused both shipped templates, each of
+    which precompiles an address pattern at module level — the exact templates
+    this registry exists to serve. Only a bare call is the builtin.
+    """
+    template_dir = tmp_path / "foo"
+    _write_minimal_template(template_dir, "foo")
+    (template_dir / "duty.py").write_text(
+        "import bevo\nimport re\n"
+        'EVM = re.compile(r"^0x[0-9a-fA-F]{40}$")\n'
+        "bevo.log(str(EVM))\n"
+    )
+    ok, result = validate.validate_template(
+        template_dir, set(), maintainer=False, json_mode=True, standalone=True
+    )
+    assert ok, result["errors"]
+
+    # The bare builtin is still refused.
+    (template_dir / "duty.py").write_text("import bevo\nx = compile('1', '<s>', 'eval')\nbevo.log(str(x))\n")
+    ok, result = validate.validate_template(
+        template_dir, set(), maintainer=False, json_mode=True, standalone=True
+    )
+    assert not ok
+    assert any("compile" in e for e in result["errors"])
