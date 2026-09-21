@@ -640,7 +640,8 @@ def load_registry(path: Path | None = None) -> list[dict]:
     if not path.exists():
         raise SystemExit(f"{path} not found — --all only works in a checkout of the registry")
     rows = json.loads(path.read_text()).get("templates")
-    if not isinstance(rows, list) or not rows:
+    # Empty is allowed, missing is not: an empty list is a legitimate registry (day one, or every template yanked); a MISSING key is a malformed file.
+    if not isinstance(rows, list):
         raise SystemExit(f"{path} has no `templates` list")
     return rows
 
@@ -706,6 +707,14 @@ def main() -> int:
             targets.append(Path(s).resolve())
 
         if not targets:
+            # `--all` over an empty registry is a pass, not a usage error: the
+            # registry is allowed to list nothing (day one, or every template
+            # yanked), and CI runs this on every PR. Without the distinction a
+            # deliberately empty templates.json fails the gate that exists to
+            # check the templates it lists.
+            if args.all:
+                print("registry lists no templates — nothing to validate")
+                return 0
             parser.error("no templates given; pass a path, --standalone <dir>, or --all")
 
         for t in targets:

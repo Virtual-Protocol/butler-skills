@@ -61,7 +61,11 @@ def main() -> int:
     with open(REGISTRY_PATH, encoding="utf-8") as f:
         data = json.load(f)
     rows = data.get("templates")
-    if not isinstance(rows, list) or not rows:
+    # Empty is allowed, missing is not: an empty list is a legitimate registry (day one, or every template yanked); a MISSING key is a malformed file.
+    # A consumer of an empty index answers "no such template", which is the
+    # same answer it gives for a query nothing matches — so an empty registry
+    # degrades to "write the duty as code" rather than to an error.
+    if not isinstance(rows, list):
         fail("templates.json has no `templates` list")
         return 1
 

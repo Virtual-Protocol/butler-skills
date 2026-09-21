@@ -80,8 +80,9 @@ def load_registry(path: Path | None = None) -> list[dict]:
     path = REGISTRY_PATH if path is None else path
     data = json.loads(path.read_text())
     rows = data.get("templates")
-    if not isinstance(rows, list) or not rows:
-        raise SystemExit(f"{path} has no `templates` list — the registry is empty")
+    # Empty is allowed, missing is not: an empty list is a legitimate registry (day one, or every template yanked); a MISSING key is a malformed file.
+    if not isinstance(rows, list):
+        raise SystemExit(f"{path} has no `templates` list")
     return rows
 
 

@@ -36,10 +36,17 @@ def raw_templates() -> list[dict]:
     return json.loads(REGISTRY_PATH.read_text())["templates"]
 
 
-def test_registry_exists_and_lists_templates():
+def test_registry_exists_and_is_well_formed():
+    """The registry file must exist and carry a `templates` list.
+
+    It may legitimately be EMPTY — at the v3 cutover it is, because CI clones
+    and validates every listed repo, so a repo may only be listed once it
+    actually ships a bundle. An empty registry publishes an empty index, and a
+    container reading one answers "no such template", which is the same answer
+    it gives for a query nothing matches.
+    """
     assert REGISTRY_PATH.exists(), "templates.json is the registry — it must exist"
-    rows = raw_templates()
-    assert rows, "templates.json lists no templates"
+    assert isinstance(raw_templates(), list), "templates.json has no `templates` list"
 
 
 def test_every_entry_is_a_name_and_an_https_github_link():

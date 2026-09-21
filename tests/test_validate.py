@@ -284,10 +284,17 @@ def test_load_registry_reads_templates_json(tmp_path):
     registry.write_text(json.dumps({"templates": rows}))
     assert validate.load_registry(registry) == rows
 
+    # Empty is a legitimate registry — day one, or every template yanked — so
+    # it reads as an empty list rather than an error. A MISSING key is still a
+    # malformed file, and so is a missing registry.
     empty = tmp_path / "empty.json"
     empty.write_text(json.dumps({"templates": []}))
+    assert validate.load_registry(empty) == []
+
+    malformed = tmp_path / "malformed.json"
+    malformed.write_text(json.dumps({"skills": []}))
     with pytest.raises(SystemExit):
-        validate.load_registry(empty)
+        validate.load_registry(malformed)
     with pytest.raises(SystemExit):
         validate.load_registry(tmp_path / "missing.json")
 

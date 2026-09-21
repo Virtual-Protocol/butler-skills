@@ -1,25 +1,4 @@
 {
-  "comment": "The registry IS this file. A duty template is an id and a GitHub link; its repo owns its versions. Adding or removing a template is a PR here — updating one is not: every build re-resolves each ref to a commit and republishes. Set `ref` to a branch to follow it, or to a tag to hold a release. The `name` here must equal the `id` in that repo's recipe.json — scripts/validate.py --all enforces it by cloning each entry into a directory named after this file's `name` and checking recipe.json's id against the directory name.",
-  "templates": [
-    {
-      "name": "app-checkout",
-      "repo": "https://github.com/Virtual-Protocol/butler-skill-app-checkout",
-      "ref": "main"
-    },
-    {
-      "name": "copytrade",
-      "repo": "https://github.com/Virtual-Protocol/butler-skill-copytrade",
-      "ref": "main"
-    },
-    {
-      "name": "dca",
-      "repo": "https://github.com/Virtual-Protocol/butler-skill-dca",
-      "ref": "main"
-    },
-    {
-      "name": "web-checkout",
-      "repo": "https://github.com/Virtual-Protocol/butler-skill-web-checkout",
-      "ref": "main"
-    }
-  ]
+  "comment": "The registry IS this file. A duty template is an id and a GitHub link; its repo owns its versions. Adding or removing a template is a PR here \u2014 updating one is not: every build re-resolves each ref to a commit and republishes. Set `ref` to a branch to follow it, or to a tag to hold a release. The `name` here must equal the `id` in that repo's recipe.json \u2014 scripts/validate.py --all enforces it by cloning each entry into a directory named after this file's `name` and checking recipe.json's id against the directory name. Deliberately empty at the v3 cutover: every listed repo is cloned and validated by CI, so a repo may only be listed once it actually ships a bundle. copytrade and dca are added back the moment their own conversion PRs land; app-checkout and web-checkout stay unlisted until the container grows the commands they drive, because a checkout flow has no duty.py to validate yet.",
+  "templates": []
 }
