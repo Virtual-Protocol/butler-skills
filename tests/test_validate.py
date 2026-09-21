@@ -355,3 +355,103 @@ def test_the_local_valid_fixture_passes_in_both_modes(template_checkout):
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))
+
+
+# --- README.md is written for the model, not for a human --------------------------------
+#
+# `recipe_show` hands this file to Butler verbatim on every call, so its cost is
+# context on a container that already carries a large standing prompt — and its
+# audience is a reader that was explicitly told to treat it as data.
+
+
+def _readme_issues(tmp_path: Path, body: str) -> list[str]:
+    """Validate a minimal template carrying `body` as its README; return warnings."""
+    template_dir = tmp_path / "foo"
+    _write_minimal_template(template_dir, "foo")
+    (template_dir / "README.md").write_text(body)
+    ok, result = validate.validate_template(
+        template_dir, set(), maintainer=False, json_mode=True, standalone=True
+    )
+    assert ok, result["errors"]
+    return result["warnings"]
+
+
+def test_readme_accepts_a_description_of_the_program(tmp_path):
+    clean = (
+        "Buys a fixed dollar amount of one token on a schedule.\n\n"
+        "It will not check the price, and it will not buy twice for one slot.\n"
+    )
+    assert _readme_issues(tmp_path, clean) == []
+
+
+def test_readme_warns_on_human_repository_furniture(tmp_path):
+    warnings = _readme_issues(
+        tmp_path,
+        # Allowlisted URLs throughout, so this isolates the furniture check from
+        # the separate url-lint rule.
+        "# butler-skill-foo\n\n"
+        "[![build](https://github.com/Virtual-Protocol/butler-skill-foo/badge.svg)]"
+        "(https://github.com/Virtual-Protocol/butler-skill-foo)\n\n"
+        "## Installation\n\ngit clone https://github.com/Virtual-Protocol/butler-skill-foo\n\n"
+        "## License\n\nMIT\n",
+    )
+    joined = " ".join(warnings)
+    assert "badge" in joined
+    assert "install section" in joined
+    assert "clone/install command" in joined
+    assert "licence/contributing/changelog" in joined
+
+
+def test_readme_warns_when_it_instructs_the_reader(tmp_path):
+    # The container fences this file as data, so an imperative is ignored by
+    # design — wasted context rather than a working instruction.
+    warnings = _readme_issues(tmp_path, "First, ask the owner which token they want.\n")
+    assert any("DATA, not instructions" in w for w in warnings)
+
+
+def test_readme_does_not_warn_on_a_heading_that_starts_with_a_verb(tmp_path):
+    # Only the first prose line is judged, and headings are skipped: "## Running
+    # costs" is a section title, not an instruction.
+    assert _readme_issues(tmp_path, "## Running costs\n\nOne model call per fire.\n") == []
+
+
+def test_readme_warns_then_refuses_on_size(tmp_path):
+    body = "Buys a token.\n" + ("x" * (validate.README_WARN_BYTES + 10))
+    assert any("prefilled" in w for w in _readme_issues(tmp_path, body))
+
+    template_dir = tmp_path / "big"
+    _write_minimal_template(template_dir, "big")
+    (template_dir / "README.md").write_text("Buys a token.\n" + "x" * (validate.README_MAX_BYTES + 10))
+    ok, result = validate.validate_template(
+        template_dir, set(), maintainer=False, json_mode=True, standalone=True
+    )
+    assert not ok
+    assert any("README.md" in e for e in result["errors"])
+
+
+def test_re_compile_is_not_the_builtin_compile(tmp_path):
+    """`re.compile(...)` is an attribute call on an allowed module.
+
+    Reading it as the builtin `compile` refused both shipped templates, each of
+    which precompiles an address pattern at module level — the exact templates
+    this registry exists to serve. Only a bare call is the builtin.
+    """
+    template_dir = tmp_path / "foo"
+    _write_minimal_template(template_dir, "foo")
+    (template_dir / "duty.py").write_text(
+        "import bevo\nimport re\n"
+        'EVM = re.compile(r"^0x[0-9a-fA-F]{40}$")\n'
+        "bevo.log(str(EVM))\n"
+    )
+    ok, result = validate.validate_template(
+        template_dir, set(), maintainer=False, json_mode=True, standalone=True
+    )
+    assert ok, result["errors"]
+
+    # The bare builtin is still refused.
+    (template_dir / "duty.py").write_text("import bevo\nx = compile('1', '<s>', 'eval')\nbevo.log(str(x))\n")
+    ok, result = validate.validate_template(
+        template_dir, set(), maintainer=False, json_mode=True, standalone=True
+    )
+    assert not ok
+    assert any("compile" in e for e in result["errors"])
