@@ -84,8 +84,6 @@ runs:
         set -eu
         FLAG=""
         if [ "$STANDALONE" = "true" ]; then FLAG="--standalone"; fi
-        PARAMS_ARG=""
-        if [ -n "$PARAMS_JSON" ]; then PARAMS_ARG="--params"; fi
         python3 "$BUTLER_SKILLS_HUB/scripts/validate.py" $FLAG $MAINTAINER_FLAG "$SKILL_PATH"
 
     - name: Offline replay of duty.py
@@ -103,6 +101,10 @@ runs:
         fi
         FLAG=""
         if [ "$STANDALONE" = "true" ]; then FLAG="--standalone"; fi
+        # Computed here, not in the validate step: each step is its own shell, and only
+        # this step's env carries PARAMS_JSON (under `set -u` the validate step died on it).
+        PARAMS_ARG=""
+        if [ -n "$PARAMS_JSON" ]; then PARAMS_ARG="--params"; fi
         # One replay per fixture: a buys-only feed never exercises the legs that size a
         # quantity themselves. Unquoted on purpose — $FIXTURES is a space-separated list.
         # Each run gets its own fresh temp state dir, so nothing leaks between fixtures.
