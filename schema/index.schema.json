@@ -1,8 +1,8 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://raw.githubusercontent.com/Virtual-Protocol/butler-skills/main/schema/index.schema.json",
-  "title": "Butler duty-template registry index",
-  "description": "Schema for dist/index.json produced by scripts/build_index.py.",
+  "title": "Butler skill hub index",
+  "description": "Schema for dist/index.json produced by scripts/build_index.py: duty templates (`templates`, `aliases`) and skills (`skills`). schemaVersion stays 3 — `skills` is additive, and the container ignores top-level keys it does not read.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "generatedAt", "templates"],
@@ -61,6 +61,78 @@
           "ref": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,63}@\\d+$" },
           "supersededBy": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,63}@\\d+$" }
         }
+      }
+    },
+    "skills": {
+      "description": "One row per listed skill at the version its ref resolved to, plus a tombstone per yanked skill version. Files are served at skills/<name>/<version>/<path>.",
+      "type": "array",
+      "items": {
+        "anyOf": [
+          { "$ref": "#/definitions/skill" },
+          { "$ref": "#/definitions/skillTombstone" }
+        ]
+      }
+    }
+  },
+  "definitions": {
+    "skillName": { "type": "string", "maxLength": 64, "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
+    "semver": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "skill": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "description", "keywords", "moneyMoving", "requires", "source", "files"],
+      "properties": {
+        "name": { "$ref": "#/definitions/skillName" },
+        "version": { "$ref": "#/definitions/semver" },
+        "description": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "keywords": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "moneyMoving": { "type": "boolean" },
+        "requires": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["bins"],
+          "properties": {
+            "bins": { "type": "array", "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" } }
+          }
+        },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["repo", "ref", "commit"],
+          "properties": {
+            "repo": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+            "ref": { "type": "string", "pattern": "^[A-Za-z0-9._/-]{1,100}$" },
+            "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" }
+          }
+        },
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "sha256", "bytes"],
+            "properties": {
+              "path": {
+                "type": "string",
+                "pattern": "^(SKILL\\.md|references/([A-Za-z0-9_-][A-Za-z0-9._-]*/)*[A-Za-z0-9_-][A-Za-z0-9._-]*\\.md)$"
+              },
+              "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              "bytes": { "type": "integer", "minimum": 0 }
+            }
+          }
+        }
+      }
+    },
+    "skillTombstone": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "yanked", "files"],
+      "properties": {
+        "name": { "$ref": "#/definitions/skillName" },
+        "version": { "$ref": "#/definitions/semver" },
+        "yanked": { "const": true },
+        "files": { "type": "array", "maxItems": 0 }
       }
     }
   }

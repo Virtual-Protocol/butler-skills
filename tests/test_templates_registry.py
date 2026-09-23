@@ -71,6 +71,22 @@ def test_load_registry_agrees_with_the_file():
     assert build_index.load_registry() == raw_templates()
 
 
+def test_skills_listing_is_well_formed():
+    """skills.json is the other half of the registry — the same shape, Mastra's name
+    rule, and no name that templates.json also lists."""
+    path = REPO_ROOT / "skills.json"
+    rows = json.loads(path.read_text())["skills"]
+    assert isinstance(rows, list)
+    assert build_index.load_skills_registry() == rows
+    names = [row["name"] for row in rows]
+    assert names == sorted(set(names))
+    assert not set(names) & {row["name"] for row in raw_templates()}
+    for row in rows:
+        assert set(row) <= {"name", "repo", "ref"}
+        assert re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", row["name"]) and len(row["name"]) <= 64
+        assert HTTPS_GITHUB_RE.match(row["repo"]) and REF_RE.match(row["ref"])
+
+
 def test_no_submodule_machinery_remains():
     """Templates are links now: nothing is checked out here, so a leftover
     .gitmodules or templates/ tree would be a second, stale source of truth."""

@@ -1,33 +1,55 @@
 # Contributing
 
-This repo is the **registry** of duty templates the Butler container installs. Every
-template is its own git repository; the registry is a directory of links —
-`templates.json` lists each template by `name`, `repo` and `ref`, and every build clones
-each entry at its `ref` and publishes an index of the commits those refs resolved to. If
-you are a developer's Claude session with only this repo's README URL, start there:
-[README.md](README.md). This file is the condensed process/trust rules; README.md is the
-how-to.
+This repo is the **registry** of the skills and duty templates the Butler container
+installs. Every skill and every template is its own git repository; the registry is a
+directory of links — `skills.json` and `templates.json` list each one by `name`, `repo` and
+`ref`, and every build clones each entry at its `ref` and publishes an index of the
+commits those refs resolved to. If you are a developer's Claude session with only this
+repo's README URL, start there: [README.md](README.md). This file is the condensed
+process/trust rules; README.md is the how-to.
 
 ## The standard
 
-Everything CI enforces is written out in [TEMPLATE_STANDARD.md](TEMPLATE_STANDARD.md) —
-that file mirrors exactly what `scripts/validate.py` (and, for the registry listing,
-`scripts/check_registry.py`) checks. If the two ever disagree, the validator is right and
-`TEMPLATE_STANDARD.md` has drifted (please file a PR fixing the doc).
+Everything CI enforces is written out in [SKILL_STANDARD.md](SKILL_STANDARD.md) (skills)
+and [TEMPLATE_STANDARD.md](TEMPLATE_STANDARD.md) (duty templates) — they mirror exactly
+what `scripts/validate.py` (and, for the registry listings, `scripts/check_registry.py`)
+checks. If a doc and the validator ever disagree, the validator is right and the doc has
+drifted (please file a PR fixing the doc).
 
 ## Where things live
 
 | What | Where |
 | --- | --- |
 | A template's files (`recipe.json`, `duty.py`, `README.md`) | the template's own repo, at its root |
-| Team templates | `Virtual-Protocol/butler-skill-<id>` |
+| A skill's files (`SKILL.md`, `README.md`, `CHANGELOG.md`, `references/`) | the skill's own repo, at its root |
+| Team templates and skills | `Virtual-Protocol/butler-skill-<name>` |
 | Community templates | the author's own GitHub repo |
-| The registry entry | this repo: one `{"name", "repo", "ref"}` row in `templates.json` — the whole of what the registry stores about a template |
+| The registry entry | this repo: one `{"name", "repo", "ref"}` row in `templates.json` or `skills.json` — the whole of what the registry stores about it |
 | The published index | GitHub Pages, built by `scripts/build_index.py`, which clones each entry at its `ref` into a temp directory and indexes that throwaway checkout |
 | The standalone tools (`validate.py`, `replay.py`, `stub_bevo.py`, fixtures) | GitHub Pages `tools/`, laid out by `scripts/publish_tools.py`; a template repo's own CI is the composite action `.github/actions/validate` |
 
-No template content lives in this repo, so there is nothing here to edit for a template
-change.
+No template or skill content lives in this repo, so there is nothing here to edit for a
+change to one.
+
+## Listing a skill
+
+A skill reaches every butler that asks for it, and it tells the model what to run — so the
+skill listing is held tighter than the template listing:
+
+- **Listing a skill is maintainer-only.** It is one PR adding a row to `skills.json`,
+  opened by a `@Virtual-Protocol/butler-maintainers` member (CODEOWNERS covers the file).
+  A community author who wants a skill listed asks a maintainer to review and list it.
+- **Two maintainer reviews when the skill moves money** (`"moneyMoving": true`), one
+  otherwise. The reviewers read the skill repo **at the `ref` being listed**.
+- The skill must pass `python3 scripts/validate.py --all --maintainer` — the same check
+  every publish build runs. **A listed skill that stops validating fails the whole publish
+  build** (the last deploy stays live) until it is fixed or de-listed, so whoever lists a
+  skill owns keeping its `ref` valid.
+- A new version needs no PR here: bump `version` in `SKILL.md`, add its `CHANGELOG.md`
+  entry, merge in the skill's repo. A published `name@version` never changes bytes — the
+  build refuses a version the live index already serves with different content.
+- `scripts/new_skill.py <name> --skill` prints the steps; `scripts/remove_skill.py <name>`
+  de-lists or yanks one.
 
 ## Publishing an update to a template already in the registry
 
@@ -136,6 +158,10 @@ write access to a listed template repo with the same care as write access to thi
 `main`.
 
 ## The yank rule
+
+A skill is yanked or de-listed the same way (`scripts/remove_skill.py <name>`, with a
+`name@X.Y.Z` spec in `yanked.json` for `--yank`); what that does to butlers that already
+installed it is in [SECURITY.md](SECURITY.md). The rest of this section is about templates.
 
 A published, broken or unsafe template is fixed forward by a new version — publishing is
 immutable, so there is no "delete a version". A template is pulled from live use by

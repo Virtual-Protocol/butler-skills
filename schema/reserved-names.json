@@ -1,5 +1,5 @@
 {
-  "_comment": "Ids a duty template may never use. Two prefix rules live in scripts/validate.py: `butler-` is the Butler team's namespace and is maintainer-only (pass --maintainer or set MAINTAINER=1 to publish one); `bevo-` is the container's own bundled-command namespace and is refused outright. Everything listed here is an entrypoint-written or bundled dir/command name an installed template would collide with; scripts/validate.py embeds a mirror of this list so its standalone copy needs nothing beside it (tests/test_validate.py asserts they agree).",
+  "_comment": "Names a duty template or a skill may never use. Two prefix rules live in scripts/validate.py: `butler-` is the Butler team's namespace and is maintainer-only (pass --maintainer or set MAINTAINER=1 to publish one); `bevo-` is the container's own bundled-command namespace and is refused outright. Everything listed here is an entrypoint-written or bundled dir/command name an installed template or skill would collide with — `acp-cli` and `duty-code` are the two SKILL.md skills compiled into the butler image and written into <workspace>/skills/ at boot. scripts/validate.py embeds a mirror of this list so its standalone copy needs nothing beside it (tests/test_validate.py asserts they agree).",
   "reserved": [
     "bevo-onchain",
     "bevo-duty-creator",
@@ -8,6 +8,7 @@
     "bevo-skill-creator",
     "bevo-service-creator",
     "acp-cli",
+    "duty-code",
     "clawhub"
   ]
 }
