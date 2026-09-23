@@ -50,7 +50,11 @@ only the tombstone. A skill's `name@version` is immutable ACROSS builds: the
 live index (https://virtual-protocol.github.io/butler-skills/index.json, or
 --live-index / $BUTLER_SKILLS_LIVE_INDEX_URL) is fetched, and a version it
 already serves with different file hashes, or has yanked, is refused. An
-unreachable live index is a warning, not a failure.
+unreachable live index is a warning, not a failure. A skill row carries
+`maxSteps` when the skill sets one and always `requires: {bins, skills}`; every
+skill a published row requires must be published by the same build (listed,
+and not at a yanked version), and the requirements must not form a cycle —
+the butler installs a required skill first, so anything else fails the build.
 
 Within one build, an existing dist/<kind>/<name>/<version>/ directory is never
 overwritten with different bytes either. --dry-run performs every check and
@@ -345,7 +349,9 @@ def validate_skills(cloned: list[tuple[dict, Path]]) -> None:
 
 
 def collect_skill(skill_dir: Path, entry: dict) -> dict:
-    """One `skills[]` row, read out of a checkout that already validated."""
+    """One `skills[]` row, read out of a checkout that already validated. `maxSteps`
+    is on the row only when the skill sets one; `requires.skills` is always there,
+    [] when the skill builds on no other."""
     v = validator()
     issues = v.Issues()
     fm = v.parse_skill_md((skill_dir / "SKILL.md").read_text(encoding="utf-8"), issues)
@@ -356,16 +362,39 @@ def collect_skill(skill_dir: Path, entry: dict) -> dict:
     for rel in v.skill_published_files(skill_dir):
         f = skill_dir / rel
         files.append({"path": rel, "sha256": sha256_file(f), "bytes": f.stat().st_size})
-    return {
+    row = {
         "name": fm["name"],
         "version": fm["version"],
         "description": fm["description"],
         "keywords": list(butler["keywords"]),
         "moneyMoving": butler["moneyMoving"],
-        "requires": {"bins": list(butler["requires"]["bins"])},
-        "source": source_block(skill_dir, entry),
-        "files": files,
     }
+    if butler.get("maxSteps") is not None:
+        row["maxSteps"] = butler["maxSteps"]
+    row["requires"] = {
+        "bins": list(butler["requires"]["bins"]),
+        "skills": list(butler["requires"].get("skills", [])),
+    }
+    row["source"] = source_block(skill_dir, entry)
+    row["files"] = files
+    return row
+
+
+def check_skill_dependencies(rows: list[dict], listed: set[str]) -> None:
+    """Every skill a published row names in `requires.skills` must be published by
+    this same build — a butler installs the required skills first, so a requirement
+    the index does not serve (not listed, or listed with its current version
+    yanked) could never install — and the requirements must not form a cycle. The
+    rules are validate.py's (skill_dependency_errors, which `--all` applies to the
+    listing), and a failure fails the whole build, like a skill that does not
+    validate."""
+    graph = {row["name"]: row["requires"]["skills"] for row in rows}
+    problems = validator().skill_dependency_errors(graph, listed)
+    if problems:
+        raise SystemExit(
+            "\n".join(f"skill {name}: ERROR metadata.butler.requires.skills: {msg}" for name, msg in problems)
+            + "\nrefusing to publish: fix requires.skills (or list the skills it names) — the last deploy stays live until then"
+        )
 
 
 def skill_tombstone_entries(specs: set[str]) -> list[dict]:
@@ -509,6 +538,7 @@ def main() -> int:
                 print(f"WARN  {ref} is listed in skills.json but yanked in yanked.json — publishing only its tombstone")
                 continue
             skill_rows.append((row, d))
+        check_skill_dependencies([row for row, _ in skill_rows], {e["name"] for e in skill_registry})
         skill_tombstones = skill_tombstone_entries(skill_yanked)
         if skill_rows:
             check_skill_immutability([row for row, _ in skill_rows], fetch_live_index(live_index_url(args.live_index)))

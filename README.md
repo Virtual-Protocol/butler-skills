@@ -37,6 +37,10 @@ container actually has (`bevo-read`, `bevo-send`, `acp`, … — each subcommand
 against the real one), declares them in `requires.bins`, and keeps every money command in a
 `[FIXED]` step. Mastra silently drops a skill whose frontmatter it cannot parse, so the
 validator holds the frontmatter to the subset of YAML that always reads back verbatim.
+Two `metadata.butler` fields are optional: `maxSteps` (20–500) raises the step budget of a
+turn that loads the skill (a turn gets 20 by default; the container caps it at its own
+ceiling), and `requires.skills` names up to 5 skills this one builds on, which the butler's
+hub installs first — each must be listed in `skills.json` as well.
 [SKILL_STANDARD.md](SKILL_STANDARD.md) has every rule and a minimal valid skill.
 
 Listing a skill is maintainer-only — see [CONTRIBUTING.md](CONTRIBUTING.md). After that, a
@@ -264,12 +268,20 @@ can be resolved forward without the container guessing.
       "name": "tip-once", "version": "1.0.0",
       "description": "Send one member a one-off tip in USDC when your owner asks, and say where it landed.",
       "keywords": ["tip", "send a tip"], "moneyMoving": true,
-      "requires": { "bins": ["bevo-read", "bevo-send"] },
+      "requires": { "bins": ["bevo-read", "bevo-send"], "skills": [] },
       "source": { "repo": "Virtual-Protocol/butler-skill-tip-once", "ref": "main", "commit": "<40-hex>" },
       "files": [
         { "path": "SKILL.md", "sha256": "<hex>", "bytes": 1523 },
         { "path": "references/limits.md", "sha256": "<hex>", "bytes": 412 }
       ]
+    },
+    {
+      "name": "tip-split", "version": "1.1.0",
+      "description": "Split one tip across several members when your owner asks, one send per member.",
+      "keywords": ["split a tip", "tip everyone"], "moneyMoving": true, "maxSteps": 60,
+      "requires": { "bins": ["bevo-read", "bevo-send"], "skills": ["tip-once"] },
+      "source": { "repo": "Virtual-Protocol/butler-skill-tip-split", "ref": "main", "commit": "<40-hex>" },
+      "files": [ { "path": "SKILL.md", "sha256": "<hex>", "bytes": 2210 } ]
     },
     { "name": "old-skill", "version": "1.2.0", "yanked": true, "files": [] }
   ]
@@ -286,7 +298,9 @@ Publishing is immutable per `name@version`: `build_index.py` refuses to overwrit
 already-published version whose bytes differ, so a change without a version bump fails
 the build — and for a skill it holds that against the **live** index too, refusing a
 version Pages already serves with other bytes (or has yanked). A yanked skill version is
-a tombstone row (`yanked: true`, no files).
+a tombstone row (`yanked: true`, no files). A skill row carries `maxSteps` only when the
+skill sets one, and `requires.skills` always (`[]` when none); every skill a row requires is
+published in the same index — here `tip-split` builds on `tip-once` — or the build fails.
 
 ## Local testing, no infrastructure
 

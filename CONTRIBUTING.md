@@ -45,6 +45,18 @@ skill listing is held tighter than the template listing:
   every publish build runs. **A listed skill that stops validating fails the whole publish
   build** (the last deploy stays live) until it is fixed or de-listed, so whoever lists a
   skill owns keeping its `ref` valid.
+- **A skill that builds on others is listed with them.** Every skill named in its
+  `requires.skills` must be listed too — in an earlier PR or the same one — or
+  `validate.py --all` and the publish build refuse it; they also refuse a cycle of
+  requirements. The same check stops the other direction: while a listed skill still
+  requires one, de-listing that one (or yanking its current version) fails the build, so
+  de-list the dependents in the same PR. On a butler, the hub installs required skills
+  first, refuses to remove a skill another installed skill requires, and takes a de-listed
+  required skill's dependents with it.
+- **`maxSteps` is part of the review.** A skill that sets it (20–500) lets a turn that loads
+  it run up to that many agent steps instead of the default 20, capped by the container's
+  ceiling (200 unless configured otherwise) — read it like `moneyMoving`, as something the
+  reviewers approve.
 - A new version needs no PR here: bump `version` in `SKILL.md`, add its `CHANGELOG.md`
   entry, merge in the skill's repo. A published `name@version` never changes bytes — the
   build refuses a version the live index already serves with different content.

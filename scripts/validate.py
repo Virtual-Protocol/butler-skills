@@ -39,14 +39,17 @@ Two modes:
   template's recipe.json `id` / the skill's frontmatter `name` must equal the
   directory name: that is the name it is published and installed under.
   `--all` clones every templates.json and skills.json entry at its ref into a
-  temporary directory and validates those. The link itself — that `repo` is an
-  https://github.com/<owner>/<repo> URL and that `ref` resolves — is
-  scripts/check_registry.py's job, not this file's.
+  temporary directory and validates those — and then holds the listed skills
+  to each other: every skill a listed skill names in `requires.skills` must be
+  listed too, and no requirements may form a cycle. The link itself — that
+  `repo` is an https://github.com/<owner>/<repo> URL and that `ref` resolves —
+  is scripts/check_registry.py's job, not this file's.
 
   --standalone — the directory is a skill or template repository checked out
   anywhere. The name comes from recipe.json / SKILL.md alone (it only has to be
-  valid); every other rule is identical, so a repo that passes here passes the
-  registry PR.
+  valid); every other rule is identical, except the one only a listing can
+  answer — whether each skill in `requires.skills` is listed — which the
+  registry PR and the publish build check.
 
 Python 3.11 stdlib only. No network access except `--all`, which clones the
 listed entries (nothing is checked out in this repo). Exits 1 on any failing
@@ -64,6 +67,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+from collections import deque
 from contextlib import ExitStack
 from pathlib import Path
 
@@ -769,6 +773,16 @@ SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
 MAX_SKILL_DESCRIPTION = 200
 MAX_SKILL_BODY_CHARS = 12000
 
+# metadata.butler.maxSteps (optional): how many agent steps a turn that loads the skill
+# may take. A butler turn gets 20 by default and the container caps whatever a skill
+# asks for at its own ceiling (200 unless configured otherwise); a phone errand needs ~150.
+MIN_SKILL_MAX_STEPS = 20
+MAX_SKILL_MAX_STEPS = 500
+# metadata.butler.requires.skills (optional): the skills this one builds on. The butler's
+# hub installs them first, so each must be listed in skills.json as well — checked over
+# the whole listing by --all and by the publish build, never by --standalone.
+MAX_REQUIRED_SKILLS = 5
+
 SKILL_FRONTMATTER_KEYS = ("name", "description", "version", "metadata")
 SKILL_FRONTMATTER_LINE_RE = re.compile(r"^([A-Za-z0-9_-]+):(?:[ \t]+(.*?))?[ \t]*$")
 
@@ -1064,9 +1078,12 @@ def parse_skill_md(text: str, issues: Issues) -> dict | None:
     return fm
 
 
-def check_skill_metadata(metadata, issues: Issues) -> dict | None:
-    """`metadata` is {"butler": {"moneyMoving", "keywords", "requires": {"bins"}}} and
-    nothing else. Returns the butler block when it has the right shape."""
+def check_skill_metadata(metadata, issues: Issues, name: str | None = None) -> dict | None:
+    """`metadata` is {"butler": {"moneyMoving", "keywords", "requires": {"bins"}}}, plus
+    the optional `maxSteps` and `requires.skills`, and nothing else. `name` is the
+    skill's own name (a skill never requires itself). Returns the butler block when
+    the fields the other checks read — moneyMoving, keywords, requires.bins — have
+    the right shape."""
     if not isinstance(metadata, dict):
         issues.error("metadata", "must be a JSON object")
         return None
@@ -1090,7 +1107,7 @@ def check_skill_metadata(metadata, issues: Issues) -> dict | None:
         return None
 
     for key in butler:
-        if key in ("moneyMoving", "keywords", "requires"):
+        if key in ("moneyMoving", "keywords", "maxSteps", "requires"):
             continue
         if key in RETIRED_BUTLER_KEYS:
             issues.error(
@@ -1099,7 +1116,7 @@ def check_skill_metadata(metadata, issues: Issues) -> dict | None:
                 f"({RETIRED_BUTLER_KEYS[key]})",
             )
         else:
-            issues.error(f"metadata.butler.{key}", "unknown key — the block is moneyMoving, keywords, requires")
+            issues.error(f"metadata.butler.{key}", "unknown key — the block is moneyMoving, keywords, maxSteps, requires")
 
     ok = True
     if "moneyMoving" not in butler:
@@ -1117,6 +1134,16 @@ def check_skill_metadata(metadata, issues: Issues) -> dict | None:
         issues.error("metadata.butler.keywords", "must be an array of non-empty strings")
         ok = False
 
+    if "maxSteps" in butler:
+        steps = butler["maxSteps"]
+        # bool is an int to Python; JSON true is not a step count.
+        if isinstance(steps, bool) or not isinstance(steps, int) or not MIN_SKILL_MAX_STEPS <= steps <= MAX_SKILL_MAX_STEPS:
+            issues.error(
+                "metadata.butler.maxSteps",
+                f"must be an integer from {MIN_SKILL_MAX_STEPS} to {MAX_SKILL_MAX_STEPS} — the agent steps a turn "
+                f"that loads this skill may take (leave it out for the butler's default), got {json.dumps(steps)}",
+            )
+
     requires = butler.get("requires")
     if requires is None:
         issues.error("metadata.butler.requires", 'required field missing — {"bins": [...]}')
@@ -1125,7 +1152,7 @@ def check_skill_metadata(metadata, issues: Issues) -> dict | None:
         issues.error("metadata.butler.requires", 'must be an object: {"bins": [...]}')
         return None
     for key in requires:
-        if key == "bins":
+        if key in ("bins", "skills"):
             continue
         if key in RETIRED_REQUIRES_KEYS:
             issues.error(
@@ -1134,7 +1161,9 @@ def check_skill_metadata(metadata, issues: Issues) -> dict | None:
                 f"({RETIRED_REQUIRES_KEYS[key]})",
             )
         else:
-            issues.error(f"metadata.butler.requires.{key}", "unknown key — requires holds only bins")
+            issues.error(f"metadata.butler.requires.{key}", "unknown key — requires holds only bins and skills")
+    if "skills" in requires:
+        check_required_skills(requires["skills"], name, issues)
     bins = requires.get("bins")
     if bins is None:
         issues.error("metadata.butler.requires.bins", "required field missing (an empty list when the skill runs no command)")
@@ -1153,6 +1182,41 @@ def check_skill_metadata(metadata, issues: Issues) -> dict | None:
         issues.error("metadata.butler.requires.bins", "lists a command twice")
         ok = False
     return butler if ok else None
+
+
+def check_required_skills(skills, name: str | None, issues: Issues) -> None:
+    """`requires.skills`: at most MAX_REQUIRED_SKILLS skill names, each once, never the
+    skill itself. Whether each one is LISTED needs the whole listing — --all
+    (check_listed_skill_dependencies) and build_index.py ask that, not this."""
+    field = "metadata.butler.requires.skills"
+    if not isinstance(skills, list) or not all(isinstance(s, str) for s in skills):
+        issues.error(field, "must be an array of skill names")
+        return
+    if len(skills) > MAX_REQUIRED_SKILLS:
+        issues.error(field, f"lists {len(skills)} skills, must be <= {MAX_REQUIRED_SKILLS}")
+    for s in skills:
+        if len(s) > MAX_SKILL_NAME or not SKILL_NAME_RE.match(s):
+            issues.error(
+                field,
+                f"{s!r} is not a skill name (^[a-z0-9]+(-[a-z0-9]+)*$, at most {MAX_SKILL_NAME} characters)",
+            )
+    if len(set(skills)) != len(skills):
+        issues.error(field, "lists a skill twice")
+    if name is not None and name in skills:
+        issues.error(field, f"names {name!r}, the skill itself — a skill never requires itself")
+
+
+def required_skills(butler) -> list[str]:
+    """The well-formed names in a `metadata.butler` block's `requires.skills`, in order
+    and each once; [] when the field is absent or not a list. This is what the
+    listing-wide checks walk — check_required_skills reports everything else."""
+    requires = butler.get("requires") if isinstance(butler, dict) else None
+    skills = requires.get("skills") if isinstance(requires, dict) else None
+    out: list[str] = []
+    for s in skills if isinstance(skills, list) else []:
+        if isinstance(s, str) and len(s) <= MAX_SKILL_NAME and SKILL_NAME_RE.match(s) and s not in out:
+            out.append(s)
+    return out
 
 
 def check_skill_name(name: str, skill_dir: Path, standalone: bool, reserved: set[str], maintainer: bool, issues: Issues) -> None:
@@ -1670,7 +1734,10 @@ def validate_skill(
         elif re.search(r"[\x00-\x1f\x7f]", description):
             issues.error("description", "must be one line of text — no control characters")
 
-    butler = check_skill_metadata(fm["metadata"], issues) if fm["metadata"] is not None else None
+    butler = (
+        check_skill_metadata(fm["metadata"], issues, name if isinstance(name, str) else None)
+        if fm["metadata"] is not None else None
+    )
     money_moving = butler.get("moneyMoving") if butler else None
     keywords = butler.get("keywords") if butler else []
 
@@ -1823,6 +1890,89 @@ def clone_registry_skills(work_dir: Path) -> list[Path]:
     return _clone_entries(load_skills_registry(), work_dir)
 
 
+# --- requires.skills across the listing ----------------------------------------------------
+#
+# The butler's hub installs a skill's required skills before the skill itself, refuses to
+# remove a skill another installed skill requires, and takes a de-listed required skill's
+# dependents with it. So every requirement must be something the index serves, and the
+# requirements must leave an order to install in. A single checkout cannot answer either;
+# --all asks it of the listing, and build_index.py of what one build publishes.
+
+
+def _requirement_cycle(start: str, graph: dict[str, list[str]]) -> list[str] | None:
+    """The shortest requires.skills path from `start` back to itself, or None."""
+    parent: dict[str, str | None] = {start: None}
+    frontier = deque([start])
+    while frontier:
+        node = frontier.popleft()
+        for nxt in graph.get(node, ()):
+            if nxt == node or nxt not in graph:
+                continue  # a self-requirement is refused per skill; a missing one on its own
+            if nxt == start:
+                path = [node]
+                while parent[path[-1]] is not None:
+                    path.append(parent[path[-1]])
+                return [*reversed(path), start]
+            if nxt not in parent:
+                parent[nxt] = node
+                frontier.append(nxt)
+    return None
+
+
+def skill_dependency_errors(graph: dict[str, list[str]], listed: set[str] | None = None) -> list[tuple[str, str]]:
+    """The listing-wide requires.skills rules, over skills published together.
+
+    `graph` maps each skill to the skills it requires; `listed` is every name
+    skills.json lists (by default the graph's own). Returns (skill, message) pairs,
+    by skill: a required skill must be in the graph — a butler installs it first, so
+    one the index does not serve can never install (a name that is listed but not in
+    the graph is one this build does not publish: its current version is yanked) —
+    and no requirements may form a cycle, which leaves no order to install in."""
+    listed = set(graph) if listed is None else listed
+    problems: list[tuple[str, str]] = []
+    for name in sorted(graph):
+        for req in graph[name]:
+            if req == name or req in graph:
+                continue
+            if req in listed:
+                problems.append((name, (
+                    f"{req!r} is listed in skills.json but this build does not publish it (its current "
+                    f"version is yanked) — a butler installs a required skill first; publish a version of "
+                    f"{req!r} that is not yanked, or drop it from requires.skills"
+                )))
+            else:
+                problems.append((name, (
+                    f"{req!r} is not listed in skills.json — a butler installs a required skill first; "
+                    f"list {req!r} too, or drop it from requires.skills"
+                )))
+        cycle = _requirement_cycle(name, graph)
+        if cycle:
+            problems.append((name, f"forms a cycle ({' → '.join(cycle)}) — there is no order to install them in"))
+    return problems
+
+
+def read_required_skills(skill_dir: Path) -> list[str]:
+    """requires.skills of the SKILL.md in `skill_dir`, as required_skills() reads it;
+    [] when there is no SKILL.md or its metadata does not parse (validate_skill says why)."""
+    skill_md = skill_dir / "SKILL.md"
+    if not skill_md.is_file():
+        return []
+    fm = parse_skill_md(skill_md.read_text(encoding="utf-8", errors="replace"), Issues())
+    metadata = fm.get("metadata") if fm else None
+    return required_skills(metadata.get("butler")) if isinstance(metadata, dict) else []
+
+
+def check_listed_skill_dependencies(skill_dirs: list[Path]) -> dict[str, list[str]]:
+    """--all: hold the listed skills to each other (skill_dependency_errors). Each
+    checkout is named after its skills.json entry, so the directory names ARE the
+    listing. Returns {name: ["metadata.butler.requires.skills: ...", ...]}."""
+    graph = {d.name: read_required_skills(d) for d in skill_dirs}
+    out: dict[str, list[str]] = {}
+    for name, msg in skill_dependency_errors(graph):
+        out.setdefault(name, []).append(f"metadata.butler.requires.skills: {msg}")
+    return out
+
+
 def _clone_entries(rows: list[dict], work_dir: Path) -> list[Path]:
     dirs: list[Path] = []
     for entry in rows:
@@ -1924,12 +2074,16 @@ def main() -> int:
     all_ok = True
     with ExitStack() as stack:
         targets: list[tuple[Path, str | None]] = []
+        # --all only: requires.skills problems across the listing, by skill name.
+        dependency_errors: dict[str, list[str]] = {}
         if args.all:
             work_dir = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="butler-skills-validate-")))
             (work_dir / "templates").mkdir()
             (work_dir / "skills").mkdir()
             targets.extend((d, "template") for d in clone_registry_templates(work_dir / "templates"))
-            targets.extend((d, "skill") for d in clone_registry_skills(work_dir / "skills"))
+            skill_dirs = clone_registry_skills(work_dir / "skills")
+            targets.extend((d, "skill") for d in skill_dirs)
+            dependency_errors = check_listed_skill_dependencies(skill_dirs)
         for s in args.paths:
             targets.append((Path(s).resolve(), None))
 
@@ -1950,6 +2104,9 @@ def main() -> int:
             ok, result = validate_path(
                 t, reserved, maintainer, args.json, standalone=args.standalone, expected_kind=expected_kind
             )
+            if expected_kind == "skill" and dependency_errors.get(t.name):
+                result["errors"].extend(dependency_errors[t.name])
+                ok = False
             all_ok = all_ok and ok
             results.append(result)
             if not args.json:

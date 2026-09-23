@@ -7,8 +7,9 @@ and 1 MB caps) and registry mode (the checkout is named after its
 templates.json entry; `--all` clones every entry).
 
 The second half covers the skill kind (SKILL.md) against
-tests/fixtures/skills/{valid, yaml-colon, openclaw-meta, unknown-cmd,
-retired-refs, money-unfixed, bins-undeclared} and skills written in tmp_path.
+tests/fixtures/skills/{valid, requires-skill, yaml-colon, openclaw-meta,
+unknown-cmd, retired-refs, money-unfixed, bins-undeclared, bad-requires,
+bad-maxsteps} and skills written in tmp_path.
 """
 from __future__ import annotations
 
@@ -705,6 +706,36 @@ def test_commands_must_be_declared_in_requires_bins():
     ]
 
 
+def test_a_skill_may_raise_its_step_budget_and_require_other_skills():
+    # --standalone cannot see skills.json, so whether `valid` is listed is not its question
+    for standalone in (False, True):
+        ok, result = run_skill("requires-skill", standalone=standalone)
+        assert ok, result["errors"]
+        assert result["warnings"] == []
+    fm = validate.parse_skill_md((SKILL_FIXTURES / "requires-skill" / "SKILL.md").read_text(), validate.Issues())
+    assert fm["metadata"]["butler"]["maxSteps"] == 150
+    assert fm["metadata"]["butler"]["requires"]["skills"] == ["valid"]
+
+
+def test_required_skills_are_at_most_five_real_names_other_than_itself():
+    ok, result = run_skill("bad-requires")
+    assert not ok
+    assert sorted(result["errors"]) == sorted([
+        "metadata.butler.requires.skills: lists 6 skills, must be <= 5",
+        "metadata.butler.requires.skills: 'Not_A_Skill' is not a skill name (^[a-z0-9]+(-[a-z0-9]+)*$, at most 64 characters)",
+        "metadata.butler.requires.skills: names 'bad-requires', the skill itself — a skill never requires itself",
+    ])
+
+
+def test_max_steps_below_the_floor_is_refused():
+    ok, result = run_skill("bad-maxsteps")
+    assert not ok
+    assert result["errors"] == [
+        "metadata.butler.maxSteps: must be an integer from 20 to 500 — the agent steps a turn that loads "
+        "this skill may take (leave it out for the butler's default), got 10"
+    ]
+
+
 # --- the kind is read off the repo ------------------------------------------------------------
 
 
@@ -826,6 +857,40 @@ def test_metadata_is_one_line_of_json_holding_only_the_butler_block(tmp_path):
     assert any(e.startswith("metadata.butler.requires.bins:") and "'curl'" in e for e in errors)
     assert "metadata.butler.requires.bins: lists a command twice" in errors
     assert any(e.startswith("metadata.butler.requires.gates:") and "OpenClaw" in e for e in errors)
+
+
+def _meta(fields: str = "", requires: str = "") -> dict:
+    """VALID_SKILL_FM's metadata with `fields` added to the butler block and `requires`
+    added to its requires block (each a JSON fragment starting with a comma)."""
+    return {"metadata": (
+        '{"butler":{"moneyMoving":true,"keywords":["fixture"]' + fields +
+        ',"requires":{"bins":["acp","bevo-read","bevo-notify"]' + requires + '}}}'
+    )}
+
+
+@pytest.mark.parametrize("value, accepted", [
+    ("20", True), ("150", True), ("500", True),
+    ("19", False), ("501", False), ("150.5", False), ("150.0", False), ('"150"', False), ("true", False),
+    ("null", False),
+])
+def test_max_steps_is_an_integer_from_20_to_500(tmp_path, value, accepted):
+    ok, result = check_skill(write_skill(tmp_path, fm=_meta(fields=',"maxSteps":' + value)))
+    assert ok is accepted, result["errors"]
+    if not accepted:
+        assert len(result["errors"]) == 1 and result["errors"][0].startswith("metadata.butler.maxSteps: must be an integer")
+
+
+def test_required_skills_shape(tmp_path):
+    assert check_skill(write_skill(tmp_path / "a", fm=_meta(requires=',"skills":[]')))[0]
+    ok, result = check_skill(write_skill(tmp_path / "b", fm=_meta(requires=',"skills":"valid"')))
+    assert not ok and result["errors"] == ["metadata.butler.requires.skills: must be an array of skill names"]
+    ok, result = check_skill(write_skill(tmp_path / "c", fm=_meta(requires=',"skills":["valid","valid"]')))
+    assert not ok and result["errors"] == ["metadata.butler.requires.skills: lists a skill twice"]
+    # an unknown key is still refused, next to the two requires may hold
+    ok, result = check_skill(write_skill(tmp_path / "d", fm=_meta(requires=',"skillz":["valid"]')))
+    assert not ok and result["errors"] == [
+        "metadata.butler.requires.skillz: unknown key — requires holds only bins and skills"
+    ]
 
 
 # --- names ----------------------------------------------------------------------------------
@@ -1136,3 +1201,50 @@ def test_all_over_two_empty_listings_passes(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(sys, "argv", ["validate.py", "--all"])
     assert validate.main() == 0
     assert "nothing to validate" in capsys.readouterr().out
+
+
+# --- registry mode: requires.skills across the listing ------------------------------------------
+
+
+def _all_skills(tmp_path: Path, monkeypatch, capsys, skills: list[dict]) -> tuple[int, dict]:
+    """`validate.py --all --json` over a skills-only listing: (exit code, {skill: result})."""
+    (tmp_path / "templates.json").write_text(json.dumps({"templates": []}))
+    (tmp_path / "skills.json").write_text(json.dumps({"skills": skills}))
+    monkeypatch.setattr(validate, "REGISTRY_PATH", tmp_path / "templates.json")
+    monkeypatch.setattr(validate, "SKILLS_REGISTRY_PATH", tmp_path / "skills.json")
+    monkeypatch.setattr(sys, "argv", ["validate.py", "--all", "--json"])
+    code = validate.main()
+    return code, {r["skill"]: r for r in json.loads(capsys.readouterr().out)["results"]}
+
+
+def test_all_requires_every_required_skill_to_be_listed(tmp_path, monkeypatch, capsys):
+    shutil.copytree(SKILL_FIXTURES / "requires-skill", tmp_path / "src" / "requires-skill")
+    shutil.copytree(SKILL_FIXTURES / "valid", tmp_path / "src" / "valid")
+    dependent = {"name": "requires-skill", "repo": _git_repo(tmp_path / "src" / "requires-skill"), "ref": "main"}
+    base = {"name": "valid", "repo": _git_repo(tmp_path / "src" / "valid"), "ref": "main"}
+
+    code, results = _all_skills(tmp_path, monkeypatch, capsys, [dependent])
+    assert code == 1
+    assert results["requires-skill"]["errors"] == [
+        "metadata.butler.requires.skills: 'valid' is not listed in skills.json — a butler installs a required "
+        "skill first; list 'valid' too, or drop it from requires.skills"
+    ]
+
+    code, results = _all_skills(tmp_path, monkeypatch, capsys, [dependent, base])
+    assert code == 0 and [r["errors"] for r in results.values()] == [[], []]
+
+
+def test_all_refuses_a_requirement_cycle(tmp_path, monkeypatch, capsys):
+    listing = []
+    for name, other in (("one", "two"), ("two", "one")):
+        d = write_skill(tmp_path / "src", name, fm=_meta(requires=f',"skills":["{other}"]'))
+        assert check_skill(d)[0]  # each passes on its own: a checkout cannot see the listing
+        listing.append({"name": name, "repo": _git_repo(d), "ref": "main"})
+    code, results = _all_skills(tmp_path, monkeypatch, capsys, listing)
+    assert code == 1
+    assert results["one"]["errors"] == [
+        "metadata.butler.requires.skills: forms a cycle (one → two → one) — there is no order to install them in"
+    ]
+    assert results["two"]["errors"] == [
+        "metadata.butler.requires.skills: forms a cycle (two → one → two) — there is no order to install them in"
+    ]

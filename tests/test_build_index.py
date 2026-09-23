@@ -304,7 +304,8 @@ def test_a_skill_row_and_its_published_files(tmp_path, monkeypatch):
     assert row["name"] == "valid" and row["version"] == "1.0.0"
     assert row["description"].startswith("A minimal, fully compliant skill fixture")
     assert row["keywords"] == ["fixture", "buy once"] and row["moneyMoving"] is True
-    assert row["requires"] == {"bins": ["acp", "bevo-read", "bevo-notify"]}
+    assert row["requires"] == {"bins": ["acp", "bevo-read", "bevo-notify"], "skills": []}
+    assert "maxSteps" not in row  # only a skill that sets one carries it
     assert row["source"] == {"repo": src.as_uri().split("://", 1)[1].strip("/"), "ref": "main", "commit": head(src)}
     assert [f["path"] for f in row["files"]] == ["SKILL.md", "references/sizing.md"]  # README/CHANGELOG stay home
     dist = tmp_path / "repo" / "dist" / "skills" / "valid" / "1.0.0"
@@ -378,6 +379,61 @@ def test_yanked_skill_versions_become_tombstones(tmp_path, monkeypatch, capsys):
     tomb = json.loads((REPO_ROOT / "schema" / "index.schema.json").read_text())["definitions"]["skillTombstone"]
     for row in index["skills"]:
         assert set(tomb["required"]) == set(row)
+
+
+def _requiring_skill_repo(root: Path, name: str, requires: list[str]) -> str:
+    """The valid fixture renamed `name`, requiring `requires`, as a real local git repo."""
+    shutil.copytree(SKILL_FIXTURES / "valid", root)
+    md = root / "SKILL.md"
+    bins = '"requires":{"bins":["acp","bevo-read","bevo-notify"]'
+    md.write_text(md.read_text().replace("name: valid", f"name: {name}", 1)
+                  .replace(bins, bins + ',"skills":' + json.dumps(requires), 1))
+    git("init", "-q", "-b", "main", cwd=root)
+    git("add", "-A", cwd=root)
+    git("commit", "-q", "-m", "init", cwd=root)
+    return root.as_uri()
+
+
+def test_a_skill_row_carries_its_step_budget_and_required_skills(tmp_path, monkeypatch):
+    index = _build(tmp_path, monkeypatch, skills=[
+        {"name": "requires-skill", "repo": _skill_repo(tmp_path / "dependent", "requires-skill"), "ref": "main"},
+        {"name": "valid", "repo": _skill_repo(tmp_path / "base"), "ref": "main"},
+    ])
+    rows = {row["name"]: row for row in index["skills"]}
+    assert rows["requires-skill"]["maxSteps"] == 150
+    assert rows["requires-skill"]["requires"] == {"bins": ["bevo-read"], "skills": ["valid"]}
+    assert "maxSteps" not in rows["valid"] and rows["valid"]["requires"]["skills"] == []
+
+    skill_schema = json.loads((REPO_ROOT / "schema" / "index.schema.json").read_text())["definitions"]["skill"]
+    steps = skill_schema["properties"]["maxSteps"]
+    assert steps["minimum"] <= rows["requires-skill"]["maxSteps"] <= steps["maximum"]
+    for row in rows.values():
+        assert set(skill_schema["required"]) <= set(row) <= set(skill_schema["properties"])
+        assert set(row["requires"]) == set(skill_schema["properties"]["requires"]["required"])
+
+
+def test_a_skill_requiring_one_the_build_does_not_publish_fails_the_build(tmp_path, monkeypatch):
+    """A butler installs a required skill first, so the index never serves a row whose
+    requirement it does not serve too — and the whole build fails, like an invalid skill."""
+    dependent = {"name": "requires-skill", "repo": _skill_repo(tmp_path / "dependent", "requires-skill"), "ref": "main"}
+    base = {"name": "valid", "repo": _skill_repo(tmp_path / "base"), "ref": "main"}
+
+    with pytest.raises(SystemExit) as e:  # not listed
+        _build(tmp_path / "unlisted", monkeypatch, skills=[dependent])
+    assert ("skill requires-skill: ERROR metadata.butler.requires.skills: 'valid' is not listed in skills.json"
+            in str(e.value))
+    assert "the last deploy stays live" in str(e.value)
+    assert not (tmp_path / "unlisted" / "repo" / "dist").exists()
+
+    with pytest.raises(SystemExit) as e:  # listed, but the build publishes only its tombstone
+        _build(tmp_path / "yanked", monkeypatch, skills=[dependent, base], yanked=["valid@1.0.0"])
+    assert "'valid' is listed in skills.json but this build does not publish it" in str(e.value)
+
+    cycle = [{"name": a, "repo": _requiring_skill_repo(tmp_path / a, a, [b]), "ref": "main"}
+             for a, b in (("one", "two"), ("two", "one"))]
+    with pytest.raises(SystemExit) as e:
+        _build(tmp_path / "cycle", monkeypatch, skills=cycle)
+    assert "skill one: ERROR metadata.butler.requires.skills: forms a cycle (one → two → one)" in str(e.value)
 
 
 def test_yanked_json_splits_by_kind_and_still_refuses_typos():

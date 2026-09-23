@@ -82,7 +82,7 @@ metadata: {"butler":{"moneyMoving":true,"keywords":["tip","send a tip"],"require
 | `name` | Mastra's rule: `^[a-z0-9]+(-[a-z0-9]+)*$` (lowercase, digits, single hyphens, none leading or trailing), at most 64 characters, and not something YAML reads as a number or date (`123`, `1e5`, `2026-09-21`). In registry mode it must equal the directory — the `skills.json` entry, and the directory the butler installs it in. Not in `schema/reserved-names.json` (which includes `acp-cli` and `duty-code`, the two skills compiled into the butler image). The `butler-` prefix is maintainer-only (`--maintainer` / `MAINTAINER=1`); `bevo-` is **refused** — the container's bundled-command namespace |
 | `description` | at most 200 characters, one line. Either a JSON double-quoted string (`description: "Read it: all of it"`) or a plain value YAML reads back verbatim: no `: `, no ` #`, not ending in `:`, not starting with any of `` - ? : , [ ] { } # & * ! \| > ' " % @ ` ``, and not a number, boolean, null or date. The validator's error spells out the quoted form to paste |
 | `version` | semver `X.Y.Z`; bump it for every change — a published `name@version` never changes bytes |
-| `metadata` | ONE line of JSON: `{"butler": {"moneyMoving": <bool>, "keywords": [<non-empty strings>], "requires": {"bins": [<commands>]}}}` — all three fields required, no other keys anywhere, no duplicated JSON key |
+| `metadata` | ONE line of JSON: `{"butler": {"moneyMoving": <bool>, "keywords": [<non-empty strings>], "requires": {"bins": [<commands>]}}}` — all three fields required; the only optional ones are `maxSteps` and `requires.skills` (below); no other keys anywhere, no duplicated JSON key |
 
 The OpenClaw-era fields are refused by name, with where their content goes now:
 `metadata.openclaw`, `metadata.butler.tier` / `modes` / `params` / `web3` / `dutyTemplate`,
@@ -91,6 +91,28 @@ and `metadata.butler.requires.routes` / `features` / `gates`. So are other Mastr
 
 `requires.bins` lists every command the skill's shell blocks run (see Commands), and only
 commands from the allowlist. A butler can check it has them before installing.
+
+### Optional: `maxSteps` and `requires.skills`
+
+```yaml
+metadata: {"butler":{"moneyMoving":true,"keywords":["grabfood","order food"],"maxSteps":150,"requires":{"bins":["app-checkout","bevo-read"],"skills":["butler-app-checkout"]}}}
+```
+
+| Field | Rule |
+| --- | --- |
+| `maxSteps` | an integer from 20 to 500: how many agent steps a turn that loads this skill may take. A butler turn gets 20 by default; loading the skill raises that turn's budget to `maxSteps`, capped by the container's own ceiling (200 unless it is configured otherwise). Set it for a long errand — a phone checkout takes ~150 steps — and leave it out when the default is enough |
+| `requires.skills` | at most 5 skills this one builds on — `butler-grabfood` (Grab's Food section) builds on `butler-app-checkout`. Each matches Mastra's skill-name rule (`^[a-z0-9]+(-[a-z0-9]+)*$`, at most 64 characters), is listed once, and is never the skill itself |
+
+The butler's hub **installs a skill's required skills first**, **refuses to remove a skill
+that another installed skill requires**, and **when a required skill is de-listed, takes the
+skills that require it with it**. So a requirement must always be something the index
+serves: `scripts/validate.py --all` refuses a requirement `skills.json` does not list, and
+any cycle of requirements (there would be no order to install them in); the publish build
+refuses the same, plus a requirement whose current version is yanked (it publishes only
+the tombstone). `--standalone` cannot see the listing and does not check it.
+
+Both reach the index row: `maxSteps` when the skill sets it (absent otherwise), and
+`requires` as `{"bins": [...], "skills": [...]}` — `skills` always present, `[]` when none.
 
 ## Body
 
@@ -168,6 +190,10 @@ A command the container gains is a change here first.
 - **Every listed skill is validated on every publish build, and any error fails the whole
   build** (the last deploy stays live). A skill that stops validating blocks publishing
   until it is fixed or de-listed.
+- **Requirements are checked across the build, too.** A published skill whose
+  `requires.skills` names one the build does not publish — not listed, or its current
+  version yanked — or a cycle of requirements fails the build. De-list or yank a required
+  skill together with the skills that require it.
 - **A `name@version` is immutable.** The build compares against the live index and refuses
   a version it already serves with different file hashes, or one it has yanked. Change a
   skill → bump `version` → add its `CHANGELOG.md` entry.

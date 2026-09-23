@@ -87,12 +87,25 @@
         "description": { "type": "string", "minLength": 1, "maxLength": 200 },
         "keywords": { "type": "array", "items": { "type": "string", "minLength": 1 } },
         "moneyMoving": { "type": "boolean" },
+        "maxSteps": {
+          "description": "Present only when the skill sets it: how many agent steps a turn that loads the skill may take. The container caps it at its own ceiling.",
+          "type": "integer",
+          "minimum": 20,
+          "maximum": 500
+        },
         "requires": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["bins"],
+          "required": ["bins", "skills"],
           "properties": {
-            "bins": { "type": "array", "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" } }
+            "bins": { "type": "array", "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" } },
+            "skills": {
+              "description": "The skills this one builds on, installed first. Always present ([] when none); every one is published in the same index.",
+              "type": "array",
+              "maxItems": 5,
+              "uniqueItems": true,
+              "items": { "$ref": "#/definitions/skillName" }
+            }
           }
         },
         "source": {
