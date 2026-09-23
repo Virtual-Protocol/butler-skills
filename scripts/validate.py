@@ -139,6 +139,15 @@ SECRET_PATTERNS = [
 
 URL_RE = re.compile(r"https?://[^\s`)]+")
 ALLOWED_URL_PREFIXES = ("https://github.com/Virtual-Protocol", "https://raw.githubusercontent.com/Virtual-Protocol")
+# Official Android app stores, which a SKILL may also name: a phone-app skill has to tell the
+# butler where an app's official build comes from when the phone provider's library lacks it,
+# and a store is the only safe answer (an APK mirror can serve a repackaged build, and the
+# owner's card may be typed into that app). Skills only — a duty template never needs one.
+SKILL_STORE_URL_PREFIXES = (
+    "https://appgallery.huawei.com",
+    "https://appgallery.cloud.huawei.com",
+    "https://play.google.com",
+)
 
 # --- duty.py rules -----------------------------------------------------------------------
 
@@ -1657,10 +1666,11 @@ def lint_skill_safety(rel: str, text: str, issues: Issues) -> None:
             issues.error("secrets-lint", f"{rel} line {_line_of(text, m.start())}: looks like a credential: {m.group(0)[:12]}...")
     for m in URL_RE.finditer(text):
         url = m.group(0)
-        if not any(url == p or url.startswith(p + "/") for p in ALLOWED_URL_PREFIXES):
+        if not any(url == p or url.startswith(p + "/") for p in ALLOWED_URL_PREFIXES + SKILL_STORE_URL_PREFIXES):
             issues.error(
                 "url-lint",
-                f"{rel} line {_line_of(text, m.start())}: disallowed URL {url!r} (only github.com/Virtual-Protocol links allowed)",
+                f"{rel} line {_line_of(text, m.start())}: disallowed URL {url!r} (only github.com/Virtual-Protocol "
+                "links and the official app stores — Huawei AppGallery, Google Play — are allowed)",
             )
     for ch, what in INVISIBLE_CHARS.items():
         idx = text.find(ch)
