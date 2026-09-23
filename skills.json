@@ -1,4 +1,10 @@
 {
   "comment": "The skill half of the registry. A skill is a SKILL.md playbook that teaches the butler a capability; butlers install one on demand. Like templates.json, each entry is a name and a GitHub link, and the skill's own repo owns its versions: adding or removing a skill is a PR here, updating one is not — every build re-resolves each ref to a commit, validates it (any error fails the whole build) and republishes. Set `ref` to a branch to follow it, or to a tag to hold a release. The `name` here must equal the frontmatter `name` in that repo's SKILL.md — scripts/validate.py --all clones each entry into a directory named after it and compares. Listing a skill is maintainer-only; SKILL_STANDARD.md is the checklist.",
-  "skills": []
+  "skills": [
+    {
+      "name": "butler-app-checkout",
+      "repo": "https://github.com/Virtual-Protocol/butler-skill-app-checkout",
+      "ref": "v2.1.2"
+    }
+  ]
 }
