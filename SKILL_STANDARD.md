@@ -100,7 +100,7 @@ metadata: {"butler":{"moneyMoving":true,"keywords":["grabfood","order food"],"ma
 
 | Field | Rule |
 | --- | --- |
-| `maxSteps` | an integer from 20 to 500: how many agent steps a turn that loads this skill may take. A butler turn gets 20 by default; loading the skill raises that turn's budget to `maxSteps`, capped by the container's own ceiling (200 unless it is configured otherwise). Set it for a long errand — a phone checkout takes ~150 steps — and leave it out when the default is enough |
+| `maxSteps` | an integer from 20 to 500: how many agent steps a turn that loads this skill may take. A butler turn gets 200 by default; loading the skill raises that turn's budget to `maxSteps`, capped by the container's own ceiling (500 unless it is configured otherwise). Set it for a long errand — it also covers containers still on an older, lower default — and leave it out when the default is enough |
 | `requires.skills` | at most 5 skills this one builds on — `butler-grabfood` (Grab's Food section) builds on `butler-app-checkout`. Each matches Mastra's skill-name rule (`^[a-z0-9]+(-[a-z0-9]+)*$`, at most 64 characters), is listed once, and is never the skill itself |
 
 The butler's hub **installs a skill's required skills first**, **refuses to remove a skill

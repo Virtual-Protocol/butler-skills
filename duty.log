@@ -1,0 +1,4 @@
+2026-09-23T13:55:36.072Z [stub_bevo] escalate is retired — use bevo.prompt()
+2026-09-23T13:55:36.078Z [bevo-sdk] holdings unavailable: no fixture for read('/user-assets') — expected /private/var/folders/3f/jdb11rxn3znfr7cf853n8g300000gn/T/pytest-of-kahwaichooi/pytest-85/test_holdings_is_empty_when_th0/user-assets.json
+2026-09-23T14:02:19.259Z [stub_bevo] escalate is retired — use bevo.prompt()
+2026-09-23T14:02:19.287Z [bevo-sdk] holdings unavailable: no fixture for read('/user-assets') — expected /private/var/folders/3f/jdb11rxn3znfr7cf853n8g300000gn/T/pytest-of-kahwaichooi/pytest-86/test_holdings_is_empty_when_th0/user-assets.json

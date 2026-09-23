@@ -774,8 +774,8 @@ MAX_SKILL_DESCRIPTION = 200
 MAX_SKILL_BODY_CHARS = 12000
 
 # metadata.butler.maxSteps (optional): how many agent steps a turn that loads the skill
-# may take. A butler turn gets 20 by default and the container caps whatever a skill
-# asks for at its own ceiling (200 unless configured otherwise); a phone errand needs ~150.
+# may take. A butler turn gets 200 by default and the container caps whatever a skill
+# asks for at its own ceiling (500 unless configured otherwise); a phone errand used ~100.
 MIN_SKILL_MAX_STEPS = 20
 MAX_SKILL_MAX_STEPS = 500
 # metadata.butler.requires.skills (optional): the skills this one builds on. The butler's

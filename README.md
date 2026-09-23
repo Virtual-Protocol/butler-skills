@@ -38,8 +38,8 @@ against the real one), declares them in `requires.bins`, and keeps every money c
 `[FIXED]` step. Mastra silently drops a skill whose frontmatter it cannot parse, so the
 validator holds the frontmatter to the subset of YAML that always reads back verbatim.
 Two `metadata.butler` fields are optional: `maxSteps` (20–500) raises the step budget of a
-turn that loads the skill (a turn gets 20 by default; the container caps it at its own
-ceiling), and `requires.skills` names up to 5 skills this one builds on, which the butler's
+turn that loads the skill (a turn gets 200 by default; the container caps it at its own
+ceiling, 500 unless configured), and `requires.skills` names up to 5 skills this one builds on, which the butler's
 hub installs first — each must be listed in `skills.json` as well.
 [SKILL_STANDARD.md](SKILL_STANDARD.md) has every rule and a minimal valid skill.
 
