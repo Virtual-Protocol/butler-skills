@@ -1,14 +1,13 @@
 """conftest.py — fixtures shared across the suite.
 
-No template repo is checked out in this repository, and the four templates
-templates.json currently lists (app-checkout, copytrade, dca, web-checkout)
-have not yet been converted from the retired SKILL.md shape to the
-recipe.json/duty.py/README.md bundle this registry now requires — that
-conversion is tracked separately. So this suite never clones a registry
-entry over the network; wherever the old suite needed "a real template on
-disk", it now gets a copy of `tests/fixtures/templates/valid`, the
-fully-compliant local fixture, which exercises the real validate.py /
-build_index.py / replay.py code paths without any network dependency.
+No template or skill repo is checked out in this repository: templates.json
+and skills.json only link to them, and this suite never clones a registry
+entry over the network. Wherever a test needs "a real template on disk" it
+gets a copy of `tests/fixtures/templates/valid`, and "a real skill on disk" a
+copy of `tests/fixtures/skills/valid` — the fully-compliant local fixtures,
+which exercise the real validate.py / build_index.py / replay.py code paths
+without any network dependency. Registry-mode tests that need a clone build a
+throwaway git repo in tmp_path instead.
 """
 from __future__ import annotations
 

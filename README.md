@@ -1,11 +1,52 @@
 # butler-skills
 
-The **remote duty-template registry** for Butler (the `virtuals-agent` container). It is
-a link directory, not a store of content: [`templates.json`](templates.json) lists each
-template by `name`, a GitHub `repo`, and a `ref`; every build clones each entry at its
-`ref`, validates it, and republishes **one** `index.json` (plus the template files
-themselves) to GitHub Pages. A PR here adds or removes a row — it never edits a
-template's content, which lives entirely in that template's own repository.
+The **Butler Skill Hub** — the remote registry Butler (the `virtuals-agent` container)
+learns from. It publishes two kinds:
+
+- **Skills** teach the butler a capability. A skill is a `SKILL.md` playbook — when to use
+  it, what to settle first, the numbered procedure, what to say — and the butler installs
+  one **on demand**, when a request calls for it. Listed in [`skills.json`](skills.json);
+  the checklist is [SKILL_STANDARD.md](SKILL_STANDARD.md).
+- **Duty templates** are standing instructions: one Python program a duty runs
+  unattended, fed events, able to spend the owner's money. Listed in
+  [`templates.json`](templates.json); the checklist is
+  [TEMPLATE_STANDARD.md](TEMPLATE_STANDARD.md).
+
+The hub is a link directory, not a store of content: each listing names an entry by
+`name`, a GitHub `repo`, and a `ref`; every build clones each entry at its `ref`,
+validates it, and republishes **one** `index.json` (plus the files themselves) to GitHub
+Pages. A PR here adds or removes a row — it never edits an entry's content, which lives
+entirely in its own repository. A repository is exactly one kind: `SKILL.md` makes it a
+skill, `recipe.json` a template, and the validator tells them apart by itself.
+
+## What a skill is
+
+A skill is its own repository with `SKILL.md`, `README.md` and `CHANGELOG.md` at the root
+(plus optional `references/*.md`). Only `SKILL.md` and `references/**/*.md` reach a butler,
+which puts them in `<workspace>/skills/<name>/`; Mastra lists the skill among the agent's
+skills and the model reads it when a request fits. The frontmatter is four one-line keys —
+`name`, `description`, `version` (semver) and a one-line JSON `metadata` block:
+
+```yaml
+metadata: {"butler":{"moneyMoving":true,"keywords":["tip","send a tip"],"requires":{"bins":["bevo-read","bevo-send"]}}}
+```
+
+The body is seven sections in a fixed order (`## When to use` … `## Say to the owner`), with
+numbered `[FIXED]`/`[ADAPT]` steps under `## Procedure`. A skill runs only the commands the
+container actually has (`bevo-read`, `bevo-send`, `acp`, … — each subcommand checked
+against the real one), declares them in `requires.bins`, and keeps every money command in a
+`[FIXED]` step. Mastra silently drops a skill whose frontmatter it cannot parse, so the
+validator holds the frontmatter to the subset of YAML that always reads back verbatim.
+Two `metadata.butler` fields are optional: `maxSteps` (20–500) raises the step budget of a
+turn that loads the skill (a turn gets 200 by default; the container caps it at its own
+ceiling, 500 unless configured), and `requires.skills` names up to 5 skills this one builds on, which the butler's
+hub installs first — each must be listed in `skills.json` as well.
+[SKILL_STANDARD.md](SKILL_STANDARD.md) has every rule and a minimal valid skill.
+
+Listing a skill is maintainer-only — see [CONTRIBUTING.md](CONTRIBUTING.md). After that, a
+new version is a release in the skill's own repo (bump `version`, add the `CHANGELOG.md`
+entry, merge); every publish build re-validates every listed skill and **fails outright on
+any error**, so a broken skill can never silently drop out of the index.
 
 ## What a duty template is
 
@@ -28,10 +69,11 @@ See [TEMPLATE_STANDARD.md](TEMPLATE_STANDARD.md) for the exact, enforced shape o
 file, and [CONTRIBUTING.md](CONTRIBUTING.md) for the PR process. This file is the
 how-to; that file is the checklist.
 
-## README.md is written for Butler
+## A template's README.md is written for Butler
 
-This is the one thing about a bundle that surprises everybody, so it comes before the
-rest: **`README.md` is not documentation for a human browsing GitHub.** It is returned
+This is the one thing about a template bundle that surprises everybody, so it comes before
+the rest: **a template's `README.md` is not documentation for a human browsing GitHub.**
+(A skill's is — only its `SKILL.md` and references reach the butler.) It is returned
 verbatim to the model by the container's `recipe_show` tool, alongside the params schema
 and the triggers, and it is the last thing the model reads before it files a duty from
 this template.
@@ -157,7 +199,8 @@ replacement named in the message.
 
 1. Create a repository (any host; GitHub is what this registry links to) with
    `recipe.json`, `duty.py` and `README.md` at its root. `scripts/new_skill.py <id>`
-   prints the exact commands, including the one-line registry PR at the end.
+   prints the exact commands, including the one-line registry PR at the end
+   (`scripts/new_skill.py <name> --skill` prints the same for a skill).
 2. Design the settings first: what does `params` need to say, and what does each
    default to? A template with no required params (everything has a sane default) is the
    easiest to recommend.
@@ -219,52 +262,83 @@ can be resolved forward without the container guessing.
       ]
     }
   ],
-  "aliases": [ { "ref": "dca@1", "supersededBy": "dca@2" } ]
+  "aliases": [ { "ref": "dca@1", "supersededBy": "dca@2" } ],
+  "skills": [
+    {
+      "name": "tip-once", "version": "1.0.0",
+      "description": "Send one member a one-off tip in USDC when your owner asks, and say where it landed.",
+      "keywords": ["tip", "send a tip"], "moneyMoving": true,
+      "requires": { "bins": ["bevo-read", "bevo-send"], "skills": [] },
+      "source": { "repo": "Virtual-Protocol/butler-skill-tip-once", "ref": "main", "commit": "<40-hex>" },
+      "files": [
+        { "path": "SKILL.md", "sha256": "<hex>", "bytes": 1523 },
+        { "path": "references/limits.md", "sha256": "<hex>", "bytes": 412 }
+      ]
+    },
+    {
+      "name": "tip-split", "version": "1.1.0",
+      "description": "Split one tip across several members when your owner asks, one send per member.",
+      "keywords": ["split a tip", "tip everyone"], "moneyMoving": true, "maxSteps": 60,
+      "requires": { "bins": ["bevo-read", "bevo-send"], "skills": ["tip-once"] },
+      "source": { "repo": "Virtual-Protocol/butler-skill-tip-split", "ref": "main", "commit": "<40-hex>" },
+      "files": [ { "path": "SKILL.md", "sha256": "<hex>", "bytes": 2210 } ]
+    },
+    { "name": "old-skill", "version": "1.2.0", "yanked": true, "files": [] }
+  ]
 }
 ```
 
 served at `https://virtual-protocol.github.io/butler-skills/index.json`, with the
 template files themselves under `templates/<name>/<version>/{recipe.json,duty.py,
-README.md}` at the same base. `source.commit` — not `source.ref` — is what pins the
-bytes: with a branch `ref` the commit moves whenever the template repo merges, and the
-next build republishes it. Publishing is immutable per `name@version`:
-`build_index.py` refuses to overwrite an already-published version whose bytes differ,
-so a change without a version bump fails the build.
+README.md}` and a skill's under `skills/<name>/<version>/<path>` at the same base.
+`schemaVersion` stays 3: `skills` is additive, and the container ignores top-level keys it
+does not read. `source.commit` — not `source.ref` — is what pins the bytes: with a branch
+`ref` the commit moves whenever the repo merges, and the next build republishes it.
+Publishing is immutable per `name@version`: `build_index.py` refuses to overwrite an
+already-published version whose bytes differ, so a change without a version bump fails
+the build — and for a skill it holds that against the **live** index too, refusing a
+version Pages already serves with other bytes (or has yanked). A yanked skill version is
+a tombstone row (`yanked: true`, no files). A skill row carries `maxSteps` only when the
+skill sets one, and `requires.skills` always (`[]` when none); every skill a row requires is
+published in the same index — here `tip-split` builds on `tip-once` — or the build fails.
 
 ## Local testing, no infrastructure
 
 Everything above runs from a checkout with `python3 -m pytest tests -q`:
 
-- `tests/test_validate.py` — the checks in TEMPLATE_STANDARD.md, against the fixture
-  templates in `tests/fixtures/templates/`.
+- `tests/test_validate.py` — the checks in TEMPLATE_STANDARD.md and SKILL_STANDARD.md,
+  against the fixtures in `tests/fixtures/templates/` and `tests/fixtures/skills/`.
 - `tests/test_build_index.py` — recipe.json parsing, per-file hashing, the `source`
-  block, `supersedes` → `aliases`, and the yanked tombstones, against synthetic git repos
-  in `tmp_path`.
+  block, `supersedes` → `aliases`, the yanked tombstones, and for skills the
+  validate-or-fail build, the live-index immutability check and the `skills[]` rows,
+  against synthetic git repos in `tmp_path`.
 - `tests/test_replay.py`, `tests/test_stub_rails.py` — the offline replay harness and its
   `bevo` stand-in, including the subprocess money interception.
 - `tests/test_standalone_tools.py` — the developer path that downloads only
   `validate.py`/`replay.py` and never clones this registry.
 - `tests/test_check_registry.py`, `tests/test_templates_registry.py` — the
-  `templates.json` listing itself.
+  `templates.json` and `skills.json` listings themselves.
 
-No template repo is checked out in this repository, so none of the above touches the
-network; a handful of `--all`/registry-mode tests build a real, throwaway git repo in
+No template or skill repo is checked out in this repository, so none of the above touches
+the network; a handful of `--all`/registry-mode tests build a real, throwaway git repo in
 `tmp_path` to stand in for a clone.
 
 ## Reference
 
 | File | What |
 | --- | --- |
-| `templates.json` | the registry |
-| `yanked.json` | tombstoned `id@version` specs — see [SECURITY.md](SECURITY.md) |
+| `templates.json` | the duty-template listing |
+| `skills.json` | the skill listing (maintainer-only) |
+| `yanked.json` | tombstoned `id@N` (template) and `name@X.Y.Z` (skill) specs — see [SECURITY.md](SECURITY.md) |
+| `SKILL_STANDARD.md` / `TEMPLATE_STANDARD.md` | the enforced shape of each kind |
 | `schema/recipe.schema.json` | the `recipe.json` contract |
 | `schema/index.schema.json` | the published `index.json` contract (schemaVersion 3) |
-| `schema/reserved-names.json` | ids a template may never use |
-| `scripts/validate.py` | the validator (also published standalone, stdlib-only) |
-| `scripts/build_index.py` | clones every entry, validates nothing itself, writes `dist/` |
-| `scripts/check_registry.py` | checks the `templates.json` listing itself |
-| `scripts/new_skill.py` / `scripts/remove_skill.py` | print the exact commands to register / de-list or yank a template |
+| `schema/reserved-names.json` | names a template or skill may never use |
+| `scripts/validate.py` | the validator for both kinds (also published standalone, stdlib-only) |
+| `scripts/build_index.py` | clones every entry, validates every skill (any error fails the build), writes `dist/` |
+| `scripts/check_registry.py` | checks the `templates.json` and `skills.json` listings themselves |
+| `scripts/new_skill.py` / `scripts/remove_skill.py` | print the exact commands to register / de-list or yank a template or skill |
 | `scripts/publish_tools.py` | lays out `dist/tools/` (the standalone `validate.py`/`replay.py`/`stub_bevo.py` + fixtures) |
 | `tests/replay.py` | the offline replay harness |
 | `tests/stub_bevo.py` | the `bevo` stand-in `replay.py` loads |
-| `.github/actions/validate` | the composite action a template repo's own CI runs |
+| `.github/actions/validate` | the composite action a skill or template repo's own CI runs |

@@ -81,6 +81,7 @@ def test_publish_tools_layout(tmp_path):
     assert fixture_files, "no fixture files?"
     assert {f"tools/fixtures/{n}" for n in fixture_files} <= names
     assert not any(n.startswith("tools/fixtures/templates") for n in names)  # validator fixtures are not replay fixtures
+    assert not any(n.startswith("tools/fixtures/skills") for n in names)
     assert (tmp_path / "dist" / "tools" / "validate.py").read_bytes() == (REPO_ROOT / "scripts" / "validate.py").read_bytes()
     assert (tmp_path / "dist" / "tools" / "replay.py").read_bytes() == (REPO_ROOT / "tests" / "replay.py").read_bytes()
 
@@ -130,6 +131,24 @@ def test_standalone_validate_uses_the_embedded_reserved_list(tmp_path):
     v = _run([sys.executable, str(tools / "validate.py"), "--standalone", str(template)], cwd=tmp_path)
     assert v.returncode == 1
     assert "'clawhub' is reserved" in v.stdout
+
+
+def test_standalone_validate_detects_and_checks_a_skill(tmp_path):
+    """The same published validate.py, pointed at a skill repo: the kind comes from
+    the repo (SKILL.md), the embedded reserved list covers the image's own skills."""
+    tools = tmp_path / "site" / "tools"
+    publish_tools.publish(tmp_path / "site")
+    skill = tmp_path / "butler-skill-valid"
+    shutil.copytree(REPO_ROOT / "tests" / "fixtures" / "skills" / "valid", skill)
+    v = _run([sys.executable, str(tools / "validate.py"), "--standalone", str(skill)], cwd=tmp_path)
+    assert v.returncode == 0, v.stdout + v.stderr
+    assert "OK" in v.stdout
+
+    text = (skill / "SKILL.md").read_text().replace("name: valid", "name: duty-code", 1)
+    (skill / "SKILL.md").write_text(text)
+    v = _run([sys.executable, str(tools / "validate.py"), "--standalone", str(skill)], cwd=tmp_path)
+    assert v.returncode == 1
+    assert "'duty-code' is reserved" in v.stdout
 
 
 def test_replay_downloads_stub_and_fixture_when_missing(tmp_path):

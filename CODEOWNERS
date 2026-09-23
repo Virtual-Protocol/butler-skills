@@ -1,4 +1,5 @@
 /templates.json    @Virtual-Protocol/butler-maintainers
+/skills.json       @Virtual-Protocol/butler-maintainers
 /yanked.json       @Virtual-Protocol/butler-maintainers
 /schema/**        @Virtual-Protocol/butler-core
 /scripts/**       @Virtual-Protocol/butler-core

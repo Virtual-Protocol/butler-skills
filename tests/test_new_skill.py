@@ -52,5 +52,23 @@ def test_reserved_id_and_prefixes_are_refused():
     assert "bundled-command" in proc.stderr
 
 
+def test_skill_mode_prints_the_skills_json_flow():
+    proc = run("gas-watch", "--skill", "--owner", "alice")
+    assert proc.returncode == 0, proc.stderr
+    out = proc.stdout
+    assert "gh repo create alice/butler-skill-gas-watch --public --clone" in out
+    assert "SKILL.md" in out and "CHANGELOG.md" in out and "recipe.json" not in out
+    assert "python3 validate.py --standalone ." in out and "replay.py" not in out
+    assert '{"name": "gas-watch", "repo": "https://github.com/alice/butler-skill-gas-watch", "ref": "main"}' in out
+    assert 'git commit -m "skills: add gas-watch"' in out
+    assert "maintainer-only" in out and "two maintainer" in out
+
+
+def test_skill_mode_uses_mastras_name_rule():
+    assert run("foo--bar", "--skill").returncode != 0  # fine as a template id, dropped by Mastra as a skill
+    assert run("foo--bar").returncode == 0
+    assert run("duty-code", "--skill").returncode != 0  # the image's own skill
+
+
 if __name__ == "__main__":
     sys.exit(0)

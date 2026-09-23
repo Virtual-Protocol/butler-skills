@@ -1,31 +1,32 @@
-name: Validate a Butler duty template
+name: Validate a Butler skill or duty template
 description: >-
   Checks out the calling repository, fetches the Butler Skill Hub's validator and offline
   replay harness (Virtual-Protocol/butler-skills at main) into the runner's temp directory
-  — never inside the template tree — and runs `validate.py` and, when the template has a
-  duty.py, `replay.py` on it. A template repo's whole CI is one step:
+  — never inside the repo's own tree — and runs `validate.py` on it, which tells a skill
+  (SKILL.md) from a duty template (recipe.json) by itself; when the repo has a duty.py it
+  also runs `replay.py`. A skill or template repo's whole CI is one step:
   `uses: Virtual-Protocol/butler-skills/.github/actions/validate@main`.
 
 inputs:
   path:
-    description: Directory of the template inside the calling repository (where recipe.json lives).
+    description: Directory of the skill or template inside the calling repository (where SKILL.md or recipe.json lives).
     required: false
     default: "."
   standalone:
     description: >-
-      "true" (default) validates a template repository — the id comes from recipe.json.
-      "false" is registry mode: the path is templates/<name> inside a butler-skills checkout.
+      "true" (default) validates a skill or template repository — the name comes from SKILL.md
+      or recipe.json. "false" is registry mode: the directory must be named after its listing entry.
     required: false
     default: "true"
   maintainer:
     description: >-
-      "true" allows the maintainer-only `butler-` id prefix (the registry PR check decides
-      for real; this only affects the template repo's own run). `bevo-` ids are always refused.
+      "true" allows the maintainer-only `butler-` name prefix (the registry PR check decides
+      for real; this only affects the repo's own run). `bevo-` names are always refused.
     required: false
     default: "false"
   fixture:
     description: >-
-      Replay fixture(s) for duty.py — a space-separated list of basenames under the hub's
+      Replay fixture(s) for a template's duty.py — a space-separated list of basenames under the hub's
       tests/fixtures/, replayed one after another. The default is BOTH, because
       trade-activity-page is buys only: replayed alone it never reaches a duty's sell,
       perp-close or stock-sell legs, which are exactly the ones that have to derive a
@@ -51,7 +52,7 @@ runs:
       uses: actions/checkout@v4
 
     # actions/checkout can only place a repository under $GITHUB_WORKSPACE, and anything
-    # inside the template tree would count against its 50-file / 1 MB rules — so land the hub
+    # inside the repo's tree would count against its 50-file / 1 MB rules — so land the hub
     # in a scratch path, then move it to $RUNNER_TEMP before validating.
     - name: Fetch the hub tooling (Virtual-Protocol/butler-skills at main)
       uses: actions/checkout@v4
@@ -61,7 +62,7 @@ runs:
         path: .butler-skills-hub
         persist-credentials: false
 
-    - name: Move the hub tooling out of the template tree
+    - name: Move the hub tooling out of the repo's tree
       shell: bash
       run: |
         set -eu
@@ -74,7 +75,9 @@ runs:
       with:
         python-version: "3.11"
 
-    - name: Validate the template
+    # validate.py reads the kind off the repo: SKILL.md (and no recipe.json) is a skill,
+    # recipe.json is a duty template, both is refused.
+    - name: Validate the skill or template
       shell: bash
       env:
         SKILL_PATH: ${{ inputs.path }}

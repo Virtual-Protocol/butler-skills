@@ -3,9 +3,9 @@ name: publish
 on:
   push:
     branches: [main]
-  # A template update is a push to ITS repo, not to this one, so nothing here
-  # would notice it. This is what makes "PR only to add or remove a template"
-  # true: every build re-resolves each templates.json ref to a commit.
+  # A template or skill update is a push to ITS repo, not to this one, so nothing
+  # here would notice it. This is what makes "PR only to add or remove an entry"
+  # true: every build re-resolves each templates.json / skills.json ref to a commit.
   schedule:
     - cron: "17 * * * *"
   workflow_dispatch:
@@ -23,9 +23,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      # Templates live in their own repos; build_index.py clones each templates.json
-      # entry at its ref and builds the index (files[] + sha256 + source.commit)
-      # from that throwaway checkout. Nothing about a template is stored here.
+      # Templates and skills live in their own repos; build_index.py clones each
+      # templates.json / skills.json entry at its ref and builds the index (files[] +
+      # sha256 + source.commit) from that throwaway checkout. Nothing about either is
+      # stored here.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -36,14 +37,18 @@ jobs:
 
       # ONE channel. A Pages deploy replaces the WHOLE site, so this single run
       # produces the whole registry: dist/index.json (the moving pointer) plus
-      # dist/templates/<name>/<version>/ (the immutable store). Merging to main IS
+      # dist/templates/<name>/<version>/ and dist/skills/<name>/<version>/ (the
+      # immutable store). Merging to main IS
       # the publish action — there is no separate release tag gating it, and no
       # per-environment view. A duty pins the version it was created from
       # (`env.RECIPE`), which is the only supported way to not move with the index.
       #
       # build_index.py refuses to overwrite a published version dir with
       # different bytes, so a template changed without a version bump fails here
-      # instead of silently republishing version 1 with new content.
+      # instead of silently republishing version 1 with new content. Skills are
+      # stricter: every listed skill must pass validate.py (any error fails the
+      # build and leaves the last deploy live), and a skill name@version the live
+      # index already serves may not change bytes.
       - name: Build the index (this commit)
         run: python3 scripts/build_index.py
 

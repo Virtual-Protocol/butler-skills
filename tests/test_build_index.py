@@ -1,13 +1,15 @@
 """test_build_index.py — pytest coverage for scripts/build_index.py.
 
-Templates are not checked out in this repo: each build reads templates.json,
-clones every entry at its ref into a throwaway directory and indexes that. So
-the fixtures here are synthetic — a git repo built in tmp_path standing in
-for one of those clones — which keeps the suite offline and fast while still
-exercising the real thing: recipe.json parsing, the per-file sha256 that lets
-a container verify what it fetched, the `source` block (repo and ref from the
-registry entry, commit resolved from the checkout), the yanked tombstones,
-and the `supersedes` -> `aliases` flattening.
+Templates and skills are not checked out in this repo: each build reads
+templates.json and skills.json, clones every entry at its ref into a throwaway
+directory and indexes that. So the fixtures here are synthetic — a git repo
+built in tmp_path standing in for one of those clones — which keeps the suite
+offline and fast while still exercising the real thing: recipe.json parsing,
+the per-file sha256 that lets a container verify what it fetched, the `source`
+block (repo and ref from the registry entry, commit resolved from the
+checkout), the yanked tombstones, the `supersedes` -> `aliases` flattening,
+and for skills: validation that aborts the build, cross-build immutability
+against the live index, and the `skills[]` rows and tombstones.
 """
 from __future__ import annotations
 
@@ -16,8 +18,11 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -58,7 +63,7 @@ def git(*args: str, cwd: Path) -> str:
 
 def make_checkout(tmp_path: Path, recipe_json: str = RECIPE_JSON, extra: dict[str, str] | None = None) -> Path:
     """A template checkout of the shape build_index gets back from
-    clone_skill(): a real git repo, so the commit in the source block has
+    clone_template(): a real git repo, so the commit in the source block has
     something to resolve against."""
     d = tmp_path / "checkout"
     d.mkdir()
@@ -187,6 +192,8 @@ def test_two_templates_resolving_to_the_same_ref_are_refused(tmp_path, monkeypat
         {"name": "dca-fork", "repo": _local_repo(tmp_path / "b", RECIPE_JSON), "ref": "main"},
     ]}))
     monkeypatch.setattr(build_index, "REGISTRY_PATH", reg)
+    (tmp_path / "skills.json").write_text(json.dumps({"skills": []}))
+    monkeypatch.setattr(build_index, "SKILLS_REGISTRY_PATH", tmp_path / "skills.json")
     monkeypatch.setattr(build_index, "REPO_ROOT", tmp_path)
     monkeypatch.chdir(tmp_path)
     import sys as _sys
@@ -219,11 +226,13 @@ def test_index_schema_pins_schema_version_3():
 
 def test_build_index_dry_run_end_to_end(tmp_path, monkeypatch):
     """A full --dry-run against a synthetic one-entry registry, proving
-    main() wires load_registry -> fetch_skills -> collect_template ->
+    main() wires load_registry -> fetch_templates -> collect_template ->
     tombstone_entries -> build_aliases -> the index dict together."""
     reg = tmp_path / "templates.json"
     reg.write_text(json.dumps({"templates": [ENTRY | {"repo": _local_repo(tmp_path / "src", RECIPE_JSON)}]}))
     monkeypatch.setattr(build_index, "REGISTRY_PATH", reg)
+    (tmp_path / "skills.json").write_text(json.dumps({"skills": []}))  # offline: never the real listing
+    monkeypatch.setattr(build_index, "SKILLS_REGISTRY_PATH", tmp_path / "skills.json")
     monkeypatch.setattr(build_index, "YANKED_PATH", tmp_path / "no-such-yanked.json")
     monkeypatch.setattr(build_index, "REPO_ROOT", tmp_path)
     monkeypatch.chdir(tmp_path)
@@ -231,3 +240,204 @@ def test_build_index_dry_run_end_to_end(tmp_path, monkeypatch):
     monkeypatch.setattr(_sys, "argv", ["build_index.py", "--dry-run"])
     assert build_index.main() == 0
     assert not (tmp_path / "dist" / "templates").exists()  # dry-run writes nothing
+
+
+# === skills ================================================================================
+
+
+SKILL_FIXTURES = REPO_ROOT / "tests" / "fixtures" / "skills"
+
+
+def _skill_repo(root: Path, fixture: str = "valid") -> str:
+    """A real local git repo holding one skill fixture, named after it on disk."""
+    shutil.copytree(SKILL_FIXTURES / fixture, root)
+    git("init", "-q", "-b", "main", cwd=root)
+    git("add", "-A", cwd=root)
+    git("commit", "-q", "-m", "init", cwd=root)
+    return root.as_uri()
+
+
+def _build(tmp_path: Path, monkeypatch, *, skills: list[dict], templates: list[dict] | None = None,
+           yanked: list[str] | None = None, live: dict | None = None, dry_run: bool = False) -> dict:
+    """Run main() in a tmp REPO_ROOT against synthetic listings; return the index it
+    wrote (or would have written). `live` is served as the live index via file://."""
+    root = tmp_path / "repo"
+    root.mkdir(parents=True, exist_ok=True)
+    if templates is None:
+        templates = [ENTRY | {"repo": _local_repo(tmp_path / "tmpl-src", RECIPE_JSON)}]
+    (root / "templates.json").write_text(json.dumps({"templates": templates}))
+    (root / "skills.json").write_text(json.dumps({"skills": skills}))
+    (root / "yanked.json").write_text(json.dumps({"yanked": yanked or []}))
+    live_path = tmp_path / "live-index.json"
+    if live is not None:
+        live_path.write_text(json.dumps(live))
+    monkeypatch.setattr(build_index, "REPO_ROOT", root)
+    monkeypatch.setattr(build_index, "REGISTRY_PATH", root / "templates.json")
+    monkeypatch.setattr(build_index, "SKILLS_REGISTRY_PATH", root / "skills.json")
+    monkeypatch.setattr(build_index, "YANKED_PATH", root / "yanked.json")
+    monkeypatch.setenv(build_index.LIVE_INDEX_ENV, live_path.as_uri())
+    import sys as _sys
+    monkeypatch.setattr(_sys, "argv", ["build_index.py", *(["--dry-run"] if dry_run else [])])
+    assert build_index.main() == 0
+    index_path = root / "dist" / "index.json"
+    return json.loads(index_path.read_text()) if index_path.exists() else {}
+
+
+def test_the_templates_part_is_the_same_with_or_without_skills(tmp_path, monkeypatch):
+    """Adding the skill kind must not move a byte of what a template-only butler reads."""
+    src = _local_repo(tmp_path / "tmpl-src", RECIPE_JSON)
+    templates = [ENTRY | {"repo": src}]
+    without = _build(tmp_path / "a", monkeypatch, skills=[], templates=templates)
+    with_skill = _build(tmp_path / "b", monkeypatch, templates=templates,
+                        skills=[{"name": "valid", "repo": _skill_repo(tmp_path / "skill-src"), "ref": "main"}])
+    assert list(without) == ["schemaVersion", "generatedAt", "templates", "aliases", "skills"]
+    assert without["schemaVersion"] == with_skill["schemaVersion"] == 3
+    assert without["templates"] == with_skill["templates"] == [build_index.collect_template(tmp_path / "tmpl-src", templates[0])]
+    assert without["aliases"] == with_skill["aliases"] == [{"ref": "dca@1", "supersededBy": "dca@2"}]
+    assert without["skills"] == [] and len(with_skill["skills"]) == 1
+
+
+def test_a_skill_row_and_its_published_files(tmp_path, monkeypatch):
+    src = tmp_path / "skill-src"
+    index = _build(tmp_path, monkeypatch, skills=[{"name": "valid", "repo": _skill_repo(src), "ref": "main"}])
+    [row] = index["skills"]
+    assert row["name"] == "valid" and row["version"] == "1.0.0"
+    assert row["description"].startswith("A minimal, fully compliant skill fixture")
+    assert row["keywords"] == ["fixture", "buy once"] and row["moneyMoving"] is True
+    assert row["requires"] == {"bins": ["acp", "bevo-read", "bevo-notify"], "skills": []}
+    assert "maxSteps" not in row  # only a skill that sets one carries it
+    assert row["source"] == {"repo": src.as_uri().split("://", 1)[1].strip("/"), "ref": "main", "commit": head(src)}
+    assert [f["path"] for f in row["files"]] == ["SKILL.md", "references/sizing.md"]  # README/CHANGELOG stay home
+    dist = tmp_path / "repo" / "dist" / "skills" / "valid" / "1.0.0"
+    for f in row["files"]:
+        blob = (dist / f["path"]).read_bytes()
+        assert blob == (src / f["path"]).read_bytes()
+        assert f["sha256"] == hashlib.sha256(blob).hexdigest() and f["bytes"] == len(blob)
+    assert not (dist / "README.md").exists() and not (dist / "CHANGELOG.md").exists()
+
+    schema = json.loads((REPO_ROOT / "schema" / "index.schema.json").read_text())
+    skill_schema = schema["definitions"]["skill"]
+    assert set(skill_schema["required"]) <= set(row) <= set(skill_schema["properties"])
+    assert re.fullmatch(skill_schema["properties"]["files"]["items"]["properties"]["path"]["pattern"], "references/sizing.md")
+
+
+def test_an_invalid_skill_aborts_the_whole_build(tmp_path, monkeypatch):
+    """Failing loudly keeps the last deploy live; skipping would delist the skill fleet-wide."""
+    bad = _skill_repo(tmp_path / "yaml-colon", "yaml-colon")
+    with pytest.raises(SystemExit) as e:
+        _build(tmp_path, monkeypatch, skills=[{"name": "yaml-colon", "repo": bad, "ref": "main"}])
+    assert "skill yaml-colon" in str(e.value) and "ERROR description:" in str(e.value)
+    assert "the last deploy stays live" in str(e.value)
+    assert not (tmp_path / "repo" / "dist").exists()
+
+
+def test_a_skill_version_is_immutable_across_builds(tmp_path, monkeypatch):
+    src = tmp_path / "skill-src"
+    listing = [{"name": "valid", "repo": _skill_repo(src), "ref": "main"}]
+    first = _build(tmp_path / "one", monkeypatch, skills=listing)
+
+    # the same bytes under the same version republish fine
+    again = _build(tmp_path / "two", monkeypatch, skills=listing, live=first)
+    assert again["skills"] == first["skills"]
+
+    # changed bytes under a version the live index serves are refused
+    (src / "SKILL.md").write_text((src / "SKILL.md").read_text().replace("right now", "right away"))
+    git("commit", "-qam", "reword", cwd=src)
+    with pytest.raises(SystemExit) as e:
+        _build(tmp_path / "three", monkeypatch, skills=listing, live=first)
+    assert "refusing to republish valid@1.0.0 with different bytes" in str(e.value) and "SKILL.md" in str(e.value)
+
+    # a version the live index has yanked cannot come back
+    yanked_live = {**first, "skills": [{"name": "valid", "version": "1.0.0", "yanked": True, "files": []}]}
+    with pytest.raises(SystemExit) as e:
+        _build(tmp_path / "four", monkeypatch, skills=listing, live=yanked_live)
+    assert "the live index has it yanked" in str(e.value)
+
+
+def test_an_unreachable_live_index_is_a_warning(tmp_path, monkeypatch, capsys):
+    listing = [{"name": "valid", "repo": _skill_repo(tmp_path / "skill-src"), "ref": "main"}]
+    index = _build(tmp_path, monkeypatch, skills=listing, dry_run=True)  # no live file written
+    assert index == {}  # dry-run writes nothing
+    out = capsys.readouterr().out
+    assert "WARN  could not read the live index" in out and "1 skill(s) indexed" in out
+    assert not (tmp_path / "repo" / "dist").exists()
+
+
+def test_yanked_skill_versions_become_tombstones(tmp_path, monkeypatch, capsys):
+    listing = [{"name": "valid", "repo": _skill_repo(tmp_path / "skill-src"), "ref": "main"}]
+    # an unlisted skill's version and the listed skill's own current version
+    index = _build(tmp_path, monkeypatch, skills=listing, yanked=["gone@1.2.10", "gone@1.2.9", "valid@1.0.0"])
+    assert index["skills"] == [
+        {"name": "gone", "version": "1.2.9", "yanked": True, "files": []},
+        {"name": "gone", "version": "1.2.10", "yanked": True, "files": []},
+        {"name": "valid", "version": "1.0.0", "yanked": True, "files": []},
+    ]
+    assert "valid@1.0.0 is listed in skills.json but yanked" in capsys.readouterr().out
+    assert not (tmp_path / "repo" / "dist" / "skills").exists()
+    assert index["templates"][0]["name"] == "dca"  # template tombstones and entries unaffected
+
+    tomb = json.loads((REPO_ROOT / "schema" / "index.schema.json").read_text())["definitions"]["skillTombstone"]
+    for row in index["skills"]:
+        assert set(tomb["required"]) == set(row)
+
+
+def _requiring_skill_repo(root: Path, name: str, requires: list[str]) -> str:
+    """The valid fixture renamed `name`, requiring `requires`, as a real local git repo."""
+    shutil.copytree(SKILL_FIXTURES / "valid", root)
+    md = root / "SKILL.md"
+    bins = '"requires":{"bins":["acp","bevo-read","bevo-notify"]'
+    md.write_text(md.read_text().replace("name: valid", f"name: {name}", 1)
+                  .replace(bins, bins + ',"skills":' + json.dumps(requires), 1))
+    git("init", "-q", "-b", "main", cwd=root)
+    git("add", "-A", cwd=root)
+    git("commit", "-q", "-m", "init", cwd=root)
+    return root.as_uri()
+
+
+def test_a_skill_row_carries_its_step_budget_and_required_skills(tmp_path, monkeypatch):
+    index = _build(tmp_path, monkeypatch, skills=[
+        {"name": "requires-skill", "repo": _skill_repo(tmp_path / "dependent", "requires-skill"), "ref": "main"},
+        {"name": "valid", "repo": _skill_repo(tmp_path / "base"), "ref": "main"},
+    ])
+    rows = {row["name"]: row for row in index["skills"]}
+    assert rows["requires-skill"]["maxSteps"] == 150
+    assert rows["requires-skill"]["requires"] == {"bins": ["bevo-read"], "skills": ["valid"]}
+    assert "maxSteps" not in rows["valid"] and rows["valid"]["requires"]["skills"] == []
+
+    skill_schema = json.loads((REPO_ROOT / "schema" / "index.schema.json").read_text())["definitions"]["skill"]
+    steps = skill_schema["properties"]["maxSteps"]
+    assert steps["minimum"] <= rows["requires-skill"]["maxSteps"] <= steps["maximum"]
+    for row in rows.values():
+        assert set(skill_schema["required"]) <= set(row) <= set(skill_schema["properties"])
+        assert set(row["requires"]) == set(skill_schema["properties"]["requires"]["required"])
+
+
+def test_a_skill_requiring_one_the_build_does_not_publish_fails_the_build(tmp_path, monkeypatch):
+    """A butler installs a required skill first, so the index never serves a row whose
+    requirement it does not serve too — and the whole build fails, like an invalid skill."""
+    dependent = {"name": "requires-skill", "repo": _skill_repo(tmp_path / "dependent", "requires-skill"), "ref": "main"}
+    base = {"name": "valid", "repo": _skill_repo(tmp_path / "base"), "ref": "main"}
+
+    with pytest.raises(SystemExit) as e:  # not listed
+        _build(tmp_path / "unlisted", monkeypatch, skills=[dependent])
+    assert ("skill requires-skill: ERROR metadata.butler.requires.skills: 'valid' is not listed in skills.json"
+            in str(e.value))
+    assert "the last deploy stays live" in str(e.value)
+    assert not (tmp_path / "unlisted" / "repo" / "dist").exists()
+
+    with pytest.raises(SystemExit) as e:  # listed, but the build publishes only its tombstone
+        _build(tmp_path / "yanked", monkeypatch, skills=[dependent, base], yanked=["valid@1.0.0"])
+    assert "'valid' is listed in skills.json but this build does not publish it" in str(e.value)
+
+    cycle = [{"name": a, "repo": _requiring_skill_repo(tmp_path / a, a, [b]), "ref": "main"}
+             for a, b in (("one", "two"), ("two", "one"))]
+    with pytest.raises(SystemExit) as e:
+        _build(tmp_path / "cycle", monkeypatch, skills=cycle)
+    assert "skill one: ERROR metadata.butler.requires.skills: forms a cycle (one → two → one)" in str(e.value)
+
+
+def test_yanked_json_splits_by_kind_and_still_refuses_typos():
+    assert build_index.split_yanked({"dca@2", "valid@1.0.0", "typo"}) == ({"dca@2", "typo"}, {"valid@1.0.0"})
+    with pytest.raises(SystemExit) as e:
+        build_index.tombstone_entries({"typo"}, [])
+    assert "yanked.json" in str(e.value)

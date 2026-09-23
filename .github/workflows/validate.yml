@@ -11,9 +11,10 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      # Templates live in their own repos and are validated in their own CI (the
-      # composite action in .github/actions/validate). Here we check the
-      # registry itself: templates.json, the schema, the tools and the index build.
+      # Templates and skills live in their own repos and are validated in their own
+      # CI (the composite action in .github/actions/validate). Here we check the
+      # registry itself: templates.json, skills.json, the schema, the tools and the
+      # index build.
       # A shallow checkout is enough: nothing here reads this repo's own history
       # (every git call in scripts/ targets a template clone or a remote ref).
       - uses: actions/checkout@v4
@@ -26,7 +27,8 @@ jobs:
         run: pip install --quiet pytest
 
       - name: Registry listing
-        # templates.json IS the registry: an id and a GitHub link per duty template.
+        # templates.json and skills.json ARE the registry: a name and a GitHub link
+        # per duty template / skill, unique across both files.
         # Checks the listing and the boundary around it — valid unique ids, an
         # https://github.com/<owner>/<repo> URL with no credentials or query, a
         # sane ref, and that the ref resolves on the remote. What a butler
@@ -34,7 +36,7 @@ jobs:
         # build writes into the index, not this file.
         run: python3 scripts/check_registry.py
 
-      - name: Validate all templates
+      - name: Validate all templates and skills
         # The butler- prefix is maintainer-only (bevo- is always refused). author_association is a trusted GitHub
         # Actions context value (OWNER/MEMBER/COLLABORATOR for people with write access to
         # this repo) — external, non-maintainer PRs run the strict, non-maintainer check.

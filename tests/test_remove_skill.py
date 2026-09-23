@@ -1,11 +1,11 @@
 """test_remove_skill.py — pytest coverage for scripts/remove_skill.py.
 
-The script edits the two registry files in place, so every test points its
-REGISTRY_PATH / YANKED_PATH at copies in tmp_path. What matters is the
-difference between the two removals: a de-list leaves yanked.json alone (and
-a duty already created from the template keeps running), while --yank writes
-the tombstone spec that makes a FRESH duty_create against that ref fail
-loudly.
+The script edits the registry files in place, so every test points its
+REGISTRY_PATH / SKILLS_REGISTRY_PATH / YANKED_PATH at copies in tmp_path.
+What matters is the difference between the two removals: a de-list leaves
+yanked.json alone (and a duty already created from the template keeps
+running), while --yank writes the tombstone spec — `name@N` for a template,
+`name@X.Y.Z` for a skill.
 """
 from __future__ import annotations
 
@@ -39,12 +39,23 @@ REGISTRY = {
 }
 
 
+SKILLS = {
+    "comment": "the skills",
+    "skills": [
+        {"name": "skill-alpha", "repo": "https://github.com/Virtual-Protocol/butler-skill-skill-alpha", "ref": "main"},
+    ],
+}
+
+
 @pytest.fixture
 def registry(tmp_path, monkeypatch):
     reg, yank = tmp_path / "templates.json", tmp_path / "yanked.json"
     reg.write_text(json.dumps(REGISTRY, indent=2) + "\n")
     yank.write_text(json.dumps({"yanked": []}, indent=2) + "\n")
+    skills = tmp_path / "skills.json"
+    skills.write_text(json.dumps(SKILLS, indent=2) + "\n")
     monkeypatch.setattr(remove_skill, "REGISTRY_PATH", reg)
+    monkeypatch.setattr(remove_skill, "SKILLS_REGISTRY_PATH", skills)
     monkeypatch.setattr(remove_skill, "YANKED_PATH", yank)
     return reg, yank
 
@@ -125,3 +136,45 @@ def test_written_files_round_trip_the_checked_in_shape(registry, monkeypatch):
     run(monkeypatch, "tmpl-alpha")
     text = reg.read_text()
     assert text.endswith("}\n") and '\n  "templates": [' in text
+
+
+# --- skills -----------------------------------------------------------------------------------
+
+
+def test_a_skill_is_removed_from_skills_json_only(registry, monkeypatch, capsys):
+    reg, yank = registry
+    skills = reg.parent / "skills.json"
+    before = reg.read_text()
+    assert run(monkeypatch, "skill-alpha") == 0
+    assert json.loads(skills.read_text()) == {"comment": "the skills", "skills": []}
+    assert reg.read_text() == before and json.loads(yank.read_text()) == {"yanked": []}
+    out = capsys.readouterr().out
+    assert "removed skill-alpha from skills.json (0 skill(s) left)" in out
+    assert 'git commit -am "skills: remove skill-alpha"' in out
+
+
+def test_a_skill_yank_is_a_semver_spec(registry, monkeypatch):
+    _, yank = registry
+    assert run(monkeypatch, "skill-alpha", "--yank", "--version", "1.2.3") == 0
+    assert json.loads(yank.read_text())["yanked"] == ["skill-alpha@1.2.3"]
+
+
+def test_the_version_must_fit_the_kind(registry, monkeypatch):
+    with pytest.raises(SystemExit):
+        run(monkeypatch, "skill-alpha", "--yank", "--version", "2")
+    with pytest.raises(SystemExit):
+        run(monkeypatch, "tmpl-alpha", "--yank", "--version", "1.0.0")
+
+
+def test_published_version_of_a_skill_skips_tombstones(tmp_path):
+    index = {"templates": [{"name": "skill-alpha", "version": 9, "files": [{"path": "recipe.json"}]}], "skills": [
+        {"name": "skill-alpha", "version": "1.0.0", "yanked": True, "files": []},
+        {"name": "skill-alpha", "version": "1.1.0", "files": [{"path": "SKILL.md"}]},
+    ]}
+    path = tmp_path / "index.json"
+    path.write_text(json.dumps(index))
+    assert remove_skill.published_version("skill-alpha", path.as_uri(), kind="skill") == "1.1.0"
+    path.write_text(json.dumps({"skills": []}))
+    with pytest.raises(SystemExit) as e:
+        remove_skill.published_version("skill-alpha", path.as_uri(), kind="skill")
+    assert "--version <X.Y.Z>" in str(e.value)

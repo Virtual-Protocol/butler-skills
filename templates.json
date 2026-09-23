@@ -1,5 +1,5 @@
 {
-  "comment": "The registry IS this file. A duty template is an id and a GitHub link; its repo owns its versions. Adding or removing a template is a PR here — updating one is not: every build re-resolves each ref to a commit and republishes. Set `ref` to a branch to follow it, or to a tag to hold a release. The `name` here must equal the `id` in that repo's recipe.json — scripts/validate.py --all enforces it by cloning each entry into a directory named after this file's `name` and checking recipe.json's id against the directory name. app-checkout and web-checkout stay unlisted until the container grows the commands they drive, because a checkout flow has no duty.py to validate yet.",
+  "comment": "The duty-template half of the registry IS this file. A duty template is an id and a GitHub link; its repo owns its versions. Adding or removing a template is a PR here — updating one is not: every build re-resolves each ref to a commit and republishes. Set `ref` to a branch to follow it, or to a tag to hold a release. The `name` here must equal the `id` in that repo's recipe.json — scripts/validate.py --all enforces it by cloning each entry into a directory named after this file's `name` and checking recipe.json's id against the directory name. Skills (SKILL.md playbooks) are listed in skills.json, not here.",
   "templates": [
     {
       "name": "copytrade",
