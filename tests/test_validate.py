@@ -1075,6 +1075,8 @@ def test_shell_block_parsing(tmp_path):
     ("brt_abcdef123456", "secrets-lint:"),
     ("https://evil.example/x", "url-lint:"),
     ("https://github.com/Virtual-Protocol-evil/x", "url-lint:"),
+    ("https://appgallery.huawei.com.evil.example/app/C1", "url-lint:"),
+    ("https://www.apkmirror.com/apk/x", "url-lint:"),
     ("a\u200bb", "invisible-char-lint:"),
     ("a\u202eb", "invisible-char-lint:"),
     ("0x833589fCD6eDb6e08f4c7C32D4f71b54bdA02913", "address-lint:"),
@@ -1091,6 +1093,17 @@ def test_published_text_lints(tmp_path, text, prefix):
 def test_a_virtual_protocol_link_passes(tmp_path):
     body = VALID_SKILL_BODY.replace("A standing order", "https://github.com/Virtual-Protocol/butler-skills says. A standing order")
     assert check_skill(write_skill(tmp_path, body=body))[0]
+
+
+@pytest.mark.parametrize("url", [
+    "https://appgallery.huawei.com/app/C100000001",
+    "https://appgallery.cloud.huawei.com/appdl/C100000001",
+    "https://play.google.com/store/apps/details?id=com.example.app",
+])
+def test_an_official_app_store_link_passes_in_a_skill(tmp_path, url):
+    body = VALID_SKILL_BODY.replace("A standing order", f"Get the app from {url} first. A standing order")
+    ok, result = check_skill(write_skill(tmp_path, body=body))
+    assert ok, result["errors"]
 
 
 # --- layout ---------------------------------------------------------------------------------

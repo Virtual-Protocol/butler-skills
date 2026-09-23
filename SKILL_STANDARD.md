@@ -172,8 +172,11 @@ A command the container gains is a change here first.
 ## Lints (every published file)
 
 - No secrets: `brt_…`, `sk-…`, 64-hex strings, JWTs.
-- No URLs except `https://github.com/Virtual-Protocol/…` and
-  `https://raw.githubusercontent.com/Virtual-Protocol/…`.
+- No URLs except `https://github.com/Virtual-Protocol/…`,
+  `https://raw.githubusercontent.com/Virtual-Protocol/…` and the official Android app stores —
+  `https://appgallery.huawei.com/…`, `https://appgallery.cloud.huawei.com/…` (Huawei
+  AppGallery) and `https://play.google.com/…` — so a phone-app skill can say where an app's
+  official build comes from. Never an APK mirror. Duty templates stay GitHub-only.
 - No invisible characters: zero-width (U+200B–U+200D, U+2060, U+FEFF), the bidi overrides
   and isolates (U+202A–U+202E, U+2066–U+2069), U+2028/U+2029.
 - No raw `0x` + 40-hex address anywhere — an address comes from the owner or a read.
