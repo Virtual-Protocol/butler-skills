@@ -4,7 +4,7 @@
     {
       "name": "butler-app-checkout",
       "repo": "https://github.com/Virtual-Protocol/butler-skill-app-checkout",
-      "ref": "v2.1.2"
+      "ref": "v2.1.3"
     }
   ]
 }
