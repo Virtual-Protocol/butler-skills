@@ -859,7 +859,7 @@ SKILL_SUBCOMMANDS = {
     "bevo-x": frozenset({"search"}),  # x.mjs
     "app-checkout": frozenset({
         "start", "status", "screen", "shot", "tap", "type", "key", "swipe", "wait", "install",
-        "open", "checkpoint", "end",
+        "open", "grant", "do", "checkpoint", "end",
     }),
 }
 

@@ -155,7 +155,7 @@ are joined, comments and heredoc bodies are skipped, and a line is split on `|`,
 | `bevo-sms` | `number`, `status`, `otp` |
 | `bevo-automation` | `create`, `validate`, `update`, `enable`, `disable`, `delete`, `list`, `show`, `logs` |
 | `bevo-x` | `search` |
-| `app-checkout` | `start`, `status`, `screen`, `shot`, `tap`, `type`, `key`, `swipe`, `wait`, `install`, `open`, `checkpoint`, `end` |
+| `app-checkout` | `start`, `status`, `screen`, `shot`, `tap`, `type`, `key`, `swipe`, `wait`, `install`, `open`, `grant`, `do`, `checkpoint`, `end` |
 | `acp` | the groups the container's `acp` wrapper lets through: `agent` (only `whoami`, `list`, `use`, `link`, `generate-signer-key`, `signer-status`, `help`), `browse`, `card`, `chain`, `email`, `events`, `job`, `message`, `offering`, `policy`, `provider`, `resource`, `skill`, `subscription`, `trade`, `wallet`. `client`, `compute` and `configure` are refused; a bare `acp` / `acp --help` is refused |
 | `bevo-send`, `bevo-rpc`, `bevo-notify` | any arguments |
 
