@@ -328,7 +328,7 @@ def validator():
 
 
 def validate_skills(cloned: list[tuple[dict, Path]]) -> None:
-    """Every listed skill must pass the validator in maintainer mode, or nothing is
+    """Every listed skill must pass the validator, or nothing is
     published. A failed build keeps the last Pages deploy live; skipping the skill
     instead would delist it from every butler."""
     v = validator()
@@ -336,7 +336,7 @@ def validate_skills(cloned: list[tuple[dict, Path]]) -> None:
     report: list[str] = []
     for entry, skill_dir in cloned:
         ok, result = v.validate_path(
-            skill_dir, reserved, maintainer=True, json_mode=True, standalone=False, expected_kind="skill"
+            skill_dir, reserved, json_mode=True, standalone=False, expected_kind="skill"
         )
         if not ok:
             report.append(f"skill {entry['name']} ({entry['repo']} @ {entry.get('ref') or 'main'}) does not validate:")

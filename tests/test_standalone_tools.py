@@ -229,7 +229,7 @@ def test_replay_is_skipped_cleanly_for_a_one_off_only_template(tmp_path):
 def test_composite_action_exists_with_the_documented_inputs():
     text = (REPO_ROOT / ".github" / "actions" / "validate" / "action.yml").read_text()
     assert "using: composite" in text
-    for inp, default in (("path", '"."'), ("standalone", '"true"'), ("maintainer", '"false"'), ("fixture", "trade-activity-page")):
+    for inp, default in (("path", '"."'), ("standalone", '"true"'), ("fixture", "trade-activity-page")):
         assert f"  {inp}:" in text, inp
         assert default in text, (inp, default)
     assert "repository: Virtual-Protocol/butler-skills" in text

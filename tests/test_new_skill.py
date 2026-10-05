@@ -35,8 +35,8 @@ def test_prints_create_validate_and_registry_entry_steps():
     assert not (REPO_ROOT / "templates").exists()  # nothing is checked out in this repo
 
 
-def test_butler_prefix_strips_to_repo_name_with_maintainer():
-    proc = run("butler-thing", "--maintainer")
+def test_butler_prefix_strips_to_repo_name():
+    proc = run("butler-thing")
     assert proc.returncode == 0, proc.stderr
     assert "butler-skill-thing" in proc.stdout
     assert '"name": "butler-thing"' in proc.stdout
@@ -44,10 +44,9 @@ def test_butler_prefix_strips_to_repo_name_with_maintainer():
 
 def test_reserved_id_and_prefixes_are_refused():
     assert run("clawhub").returncode != 0
-    assert run("butler-thing").returncode != 0  # maintainer-only without --maintainer
     assert run("Bad_Name").returncode != 0
-    # bevo-* is the container's bundled-command namespace: refused even with --maintainer
-    proc = run("bevo-thing", "--maintainer")
+    # bevo-* is the container's bundled-command namespace: refused
+    proc = run("bevo-thing")
     assert proc.returncode != 0
     assert "bundled-command" in proc.stderr
 

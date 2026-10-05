@@ -81,7 +81,7 @@ This shape is fixed by the container's template installer — do not add or rena
 
 | Field | Rule |
 | --- | --- |
-| `id` | required, `^[a-z0-9][a-z0-9-]{1,63}$`, not in `schema/reserved-names.json`. The `butler-` prefix is maintainer-only (`--maintainer` / `MAINTAINER=1`); the `bevo-` prefix is **refused** — it is the container's bundled-command namespace. In registry mode `id` must equal the directory the entry is cloned into (its `templates.json` name); in `--standalone` mode only the pattern is checked |
+| `id` | required, `^[a-z0-9][a-z0-9-]{1,63}$`, not in `schema/reserved-names.json`. The `bevo-` prefix is **refused** — it is the container's bundled-command namespace. In registry mode `id` must equal the directory the entry is cloned into (its `templates.json` name); in `--standalone` mode only the pattern is checked |
 | `version` | required, a plain positive **integer** (not semver) — a ref is `<id>@<version>`. The publish build refuses to overwrite an already-published version with different bytes, so a change without a bump fails the build |
 | `description` | required, non-empty, <= 200 chars — it is composed into a 280-char field with a settings clause appended, so a longer one is silently dropped by the caller |
 | `keywords` | optional array of strings |

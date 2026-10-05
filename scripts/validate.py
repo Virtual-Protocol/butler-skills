@@ -4,7 +4,6 @@
 Usage:
     scripts/validate.py <dir> [<dir> ...]        # registry mode: a checkout of a listed skill or template
     scripts/validate.py --all                    # clone and validate every templates.json AND skills.json entry
-    scripts/validate.py --all --maintainer       # allow the butler- prefix / reserved-adjacent names
     scripts/validate.py <dir> --json             # machine-readable output
     scripts/validate.py --standalone <dir>       # any directory holding one skill or template (its own repo)
 
@@ -87,11 +86,8 @@ TREE_SKIP_NAMES = {".git", "__pycache__"}
 
 REQUIRED_FILES = ("recipe.json", "duty.py", "README.md")
 
-# Id prefixes. `butler-` is the Butler team's namespace for templates published through
-# this hub (maintainer-only: --maintainer / MAINTAINER=1). `bevo-` is the container's
-# own bundled-command namespace and is refused outright — a template with that prefix
-# would collide with, or masquerade as, a bundled command.
-MAINTAINER_PREFIX = "butler-"
+# `bevo-` is the container's own bundled-command namespace and is refused outright — a
+# template with that prefix would collide with, or masquerade as, a bundled command.
 CONTAINER_PREFIX = "bevo-"
 
 # Mirror of schema/reserved-names.json (the source of truth in a registry checkout),
@@ -539,7 +535,7 @@ def check_readme(template_dir: Path, issues: Issues) -> None:
         break
 
 
-def check_reserved(rid: str, reserved: set[str], maintainer: bool, issues: Issues) -> None:
+def check_reserved(rid: str, reserved: set[str], issues: Issues) -> None:
     if not rid:
         return
     if rid in reserved:
@@ -548,12 +544,7 @@ def check_reserved(rid: str, reserved: set[str], maintainer: bool, issues: Issue
         issues.error(
             "id",
             f"{rid!r} uses the '{CONTAINER_PREFIX}' prefix, which is the container's bundled-command "
-            f"namespace — templates may never use it; team templates use '{MAINTAINER_PREFIX}'",
-        )
-    elif rid.startswith(MAINTAINER_PREFIX) and not maintainer:
-        issues.error(
-            "id",
-            f"{rid!r} uses the maintainer-only '{MAINTAINER_PREFIX}' prefix; pass --maintainer or set MAINTAINER=1 to publish it",
+            f"namespace — templates may never use it",
         )
 
 
@@ -1241,7 +1232,7 @@ def required_skills(butler) -> list[str]:
     return out
 
 
-def check_skill_name(name: str, skill_dir: Path, standalone: bool, reserved: set[str], maintainer: bool, issues: Issues) -> None:
+def check_skill_name(name: str, skill_dir: Path, standalone: bool, reserved: set[str], issues: Issues) -> None:
     if len(name) > MAX_SKILL_NAME:
         issues.error("name", f"must be at most {MAX_SKILL_NAME} characters, got {len(name)}")
     if not SKILL_NAME_RE.match(name):
@@ -1265,12 +1256,7 @@ def check_skill_name(name: str, skill_dir: Path, standalone: bool, reserved: set
         issues.error(
             "name",
             f"{name!r} uses the '{CONTAINER_PREFIX}' prefix, which is the container's bundled-command "
-            f"namespace — skills may never use it; team skills use '{MAINTAINER_PREFIX}'",
-        )
-    elif name.startswith(MAINTAINER_PREFIX) and not maintainer:
-        issues.error(
-            "name",
-            f"{name!r} uses the maintainer-only '{MAINTAINER_PREFIX}' prefix; pass --maintainer or set MAINTAINER=1 to publish it",
+            f"namespace — skills may never use it",
         )
 
 
@@ -1731,7 +1717,7 @@ def lint_skill_prose(prose: str, issues: Issues, where) -> None:
 
 
 def validate_skill(
-    skill_dir: Path, reserved: set[str], maintainer: bool, json_mode: bool, standalone: bool = False
+    skill_dir: Path, reserved: set[str], json_mode: bool, standalone: bool = False
 ) -> tuple[bool, dict]:
     """Validate one skill repository. `standalone=True` takes the name from the
     frontmatter; otherwise the directory is a checkout named after its skills.json
@@ -1752,7 +1738,7 @@ def validate_skill(
             issues.error(key, "required field missing")
     name = fm["name"]
     if isinstance(name, str):
-        check_skill_name(name, skill_dir, standalone, reserved, maintainer, issues)
+        check_skill_name(name, skill_dir, standalone, reserved, issues)
     version = fm["version"]
     if isinstance(version, str) and not SEMVER_RE.match(version):
         issues.error("version", f"must be semver X.Y.Z, got {version!r}")
@@ -1830,7 +1816,7 @@ def prompt_cost(name: str, description: str, path: str) -> int:
 
 
 def validate_template(
-    template_dir: Path, reserved: set[str], maintainer: bool, json_mode: bool, standalone: bool = False
+    template_dir: Path, reserved: set[str], json_mode: bool, standalone: bool = False
 ) -> tuple[bool, dict]:
     issues = Issues()
     recipe_path = template_dir / "recipe.json"
@@ -1859,7 +1845,7 @@ def validate_template(
     if not standalone:
         check_name_matches_dir(rid, template_dir, issues)
     if rid:
-        check_reserved(rid, reserved, maintainer, issues)
+        check_reserved(rid, reserved, issues)
 
     check_readme(template_dir, issues)
     check_duty_py(template_dir, recipe, issues)
@@ -2043,7 +2029,7 @@ def detect_kind(path: Path) -> str:
 
 
 def validate_path(
-    path: Path, reserved: set[str], maintainer: bool, json_mode: bool,
+    path: Path, reserved: set[str], json_mode: bool,
     standalone: bool = False, expected_kind: str | None = None,
 ) -> tuple[bool, dict]:
     """Validate one repository as whichever kind it is. `expected_kind` is the listing
@@ -2073,8 +2059,8 @@ def validate_path(
         )
         return False, {"template": path.name, "errors": issues.errors, "warnings": issues.warnings}
     if kind == "skill":
-        return validate_skill(path, reserved, maintainer, json_mode, standalone=standalone)
-    return validate_template(path, reserved, maintainer, json_mode, standalone=standalone)
+        return validate_skill(path, reserved, json_mode, standalone=standalone)
+    return validate_template(path, reserved, json_mode, standalone=standalone)
 
 
 def main() -> int:
@@ -2091,14 +2077,12 @@ def main() -> int:
         action="store_true",
         help="treat each path as a repository checkout: the name comes from recipe.json / SKILL.md, not the directory",
     )
-    parser.add_argument("--maintainer", action="store_true", help="allow the maintainer-only butler- prefix (bevo- is always refused)")
     parser.add_argument("--json", action="store_true", help="print machine-readable JSON output")
     args = parser.parse_args()
 
     if args.all and args.standalone:
         parser.error("--all is registry mode; it cannot be combined with --standalone")
 
-    maintainer = args.maintainer or os.environ.get("MAINTAINER") == "1"
     reserved = load_reserved()
 
     results = []
@@ -2133,7 +2117,7 @@ def main() -> int:
             if not args.json:
                 print(f"validating {t.relative_to(REPO_ROOT) if t.is_relative_to(REPO_ROOT) else t.name} ...")
             ok, result = validate_path(
-                t, reserved, maintainer, args.json, standalone=args.standalone, expected_kind=expected_kind
+                t, reserved, args.json, standalone=args.standalone, expected_kind=expected_kind
             )
             if expected_kind == "skill" and dependency_errors.get(t.name):
                 result["errors"].extend(dependency_errors[t.name])

@@ -38,10 +38,10 @@ def _load_validate_module():
 validate = _load_validate_module()
 
 
-def run(name: str, maintainer: bool = False, standalone: bool = True):
+def run(name: str, standalone: bool = True):
     reserved = validate.load_reserved()
     template_dir = FIXTURES / name
-    ok, result = validate.validate_template(template_dir, reserved, maintainer, json_mode=True, standalone=standalone)
+    ok, result = validate.validate_template(template_dir, reserved, json_mode=True, standalone=standalone)
     return ok, result
 
 
@@ -132,7 +132,7 @@ _VALID_ALLOF_PARAMS = {
 
 def test_valid_allof_conditional_required_passes(tmp_path):
     template_dir = _write_params_template(tmp_path, "valid-allof", _VALID_ALLOF_PARAMS)
-    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    ok, result = validate.validate_template(template_dir, set(), json_mode=True, standalone=True)
     assert ok, result["errors"]
     assert not any(e.startswith("params") for e in result["errors"])
 
@@ -148,7 +148,7 @@ def test_allof_nested_under_a_property_is_refused(tmp_path):
         },
     }
     template_dir = _write_params_template(tmp_path, "nested-allof", params)
-    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    ok, result = validate.validate_template(template_dir, set(), json_mode=True, standalone=True)
     assert not ok
     assert any("unsupported JSON-Schema keyword" in e and "allOf" in e for e in result["errors"])
 
@@ -159,7 +159,7 @@ def test_allof_clause_with_extra_key_is_refused(tmp_path):
     params = copy.deepcopy(_VALID_ALLOF_PARAMS)
     params["allOf"][0]["else"] = {"required": []}
     template_dir = _write_params_template(tmp_path, "extra-key-allof", params)
-    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    ok, result = validate.validate_template(template_dir, set(), json_mode=True, standalone=True)
     assert not ok
     assert any("params.allOf[0]: unsupported key" in e for e in result["errors"])
 
@@ -170,7 +170,7 @@ def test_allof_if_condition_using_minimum_is_refused(tmp_path):
     params = copy.deepcopy(_VALID_ALLOF_PARAMS)
     params["allOf"][0]["if"]["properties"]["SIZING"] = {"minimum": 1}
     template_dir = _write_params_template(tmp_path, "minimum-allof", params)
-    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    ok, result = validate.validate_template(template_dir, set(), json_mode=True, standalone=True)
     assert not ok
     assert any("must be an object with exactly one key, 'const' or 'enum'" in e for e in result["errors"])
 
@@ -181,7 +181,7 @@ def test_allof_then_with_anything_but_required_is_refused(tmp_path):
     params = copy.deepcopy(_VALID_ALLOF_PARAMS)
     params["allOf"][0]["then"] = {"default": {"SIZE_USD": 5}}
     template_dir = _write_params_template(tmp_path, "bad-then-allof", params)
-    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    ok, result = validate.validate_template(template_dir, set(), json_mode=True, standalone=True)
     assert not ok
     assert any("params.allOf[0].then: must be an object with exactly the key 'required'" in e for e in result["errors"])
 
@@ -192,7 +192,7 @@ def test_allof_undeclared_required_name_is_refused(tmp_path):
     params = copy.deepcopy(_VALID_ALLOF_PARAMS)
     params["allOf"][0]["then"]["required"] = ["NOT_DECLARED"]
     template_dir = _write_params_template(tmp_path, "undeclared-required-allof", params)
-    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    ok, result = validate.validate_template(template_dir, set(), json_mode=True, standalone=True)
     assert not ok
     assert any(
         "params.allOf[0].then.required: 'NOT_DECLARED' is not declared" in e for e in result["errors"]
@@ -205,7 +205,7 @@ def test_allof_undeclared_condition_name_is_refused(tmp_path):
     params = copy.deepcopy(_VALID_ALLOF_PARAMS)
     params["allOf"][0]["if"]["properties"] = {"NOT_DECLARED": {"const": "fixed"}}
     template_dir = _write_params_template(tmp_path, "undeclared-condition-allof", params)
-    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    ok, result = validate.validate_template(template_dir, set(), json_mode=True, standalone=True)
     assert not ok
     assert any(
         "params.allOf[0].if.properties.NOT_DECLARED" in e and "is not declared" in e for e in result["errors"]
@@ -218,7 +218,7 @@ def test_allof_const_outside_property_enum_is_refused(tmp_path):
     params = copy.deepcopy(_VALID_ALLOF_PARAMS)
     params["allOf"][0]["if"]["properties"]["SIZING"] = {"const": "not-a-valid-option"}
     template_dir = _write_params_template(tmp_path, "bad-const-allof", params)
-    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    ok, result = validate.validate_template(template_dir, set(), json_mode=True, standalone=True)
     assert not ok
     assert any("not in 'SIZING'" in e and "own enum" in e for e in result["errors"])
 
@@ -226,30 +226,24 @@ def test_allof_const_outside_property_enum_is_refused(tmp_path):
 def test_reserved_id_rejected(tmp_path):
     reserved = {"web-checkout"}
     _write_minimal_template(tmp_path / "web-checkout", "web-checkout")
-    ok, result = validate.validate_template(tmp_path / "web-checkout", reserved, maintainer=False, json_mode=True, standalone=True)
+    ok, result = validate.validate_template(tmp_path / "web-checkout", reserved, json_mode=True, standalone=True)
     assert not ok
     assert any("reserved" in e for e in result["errors"])
 
 
-def test_butler_prefix_requires_maintainer(tmp_path):
-    reserved: set[str] = set()
+def test_butler_prefix_is_allowed(tmp_path):
     template_dir = tmp_path / "butler-new-thing"
     _write_minimal_template(template_dir, "butler-new-thing")
-    ok, result = validate.validate_template(template_dir, reserved, maintainer=False, json_mode=True, standalone=True)
-    assert not ok
-    assert any("maintainer-only 'butler-' prefix" in e for e in result["errors"])
-    ok2, _ = validate.validate_template(template_dir, reserved, maintainer=True, json_mode=True, standalone=True)
-    assert ok2
+    ok, result = validate.validate_template(template_dir, set(), json_mode=True, standalone=True)
+    assert ok, result["errors"]
 
 
-def test_bevo_prefix_is_refused_even_for_maintainers(tmp_path):
+def test_bevo_prefix_is_refused(tmp_path):
     template_dir = tmp_path / "bevo-new-thing"
     _write_minimal_template(template_dir, "bevo-new-thing")
-    for maintainer in (False, True):
-        ok, result = validate.validate_template(template_dir, set(), maintainer=maintainer, json_mode=True, standalone=True)
-        assert not ok
-        assert any(e.startswith("id:") and "bundled-command" in e for e in result["errors"]), result["errors"]
-        assert not any("maintainer-only" in e for e in result["errors"])
+    ok, result = validate.validate_template(template_dir, set(), json_mode=True, standalone=True)
+    assert not ok
+    assert any(e.startswith("id:") and "bundled-command" in e for e in result["errors"]), result["errors"]
 
 
 def test_embedded_reserved_list_matches_schema_json():
@@ -268,7 +262,7 @@ def test_downloaded_tooling_in_the_tree_is_a_warning_not_an_error(tmp_path):
     _write_minimal_template(template_dir, "foo")
     (template_dir / "validate.py").write_text("# downloaded\n")
     (template_dir / "replay.py").write_text("# downloaded\n")
-    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    ok, result = validate.validate_template(template_dir, set(), json_mode=True, standalone=True)
     assert ok, result["errors"]
     assert any("validate.py looks like downloaded hub tooling" in w for w in result["warnings"])
     assert any("replay.py looks like downloaded hub tooling" in w for w in result["warnings"])
@@ -295,12 +289,12 @@ def _write_minimal_template(template_dir: Path, tid: str, triggers=None) -> None
 def test_standalone_takes_id_from_recipe_json_not_directory(tmp_path):
     template_dir = tmp_path / "butler-skill-foo-checkout"
     _write_minimal_template(template_dir, "foo")
-    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    ok, result = validate.validate_template(template_dir, set(), json_mode=True, standalone=True)
     assert ok, result["errors"]
     assert result["template"] == "foo"
 
     # Registry mode on the same directory still enforces id == directory.
-    ok2, result2 = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=False)
+    ok2, result2 = validate.validate_template(template_dir, set(), json_mode=True, standalone=False)
     assert not ok2
     assert any(e.startswith("id:") and "must equal directory name" in e for e in result2["errors"])
 
@@ -308,7 +302,7 @@ def test_standalone_takes_id_from_recipe_json_not_directory(tmp_path):
 def test_standalone_still_requires_a_valid_template_id(tmp_path):
     template_dir = tmp_path / "anything"
     _write_minimal_template(template_dir, "_template")
-    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    ok, result = validate.validate_template(template_dir, set(), json_mode=True, standalone=True)
     assert not ok
     assert any(e.startswith("id:") and "must match" in e for e in result["errors"])
 
@@ -320,7 +314,7 @@ def test_standalone_ignores_the_authors_git_dir_and_pycache(tmp_path):
     (template_dir / ".git" / "big.pack").write_bytes(b"\0" * (validate.MAX_TREE_BYTES + 1))
     (template_dir / "__pycache__").mkdir()
     (template_dir / "__pycache__" / "duty.cpython-311.pyc").write_bytes(b"\0" * 10)
-    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    ok, result = validate.validate_template(template_dir, set(), json_mode=True, standalone=True)
     assert ok, result["errors"]
 
 
@@ -329,7 +323,7 @@ def test_symlink_anywhere_is_refused(tmp_path):
     _write_minimal_template(template_dir, "foo")
     (template_dir / "docs").mkdir()
     os.symlink(template_dir / "recipe.json", template_dir / "docs" / "link.json")
-    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    ok, result = validate.validate_template(template_dir, set(), json_mode=True, standalone=True)
     assert not ok
     assert any(e.startswith("layout:") and "symlink" in e and "docs/link.json" in e for e in result["errors"])
 
@@ -341,7 +335,7 @@ def test_symlinked_directory_is_refused_and_not_followed(tmp_path):
     outside.mkdir()
     (outside / "x.md").write_text("x")
     os.symlink(outside, template_dir / "vendor", target_is_directory=True)
-    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    ok, result = validate.validate_template(template_dir, set(), json_mode=True, standalone=True)
     assert not ok
     assert any(e.startswith("layout:") and "symlink" in e and "vendor" in e for e in result["errors"])
 
@@ -350,7 +344,7 @@ def test_nested_gitmodules_is_refused(tmp_path):
     template_dir = tmp_path / "foo"
     _write_minimal_template(template_dir, "foo")
     (template_dir / ".gitmodules").write_text('[submodule "x"]\n\tpath = x\n\turl = https://github.com/a/b\n')
-    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    ok, result = validate.validate_template(template_dir, set(), json_mode=True, standalone=True)
     assert not ok
     assert any(e.startswith("layout:") and "nested submodules" in e for e in result["errors"])
 
@@ -360,7 +354,7 @@ def test_nested_git_repository_is_refused(tmp_path):
     _write_minimal_template(template_dir, "foo")
     (template_dir / "vendor" / ".git").mkdir(parents=True)
     (template_dir / "vendor" / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
-    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    ok, result = validate.validate_template(template_dir, set(), json_mode=True, standalone=True)
     assert not ok
     assert any(e.startswith("layout:") and "nested git repository" in e and "vendor/.git" in e for e in result["errors"])
 
@@ -371,7 +365,7 @@ def test_more_than_50_files_is_refused(tmp_path):
     (template_dir / "fixtures").mkdir()
     for i in range(validate.MAX_TREE_FILES):
         (template_dir / "fixtures" / f"f{i}.json").write_text("{}")
-    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    ok, result = validate.validate_template(template_dir, set(), json_mode=True, standalone=True)
     assert not ok
     assert any(e.startswith("layout:") and f"must be <= {validate.MAX_TREE_FILES}" in e for e in result["errors"])
 
@@ -380,7 +374,7 @@ def test_more_than_1mb_is_refused(tmp_path):
     template_dir = tmp_path / "foo"
     _write_minimal_template(template_dir, "foo")
     (template_dir / "notes.md").write_bytes(b"x" * (validate.MAX_TREE_BYTES + 1))
-    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    ok, result = validate.validate_template(template_dir, set(), json_mode=True, standalone=True)
     assert not ok
     assert any(e.startswith("layout:") and f"must be <= {validate.MAX_TREE_BYTES}" in e for e in result["errors"])
 
@@ -389,7 +383,7 @@ def test_missing_required_file_is_refused(tmp_path):
     template_dir = tmp_path / "foo"
     _write_minimal_template(template_dir, "foo")
     (template_dir / "README.md").unlink()
-    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    ok, result = validate.validate_template(template_dir, set(), json_mode=True, standalone=True)
     assert not ok
     assert any("missing required file: README.md" in e for e in result["errors"])
 
@@ -397,10 +391,10 @@ def test_missing_required_file_is_refused(tmp_path):
 def test_registry_mode_requires_the_recipe_id_to_match_the_registry_name(tmp_path):
     template_dir = tmp_path / "foo"
     _write_minimal_template(template_dir, "bar")
-    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=False)
+    ok, result = validate.validate_template(template_dir, set(), json_mode=True, standalone=False)
     assert not ok
     assert any(e.startswith("id:") and "must equal directory name" in e for e in result["errors"])
-    ok2, _ = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    ok2, _ = validate.validate_template(template_dir, set(), json_mode=True, standalone=True)
     assert ok2
 
 
@@ -408,7 +402,7 @@ def test_triggers_outside_the_three_kinds_is_refused(tmp_path):
     template_dir = tmp_path / "foo"
     _write_minimal_template(template_dir, "foo", triggers=["timer", "price"])
     (template_dir / "duty.py").write_text("import bevo\nfor t in bevo.ticks():\n    bevo.log(t)\n")
-    ok, result = validate.validate_template(template_dir, set(), maintainer=False, json_mode=True, standalone=True)
+    ok, result = validate.validate_template(template_dir, set(), json_mode=True, standalone=True)
     assert not ok
     assert any("unknown trigger kind" in e and "price" in e for e in result["errors"])
 
@@ -462,7 +456,7 @@ def test_all_clones_every_registry_entry_into_a_directory_named_for_it(tmp_path,
     assert [d.name for d in dirs] == ["bar", "foo"]  # sorted
     for d in dirs:
         assert (d / "recipe.json").exists()
-        ok, result = validate.validate_template(d, set(), maintainer=False, json_mode=True, standalone=False)
+        ok, result = validate.validate_template(d, set(), json_mode=True, standalone=False)
         assert ok, (d, result["errors"])
 
 
@@ -481,9 +475,9 @@ def test_clone_registry_templates_fails_loudly_on_a_ref_that_does_not_resolve(tm
 
 def test_the_local_valid_fixture_passes_in_both_modes(template_checkout):
     reserved = validate.load_reserved()
-    ok, result = validate.validate_template(template_checkout, reserved, maintainer=True, json_mode=True)
+    ok, result = validate.validate_template(template_checkout, reserved, json_mode=True)
     assert ok, result["errors"]
-    ok2, result2 = validate.validate_template(template_checkout, reserved, maintainer=True, json_mode=True, standalone=True)
+    ok2, result2 = validate.validate_template(template_checkout, reserved, json_mode=True, standalone=True)
     assert ok2, result2["errors"]
     assert result2["template"] == "valid"
 
@@ -505,7 +499,7 @@ def _readme_issues(tmp_path: Path, body: str) -> list[str]:
     _write_minimal_template(template_dir, "foo")
     (template_dir / "README.md").write_text(body)
     ok, result = validate.validate_template(
-        template_dir, set(), maintainer=False, json_mode=True, standalone=True
+        template_dir, set(), json_mode=True, standalone=True
     )
     assert ok, result["errors"]
     return result["warnings"]
@@ -558,7 +552,7 @@ def test_readme_warns_then_refuses_on_size(tmp_path):
     _write_minimal_template(template_dir, "big")
     (template_dir / "README.md").write_text("Buys a token.\n" + "x" * (validate.README_MAX_BYTES + 10))
     ok, result = validate.validate_template(
-        template_dir, set(), maintainer=False, json_mode=True, standalone=True
+        template_dir, set(), json_mode=True, standalone=True
     )
     assert not ok
     assert any("README.md" in e for e in result["errors"])
@@ -579,14 +573,14 @@ def test_re_compile_is_not_the_builtin_compile(tmp_path):
         "bevo.log(str(EVM))\n"
     )
     ok, result = validate.validate_template(
-        template_dir, set(), maintainer=False, json_mode=True, standalone=True
+        template_dir, set(), json_mode=True, standalone=True
     )
     assert ok, result["errors"]
 
     # The bare builtin is still refused.
     (template_dir / "duty.py").write_text("import bevo\nx = compile('1', '<s>', 'eval')\nbevo.log(str(x))\n")
     ok, result = validate.validate_template(
-        template_dir, set(), maintainer=False, json_mode=True, standalone=True
+        template_dir, set(), json_mode=True, standalone=True
     )
     assert not ok
     assert any("compile" in e for e in result["errors"])
@@ -611,7 +605,7 @@ VALID_SKILL_FM = {
 def run_skill(name: str, standalone: bool = False):
     """A fixture skill, in registry mode by default (its directory is its name)."""
     return validate.validate_skill(
-        SKILL_FIXTURES / name, validate.load_reserved(), False, json_mode=True, standalone=standalone
+        SKILL_FIXTURES / name, validate.load_reserved(), json_mode=True, standalone=standalone
     )
 
 
@@ -629,8 +623,8 @@ def write_skill(root: Path, name: str = "foo", fm: dict | None = None, body: str
     return d
 
 
-def check_skill(d: Path, maintainer: bool = False, standalone: bool = True, reserved: set[str] | None = None):
-    return validate.validate_skill(d, set() if reserved is None else reserved, maintainer, json_mode=True, standalone=standalone)
+def check_skill(d: Path, standalone: bool = True, reserved: set[str] | None = None):
+    return validate.validate_skill(d, set() if reserved is None else reserved, json_mode=True, standalone=standalone)
 
 
 def procedure_body(steps: str, moneyish: bool = True) -> str:
@@ -743,14 +737,14 @@ def test_max_steps_below_the_floor_is_refused():
 def test_the_kind_is_detected_and_a_repo_holding_both_is_refused(tmp_path):
     assert validate.detect_kind(FIXTURES / "valid") == "template"
     assert validate.detect_kind(SKILL_FIXTURES / "valid") == "skill"
-    ok, result = validate.validate_path(FIXTURES / "valid", set(), False, True, standalone=True)
+    ok, result = validate.validate_path(FIXTURES / "valid", set(), True, standalone=True)
     assert ok and result["template"] == "valid"
-    ok, result = validate.validate_path(SKILL_FIXTURES / "valid", set(), False, True, standalone=True)
+    ok, result = validate.validate_path(SKILL_FIXTURES / "valid", set(), True, standalone=True)
     assert ok and result["kind"] == "skill"
 
     d = write_skill(tmp_path)
     (d / "recipe.json").write_text("{}")
-    ok, result = validate.validate_path(d, set(), False, True, standalone=True)
+    ok, result = validate.validate_path(d, set(), True, standalone=True)
     assert not ok
     assert result["errors"] == [
         "layout: holds both SKILL.md and recipe.json — a repository is one kind: a skill (SKILL.md) or a duty template (recipe.json)"
@@ -758,9 +752,9 @@ def test_the_kind_is_detected_and_a_repo_holding_both_is_refused(tmp_path):
 
 
 def test_a_listing_must_hold_its_own_kind():
-    ok, result = validate.validate_path(FIXTURES / "valid", set(), False, True, expected_kind="skill")
+    ok, result = validate.validate_path(FIXTURES / "valid", set(), True, expected_kind="skill")
     assert not ok and "belongs in templates.json" in result["errors"][0]
-    ok, result = validate.validate_path(SKILL_FIXTURES / "valid", set(), False, True, expected_kind="template")
+    ok, result = validate.validate_path(SKILL_FIXTURES / "valid", set(), True, expected_kind="template")
     assert not ok and "belongs in skills.json" in result["errors"][0]
 
 
@@ -922,14 +916,9 @@ def test_skill_name_prefixes_and_reserved_names(tmp_path):
         assert name in reserved
         ok, result = check_skill(write_skill(tmp_path, name=name), reserved=reserved)
         assert not ok and any("is reserved" in e for e in result["errors"])
-    d = write_skill(tmp_path, name="butler-thing")
-    ok, result = check_skill(d)
-    assert not ok and any("maintainer-only 'butler-' prefix" in e for e in result["errors"])
-    assert check_skill(d, maintainer=True)[0]
-    d = write_skill(tmp_path, name="bevo-thing")
-    for maintainer in (False, True):
-        ok, result = check_skill(d, maintainer=maintainer)
-        assert not ok and any("bundled-command" in e for e in result["errors"])
+    assert check_skill(write_skill(tmp_path, name="butler-thing"))[0]
+    ok, result = check_skill(write_skill(tmp_path, name="bevo-thing"))
+    assert not ok and any("bundled-command" in e for e in result["errors"])
 
 
 # --- body: sections and steps ----------------------------------------------------------------

@@ -79,7 +79,7 @@ metadata: {"butler":{"moneyMoving":true,"keywords":["tip","send a tip"],"require
 
 | Field | Rule |
 | --- | --- |
-| `name` | Mastra's rule: `^[a-z0-9]+(-[a-z0-9]+)*$` (lowercase, digits, single hyphens, none leading or trailing), at most 64 characters, and not something YAML reads as a number or date (`123`, `1e5`, `2026-09-21`). In registry mode it must equal the directory — the `skills.json` entry, and the directory the butler installs it in. Not in `schema/reserved-names.json` (which includes `acp-cli` and `duty-code`, the two skills compiled into the butler image). The `butler-` prefix is maintainer-only (`--maintainer` / `MAINTAINER=1`); `bevo-` is **refused** — the container's bundled-command namespace |
+| `name` | Mastra's rule: `^[a-z0-9]+(-[a-z0-9]+)*$` (lowercase, digits, single hyphens, none leading or trailing), at most 64 characters, and not something YAML reads as a number or date (`123`, `1e5`, `2026-09-21`). In registry mode it must equal the directory — the `skills.json` entry, and the directory the butler installs it in. Not in `schema/reserved-names.json` (which includes `acp-cli` and `duty-code`, the two skills compiled into the butler image). `bevo-` is **refused** — the container's bundled-command namespace |
 | `description` | at most 200 characters, one line. Either a JSON double-quoted string (`description: "Read it: all of it"`) or a plain value YAML reads back verbatim: no `: `, no ` #`, not ending in `:`, not starting with any of `` - ? : , [ ] { } # & * ! \| > ' " % @ ` ``, and not a number, boolean, null or date. The validator's error spells out the quoted form to paste |
 | `version` | semver `X.Y.Z`; bump it for every change — a published `name@version` never changes bytes |
 | `metadata` | ONE line of JSON: `{"butler": {"moneyMoving": <bool>, "keywords": [<non-empty strings>], "requires": {"bins": [<commands>]}}}` — all three fields required; the only optional ones are `maxSteps` and `requires.skills` (below); no other keys anywhere, no duplicated JSON key |
@@ -274,9 +274,9 @@ registry checkout:
 
 ```bash
 curl -sSLO https://virtual-protocol.github.io/butler-skills/tools/validate.py
-python3 validate.py --standalone .            # add --maintainer for a butler- name
+python3 validate.py --standalone .
 ```
 
-In CI it is one step: `uses: Virtual-Protocol/butler-skills/.github/actions/validate@main`
-(with `maintainer: "true"` for a `butler-` name). Keep the downloaded `validate.py` out of
+In CI it is one step: `uses: Virtual-Protocol/butler-skills/.github/actions/validate@main`.
+Keep the downloaded `validate.py` out of
 the commit — the validator warns when it sees it.
