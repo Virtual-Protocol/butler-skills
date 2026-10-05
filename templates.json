@@ -10,6 +10,11 @@
       "name": "dca",
       "repo": "https://github.com/Virtual-Protocol/butler-skill-dca",
       "ref": "main"
+    },
+    {
+      "name": "index-rebalance",
+      "repo": "https://github.com/mamamatcha/butler-skill-index-rebalance",
+      "ref": "main"
     }
   ]
 }
