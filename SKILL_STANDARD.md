@@ -89,8 +89,9 @@ The OpenClaw-era fields are refused by name, with where their content goes now:
 and `metadata.butler.requires.routes` / `features` / `gates`. So are other Mastra keys
 (`license`, `user-invocable`, …): the frontmatter is exactly the four above.
 
-`requires.bins` lists every command the skill's shell blocks run (see Commands), and only
-commands from the allowlist. A butler can check it has them before installing.
+`requires.bins` lists every program the skill's shell blocks run (see Commands) — `curl`,
+`python3`, `jq` as much as `bevo-read` — and no shell builtin (`cd`, `export`, …) or path.
+The butler checks it has each one on PATH before installing.
 
 ### Optional: `maxSteps` and `requires.skills`
 
@@ -147,7 +148,13 @@ Every command line in a shell code block (```` ``` ```` or `~~~` fences whose in
 is empty, `sh`, `bash`, `shell`, `console`, `zsh` or `shell-session`) is checked — in
 `SKILL.md` and in every published reference. A `$ ` prompt is stripped, `\` continuations
 are joined, comments and heredoc bodies are skipped, and a line is split on `|`, `&&`,
-`||`, `;` and `&`, so **every** command on it is checked, not just the first.
+`||`, `;` and `&`, so **every** command on it is checked, not just the first. Commands
+inside `$(…)`, backticks and `<(…)` are checked too, and a `VAR=value` prefix or an
+`if` / `do` / `(` in front of a command is read past.
+
+**A skill may run any program** — `curl`, `wget`, `python3`, `node`, `jq`, anything on the
+container's PATH — as long as `requires.bins` declares it. The container's own commands
+are held to what the container accepts, so a skill cannot call one it lacks:
 
 | Command | Allowed subcommands (argv[0], or the acp group) |
 | --- | --- |
@@ -159,12 +166,15 @@ are joined, comments and heredoc bodies are skipped, and a line is split on `|`,
 | `acp` | the groups the container's `acp` wrapper lets through: `agent` (only `whoami`, `list`, `use`, `link`, `generate-signer-key`, `signer-status`, `help`), `browse`, `card`, `chain`, `email`, `events`, `job`, `message`, `offering`, `policy`, `provider`, `resource`, `skill`, `subscription`, `trade`, `wallet`. `client`, `compute` and `configure` are refused; a bare `acp` / `acp --help` is refused |
 | `bevo-send`, `bevo-rpc`, `bevo-notify` | any arguments |
 
-Anything else is refused — in particular `curl`, `wget`, `node`, `python` (a skill reads
-through `bevo-read` / `bevo-rpc` and runs no code of its own), a pipe into an unlisted
-command, a `VAR=value` prefix, and command substitution (`$(…)`, backticks, `<(…)`).
-Write alternatives in prose, never as `a|b` inside a command: that is a pipe.
+Any other `bevo-*` name is refused: it is not the container's, and the butler's hub
+reports it missing. Write alternatives in prose, never as `a|b` inside a command: that is
+a pipe, and its second half is a command that must be declared.
 
-The tables are read off virtuals-agent: `BUTLER_COMMANDS`
+The lint sees shell lines, not what a program does: a money command run from inside a
+`python3` script or a heredoc is invisible to the `[FIXED]`-step rule above. That, and
+what a skill fetches or sends, is the maintainer's review of every skill PR.
+
+The table is read off virtuals-agent: `BUTLER_COMMANDS`
 (`src/integrations/butler/launchers.ts`), each command's own dispatch in
 `src/integrations/butler/bin/`, and the acp wrapper (`src/integrations/acp/wrapper.ts`).
 A command the container gains is a change here first.
@@ -172,11 +182,10 @@ A command the container gains is a change here first.
 ## Lints (every published file)
 
 - No secrets: `brt_…`, `sk-…`, 64-hex strings, JWTs.
-- No URLs except `https://github.com/Virtual-Protocol/…`,
-  `https://raw.githubusercontent.com/Virtual-Protocol/…` and the official Android app stores —
-  `https://appgallery.huawei.com/…`, `https://appgallery.cloud.huawei.com/…` (Huawei
-  AppGallery) and `https://play.google.com/…` — so a phone-app skill can say where an app's
-  official build comes from. Never an APK mirror. Duty templates stay GitHub-only.
+- URLs are not linted in a skill: name any data source or page the skill needs. Duty
+  templates stay GitHub-only. Review still holds a phone-app skill to the official app
+  stores (Huawei AppGallery, Google Play) — never an APK mirror, since the owner's card may
+  be typed into that app.
 - No invisible characters: zero-width (U+200B–U+200D, U+2060, U+FEFF), the bidi overrides
   and isolates (U+202A–U+202E, U+2066–U+2069), U+2028/U+2029.
 - No raw `0x` + 40-hex address anywhere — an address comes from the owner or a read.

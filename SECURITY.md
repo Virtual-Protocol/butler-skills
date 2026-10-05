@@ -4,9 +4,11 @@ Templates in this registry are **Python that a Butler container runs unattended*
 `duty.py` may shell `acp trade` and move the owner's money, gated only by the
 `scripts/validate.py` AST checks it must pass before it can ever be created as a duty.
 Skills are **instructions a Butler's model follows** — a `SKILL.md` names the commands it
-runs, money commands included, gated by the same validator's command allowlist and
-injection lints. Treat a vulnerability here the same as you would in any supply chain
-that money-moving agents run automatically.
+runs, money commands included. It may run any program and name any URL; the same
+validator checks the container's own commands, where money commands sit, and the
+injection lints, and a maintainer reviews every skill PR for the rest. Treat a
+vulnerability here the same as you would in any supply chain that money-moving agents
+run automatically.
 
 ## Reporting a vulnerability
 
@@ -21,9 +23,9 @@ security@virtuals.io with:
 We aim to acknowledge within 2 business days. Money-moving classes of bug (anything that
 could make `scripts/validate.py` accept a template that shells an unkeyed `acp trade`,
 calls a retired SDK verb the runtime no longer implements, or hides a
-`send-transaction`-shaped command; or accept a skill that runs a money command outside a
-`[FIXED]` step, smuggles a command past the allowlist, or hides text from a reviewer) are
-treated as critical.
+`send-transaction`-shaped command; or accept a skill whose shell lines run a money
+command outside a `[FIXED]` step, or that hides text from a reviewer) are treated as
+critical.
 
 ## What is in scope
 
@@ -50,7 +52,8 @@ treated as critical.
 - Any template listed in `templates.json` whose `duty.py` could move funds without an
   owner approval, reuse an idempotency key unsafely, or exfiltrate data via a URL not on
   the allowlist — and any skill listed in `skills.json` whose `SKILL.md` or references
-  could steer the model into the same.
+  could steer the model into moving funds without an owner approval or sending the
+  owner's data somewhere the skill's purpose does not need.
 
 ## What is out of scope
 

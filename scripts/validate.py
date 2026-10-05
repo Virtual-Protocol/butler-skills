@@ -138,16 +138,8 @@ SECRET_PATTERNS = [
 ]
 
 URL_RE = re.compile(r"https?://[^\s`)]+")
+# Duty templates only. A skill may name any URL — its PR is read by a maintainer instead.
 ALLOWED_URL_PREFIXES = ("https://github.com/Virtual-Protocol", "https://raw.githubusercontent.com/Virtual-Protocol")
-# Official Android app stores, which a SKILL may also name: a phone-app skill has to tell the
-# butler where an app's official build comes from when the phone provider's library lacks it,
-# and a store is the only safe answer (an APK mirror can serve a repackaged build, and the
-# owner's card may be typed into that app). Skills only — a duty template never needs one.
-SKILL_STORE_URL_PREFIXES = (
-    "https://appgallery.huawei.com",
-    "https://appgallery.cloud.huawei.com",
-    "https://play.google.com",
-)
 
 # --- duty.py rules -----------------------------------------------------------------------
 
@@ -843,10 +835,12 @@ STEP_RE = re.compile(r"^\s*\d+[.)][ \t]")
 STEP_MARKER_RE = re.compile(r"\[(FIXED|ADAPT)\]")
 SHELL_LANGS = frozenset({"", "sh", "bash", "shell", "console", "zsh", "shell-session"})
 
-# The commands a skill may run, and nothing else. The bevo-* names are virtuals-agent's
-# BUTLER_COMMANDS (src/integrations/butler/launchers.ts); `acp` is the generated wrapper
-# around the pinned acp-cli (src/integrations/acp/wrapper.ts); `app-checkout` is the phone
-# rail's container primitive.
+# The container's own commands. A skill may run any program, but these are held to what
+# the container actually accepts, because a skill calling one it lacks fails halfway
+# through. The bevo-* names are virtuals-agent's BUTLER_COMMANDS
+# (src/integrations/butler/launchers.ts); `acp` is the generated wrapper around the pinned
+# acp-cli (src/integrations/acp/wrapper.ts); `app-checkout` is the phone rail's container
+# primitive. Any other `bevo-*` name is not the container's: its hub reports it missing.
 SKILL_COMMANDS = frozenset({
     "bevo-read", "bevo-send", "bevo-rpc", "bevo-notify", "bevo-sms", "bevo-x", "bevo-automation",
     "acp", "app-checkout",
@@ -885,9 +879,22 @@ ACP_AGENT_SUBCOMMANDS = frozenset({  # wrapper.ts AGENT_ALLOWED
     "whoami", "list", "use", "link", "generate-signer-key", "signer-status", "help",
 })
 
-# Raw network or interpreter access: a skill reads through bevo-read / bevo-rpc and
-# runs no code of its own.
-FORBIDDEN_SKILL_COMMAND_RE = re.compile(r"^(?:curl|wget|node|nodejs|python(?:\d+(?:\.\d+)*)?)$")
+# Words that start a compound command in front of the real one (`if curl …`, `do bevo-read
+# me`, `(cd x && …)`): dropped before the command is read.
+SHELL_PREFIX_WORDS = frozenset({"if", "then", "else", "elif", "while", "until", "do", "!", "time", "{", "("})
+# Words that are no program on PATH — keywords and the builtins without a binary. A skill
+# may use them and never lists them in requires.bins (the hub would report them missing).
+SHELL_BUILTINS = frozenset({
+    "fi", "done", "esac", "}", ")", "for", "case", "select", "function", "in", "[[", "]]",
+    "cd", "export", "unset", "set", "source", ".", "eval", "exec", "exit", "return", "shift",
+    "local", "declare", "readonly", "let", "read", "wait", "trap", "alias", "type", "command",
+    "builtin", "hash", "umask", "ulimit", "pushd", "popd", "shopt",
+})
+ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+# `$((…))` arithmetic, then `$(…)`, backticks and `<(…)` / `>(…)`, innermost first.
+ARITHMETIC_RE = re.compile(r"\$\(\([^()]*\)\)")
+SUBSTITUTION_RE = re.compile(r"\$\(([^()]*)\)|`([^`]*)`|[<>]\(([^()]*)\)")
+SINGLE_QUOTED_RE = re.compile(r"'[^']*'")
 
 SHELL_SEPARATORS = frozenset({"|", "||", "&&", ";", "&", "|&", ";;", ";&", ";;&"})
 HEREDOC_RE = re.compile(r"(?<!<)<<-?[ \t]*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
@@ -1181,11 +1188,17 @@ def check_skill_metadata(metadata, issues: Issues, name: str | None = None) -> d
         issues.error("metadata.butler.requires.bins", "must be an array of command names")
         return None
     for b in bins:
-        if b not in SKILL_COMMANDS:
+        if not b or re.search(r"[\s/\\\0]", b):
+            issues.error("metadata.butler.requires.bins", f"{b!r} is not a command name (no paths, no spaces)")
+            ok = False
+        elif b.startswith("bevo-") and b not in SKILL_COMMANDS:
             issues.error(
                 "metadata.butler.requires.bins",
-                f"{b!r} is not a command a skill may run (one of {', '.join(sorted(SKILL_COMMANDS))})",
+                f"{b!r} is not a command the container has (its own: {', '.join(sorted(SKILL_COMMANDS))})",
             )
+            ok = False
+        elif b in SHELL_BUILTINS:
+            issues.error("metadata.butler.requires.bins", f"{b!r} is a shell builtin, not a program — leave it out")
             ok = False
     if len(set(bins)) != len(bins):
         issues.error("metadata.butler.requires.bins", "lists a command twice")
@@ -1399,8 +1412,8 @@ def shell_command_lines(block: list[tuple[int, str]]) -> list[tuple[int, str]]:
 
 def split_simple_commands(line: str) -> list[tuple[str | None, list[str]]]:
     """Split one logical shell line into (separator before it, argv) for each simple
-    command in it, on `|`, `&&`, `||`, `;` and `&` — so a pipeline cannot smuggle a
-    second command past the allowlist."""
+    command in it, on `|`, `&&`, `||`, `;` and `&` — so every command on the line is
+    checked, not just the first."""
     try:
         lex = shlex.shlex(line, posix=True, punctuation_chars=True)
         lex.whitespace_split = True
@@ -1435,27 +1448,40 @@ def is_money_command(argv: list[str]) -> bool:
     return False
 
 
-def check_skill_command(argv: list[str], loc: str, issues: Issues, after: str | None = None) -> bool:
-    """One simple command from a shell block against the allowlist and its subcommand
-    table. True when it may run. `after` is the shell operator that precedes it."""
+def strip_shell_prefix(argv: list[str]) -> list[str]:
+    """The program and its arguments: leading `VAR=value` assignments and compound-command
+    words (`if`, `do`, `(` …) dropped. Empty for a bare assignment."""
+    i = 0
+    while i < len(argv) and (argv[i] in SHELL_PREFIX_WORDS or ASSIGNMENT_RE.match(argv[i])):
+        i += 1
+    return argv[i:]
+
+
+def expand_substitutions(line: str) -> list[str]:
+    """The line with each `$(…)`, backtick and `<(…)` replaced by a placeholder word, then
+    the command inside each one — so a substituted command is checked like any other.
+    Single-quoted text is literal in the shell and is left alone."""
+    masked = SINGLE_QUOTED_RE.sub(lambda m: "'" + "_" * (len(m.group(0)) - 2) + "'", line)
+    inner: list[str] = []
+    while True:
+        m = ARITHMETIC_RE.search(masked) or SUBSTITUTION_RE.search(masked)
+        if m is None:
+            return [line, *inner]
+        if m.re is SUBSTITUTION_RE:
+            group = next(g for g in (1, 2, 3) if m.group(g) is not None)
+            inner.append(line[m.start(group):m.end(group)])
+        line = line[:m.start()] + "_" + line[m.end():]
+        masked = masked[:m.start()] + "_" + masked[m.end():]
+
+
+def check_skill_command(argv: list[str], loc: str, issues: Issues) -> bool:
+    """One simple command from a shell block. Any program may run; the container's own
+    commands must be ones it has, called the way it accepts them. True when it may run."""
     first, args = argv[0], argv[1:]
-    if after == "|":
-        context = " (after a `|` — every command in a pipeline must be allowed too; spell alternatives out in prose, never as a|b)"
-    elif after:
-        context = f" (after `{after}` — every command on the line must be allowed too)"
-    else:
-        context = ""
-    if FORBIDDEN_SKILL_COMMAND_RE.match(first):
+    if first.startswith("bevo-") and first not in SKILL_COMMANDS:
         issues.error(
             "command-allowlist",
-            f"{loc}: {first!r} is forbidden in a skill — reads go through bevo-read, chain reads "
-            f"through bevo-rpc, and a skill runs no code of its own{context}",
-        )
-        return False
-    if first not in SKILL_COMMANDS:
-        issues.error(
-            "command-allowlist",
-            f"{loc}: {first!r} is not a command a skill may run (one of {', '.join(sorted(SKILL_COMMANDS))}){context}",
+            f"{loc}: {first!r} is not a command the container has (its own: {', '.join(sorted(SKILL_COMMANDS))})",
         )
         return False
     if first == "acp":
@@ -1502,16 +1528,18 @@ def check_skill_command(argv: list[str], loc: str, issues: Issues, after: str | 
 
 
 def check_shell_block(block: list[tuple[int, str]], rel: str, issues: Issues) -> list[tuple[int, str, list[str], bool]]:
-    """Every allowed simple command in one shell block: (lineno, line, argv, is_money)."""
+    """Every program one shell block runs, shell builtins left out: (lineno, line, argv,
+    is_money). Commands inside a substitution count, so a money command cannot hide there."""
     found: list[tuple[int, str, list[str], bool]] = []
     for lineno, line in shell_command_lines(block):
         loc = f"{rel} line {lineno}"
-        if "$(" in line or "`" in line or "<(" in line or ">(" in line:
-            issues.error("command-allowlist", f"{loc}: command substitution is not allowed in a skill: {line[:80]!r}")
-            continue
-        for after, argv in split_simple_commands(line):
-            if check_skill_command(argv, loc, issues, after):
-                found.append((lineno, line, argv, is_money_command(argv)))
+        for part in expand_substitutions(line):
+            for _, words in split_simple_commands(part):
+                argv = strip_shell_prefix(words)
+                if not argv or argv[0] in SHELL_BUILTINS:
+                    continue
+                if check_skill_command(argv, loc, issues):
+                    found.append((lineno, line, argv, is_money_command(argv)))
     return found
 
 
@@ -1659,19 +1687,12 @@ def lint_skill_text(rel: str, text: str, issues: Issues, prose_skip_lines: froze
 
 
 def lint_skill_safety(rel: str, text: str, issues: Issues) -> None:
-    """Secrets, URLs, invisible characters, raw addresses and scaffold placeholders."""
+    """Secrets, invisible characters, raw addresses and scaffold placeholders. URLs are not
+    linted in a skill — a maintainer reads every skill PR."""
     for pat in SECRET_PATTERNS:
         m = pat.search(text)
         if m:
             issues.error("secrets-lint", f"{rel} line {_line_of(text, m.start())}: looks like a credential: {m.group(0)[:12]}...")
-    for m in URL_RE.finditer(text):
-        url = m.group(0)
-        if not any(url == p or url.startswith(p + "/") for p in ALLOWED_URL_PREFIXES + SKILL_STORE_URL_PREFIXES):
-            issues.error(
-                "url-lint",
-                f"{rel} line {_line_of(text, m.start())}: disallowed URL {url!r} (only github.com/Virtual-Protocol "
-                "links and the official app stores — Huawei AppGallery, Google Play — are allowed)",
-            )
     for ch, what in INVISIBLE_CHARS.items():
         idx = text.find(ch)
         if idx != -1:

@@ -670,13 +670,14 @@ def test_openclaw_metadata_is_refused_naming_the_retired_runtime():
         assert any(e.startswith(field + ":") and "OpenClaw" in e for e in result["errors"]), (field, result["errors"])
 
 
-def test_unknown_commands_are_refused():
+def test_missing_container_commands_and_undeclared_programs_are_refused():
     ok, result = run_skill("unknown-cmd")
     assert not ok
     errors = result["errors"]
-    assert all(e.startswith("command-allowlist:") for e in errors), errors
-    assert any("'curl' is forbidden" in e for e in errors)
-    assert any("'jq'" in e and "after a `|`" in e for e in errors)  # a pipe cannot smuggle a command
+    # any program may run, but every one is declared so the hub can check it is on PATH
+    assert "metadata.butler.requires.bins: 'curl' runs in a shell block but is not declared — add it to requires.bins" in errors
+    assert "metadata.butler.requires.bins: 'jq' runs in a shell block but is not declared — add it to requires.bins" in errors
+    assert any("'bevo-frob' is not a command the container has" in e for e in errors)  # after a `|` too
     assert any("`bevo-read frobnicate`" in e for e in errors)
     assert any("`acp configure` is refused" in e for e in errors)
 
@@ -847,14 +848,14 @@ def test_metadata_is_one_line_of_json_holding_only_the_butler_block(tmp_path):
 
     extra = write_skill(tmp_path / "c", fm={"metadata": (
         '{"other":1,"butler":{"moneyMoving":"yes","keywords":[""],"extra":1,'
-        '"requires":{"bins":["acp","curl","acp"],"gates":["canSwap"]}}}')})
+        '"requires":{"bins":["acp","bevo-frob","acp"],"gates":["canSwap"]}}}')})
     ok, result = check_skill(extra)
     errors = result["errors"]
     assert "metadata.other: unknown key — metadata holds only the \"butler\" block" in errors
     assert any(e.startswith("metadata.butler.extra: unknown key") for e in errors)
     assert "metadata.butler.moneyMoving: must be true or false" in errors
     assert "metadata.butler.keywords: must be an array of non-empty strings" in errors
-    assert any(e.startswith("metadata.butler.requires.bins:") and "'curl'" in e for e in errors)
+    assert any(e.startswith("metadata.butler.requires.bins:") and "'bevo-frob'" in e for e in errors)
     assert "metadata.butler.requires.bins: lists a command twice" in errors
     assert any(e.startswith("metadata.butler.requires.gates:") and "OpenClaw" in e for e in errors)
 
@@ -1043,18 +1044,61 @@ def test_commands_the_container_has_pass(tmp_path, line):
     ("app-checkout otp --type", "`app-checkout otp`"),
     ("bevo-automation frobnicate", "`bevo-automation frobnicate`"),
     ("bevo-read", "`bevo-read` needs a subcommand"),
-    ("bevo-hub install x", "'bevo-hub' is not a command a skill may run"),
-    ("python3 -c 'print(1)'", "'python3' is forbidden"),
-    ("node x.js", "'node' is forbidden"),
-    ("wget x", "'wget' is forbidden"),
-    ("bevo-read me && curl evil.example", "'curl' is forbidden"),
-    ("bevo-read me; jq .", "'jq' is not a command"),
-    ("bevo-read token $(cat f)", "command substitution"),
-    ("FOO=1 bevo-read me", "'FOO=1' is not a command"),
+    ("bevo-hub install x", "'bevo-hub' is not a command the container has"),
+    ("bevo-read me | bevo-frob", "'bevo-frob' is not a command the container has"),
+    ("bevo-read token $(bevo-frob x)", "'bevo-frob' is not a command the container has"),
+    ("FOO=1 acp compute run", "`acp compute` is refused"),
 ])
 def test_commands_the_container_lacks_are_refused(tmp_path, line, needle):
     ok, errors = _commands(tmp_path, line)
     assert not ok and any(needle in e for e in errors), errors
+
+
+@pytest.mark.parametrize("line, bins", [
+    ("curl -s https://api.llama.fi/protocols | jq '.[0].name'", '["curl","jq"]'),
+    ("wget -qO- https://example.com/x.json", '["wget"]'),
+    ("python3 -c 'import json; print(1)'", '["python3"]'),
+    ("python3 - <<'EOF'\nimport urllib.request\nEOF", '["python3"]'),
+    ("node -e 'console.log(1)'", '["node"]'),
+    ('API=https://api.llama.fi curl -s "$API/protocols"', '["curl"]'),
+    ('bevo-read token-price "$(curl -s https://example.com/sym)"', '["bevo-read","curl"]'),
+    ("if curl -fs https://example.com; then echo up; fi", '["curl","echo"]'),
+    ("for s in BTC ETH; do bevo-read token-price $s; done", '["bevo-read"]'),
+    ("(cd /tmp && curl -sO https://example.com/a.json)", '["curl"]'),
+    ("echo $((1 + 2))", '["echo"]'),
+    ("diff <(bevo-read me) <(bevo-read me)", '["bevo-read","diff"]'),
+])
+def test_any_program_may_run_when_declared(tmp_path, line, bins):
+    fm = {"metadata": '{"butler":{"moneyMoving":false,"keywords":["x"],"requires":{"bins":' + bins + '}}}'}
+    body = procedure_body(f"1. [ADAPT] Run:\n\n```sh\n{line}\n```\n", moneyish=False)
+    ok, result = check_skill(write_skill(tmp_path, fm=fm, body=body))
+    assert ok, result["errors"]
+
+
+def test_an_undeclared_program_is_refused(tmp_path):
+    fm = {"metadata": '{"butler":{"moneyMoving":false,"keywords":["x"],"requires":{"bins":["bevo-read"]}}}'}
+    body = procedure_body("1. [ADAPT] Run:\n\n```sh\nbevo-read token-price \"$(curl -s x)\"\n```\n", moneyish=False)
+    ok, result = check_skill(write_skill(tmp_path, fm=fm, body=body))
+    assert not ok
+    assert "metadata.butler.requires.bins: 'curl' runs in a shell block but is not declared — add it to requires.bins" in result["errors"]
+
+
+def test_a_money_command_in_a_substitution_still_needs_a_fixed_step(tmp_path):
+    fm = {"metadata": '{"butler":{"moneyMoving":true,"keywords":["x"],"requires":{"bins":["acp","echo"]}}}'}
+    body = procedure_body("1. [ADAPT] Run:\n\n```sh\necho \"$(acp trade --token-in usdc)\"\n```\n")
+    ok, result = check_skill(write_skill(tmp_path, fm=fm, body=body))
+    assert not ok and any("a money command must sit inside a [FIXED] step" in e for e in result["errors"]), result["errors"]
+
+
+@pytest.mark.parametrize("bin_, needle", [
+    ("cd", "'cd' is a shell builtin"),
+    ("/usr/bin/curl", "is not a command name"),
+    ("bevo-frob", "'bevo-frob' is not a command the container has"),
+])
+def test_requires_bins_holds_program_names(tmp_path, bin_, needle):
+    fm = {"metadata": '{"butler":{"moneyMoving":false,"keywords":["x"],"requires":{"bins":["' + bin_ + '"]}}}'}
+    ok, result = check_skill(write_skill(tmp_path, fm=fm, body=procedure_body("1. [ADAPT] Look.\n", moneyish=False)))
+    assert not ok and any(e.startswith("metadata.butler.requires.bins:") and needle in e for e in result["errors"]), result["errors"]
 
 
 def test_shell_block_parsing(tmp_path):
@@ -1073,10 +1117,6 @@ def test_shell_block_parsing(tmp_path):
 
 @pytest.mark.parametrize("text, prefix", [
     ("brt_abcdef123456", "secrets-lint:"),
-    ("https://evil.example/x", "url-lint:"),
-    ("https://github.com/Virtual-Protocol-evil/x", "url-lint:"),
-    ("https://appgallery.huawei.com.evil.example/app/C1", "url-lint:"),
-    ("https://www.apkmirror.com/apk/x", "url-lint:"),
     ("a\u200bb", "invisible-char-lint:"),
     ("a\u202eb", "invisible-char-lint:"),
     ("0x833589fCD6eDb6e08f4c7C32D4f71b54bdA02913", "address-lint:"),
@@ -1090,18 +1130,14 @@ def test_published_text_lints(tmp_path, text, prefix):
     assert not ok and any(e.startswith(prefix) for e in result["errors"]), result["errors"]
 
 
-def test_a_virtual_protocol_link_passes(tmp_path):
-    body = VALID_SKILL_BODY.replace("A standing order", "https://github.com/Virtual-Protocol/butler-skills says. A standing order")
-    assert check_skill(write_skill(tmp_path, body=body))[0]
-
-
 @pytest.mark.parametrize("url", [
-    "https://appgallery.huawei.com/app/C100000001",
-    "https://appgallery.cloud.huawei.com/appdl/C100000001",
+    "https://github.com/Virtual-Protocol/butler-skills",
     "https://play.google.com/store/apps/details?id=com.example.app",
+    "https://api.llama.fi/protocols",
+    "http://example.com/x",
 ])
-def test_an_official_app_store_link_passes_in_a_skill(tmp_path, url):
-    body = VALID_SKILL_BODY.replace("A standing order", f"Get the app from {url} first. A standing order")
+def test_any_url_passes_in_a_skill(tmp_path, url):
+    body = VALID_SKILL_BODY.replace("A standing order", f"Read {url} first. A standing order")
     ok, result = check_skill(write_skill(tmp_path, body=body))
     assert ok, result["errors"]
 
@@ -1148,7 +1184,7 @@ def test_references_are_published_linted_and_checked(tmp_path):
     assert any("references/notes.txt is not published" in w for w in result["warnings"])
     assert any("scripts/ is not published" in w for w in result["warnings"])
 
-    (d / "references" / "b.md").write_text("```sh\ncurl x\nacp trade --token-in usdc\n```\nSee AGENTS.md.\n")
+    (d / "references" / "b.md").write_text("```sh\nbevo-frob x\nacp trade --token-in usdc\n```\nSee AGENTS.md.\n")
     (d / "references" / ".hidden.md").write_text("x\n")
     ok, result = check_skill(d)
     errors = result["errors"]
