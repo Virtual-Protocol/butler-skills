@@ -1,0 +1,12 @@
+{
+  "id": "missing-key",
+  "version": 1,
+  "description": "Fixture whose duty.py shells acp trade with no --idempotency-key — must fail validation.",
+  "triggers": ["timer"],
+  "params": {
+    "type": "object",
+    "properties": {
+      "AMOUNT_USD": { "type": "number", "default": 5 }
+    }
+  }
+}

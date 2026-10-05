@@ -1,0 +1,7 @@
+{
+  "principalId": "11111111-1111-1111-1111-111111111111",
+  "username": "leader",
+  "displayName": "Leader",
+  "agentWalletAddress": "0xLeaderAgentWallet00000000000000000000001",
+  "wallet": "0xLeaderWallet0000000000000000000000000001"
+}

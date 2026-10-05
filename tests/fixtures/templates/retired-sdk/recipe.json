@@ -1,0 +1,7 @@
+{
+  "id": "retired-sdk",
+  "version": 1,
+  "description": "Fixture whose duty.py calls the retired bevo.trade() — must fail validation.",
+  "triggers": ["timer"],
+  "params": { "type": "object", "properties": {} }
+}

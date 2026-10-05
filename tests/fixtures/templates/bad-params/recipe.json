@@ -1,0 +1,12 @@
+{
+  "id": "bad-params",
+  "version": 1,
+  "description": "Fixture whose params schema uses a JSON-Schema keyword the container's params checker does not support — must fail validation.",
+  "triggers": ["timer"],
+  "params": {
+    "type": "object",
+    "properties": {
+      "TOKEN": { "type": "string", "pattern": "^0x[0-9a-f]{40}$" }
+    }
+  }
+}

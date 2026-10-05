@@ -1,0 +1,7 @@
+{
+  "id": "oversize-description",
+  "version": 1,
+  "description": "This description is deliberately far too long for the 200 character limit that scripts/validate.py enforces on every recipe.json's description field, to exercise the oversize-description fixture case in tests/test_validate.py and confirm the validator reports it by field name accurately.",
+  "triggers": ["timer"],
+  "params": { "type": "object", "properties": {} }
+}

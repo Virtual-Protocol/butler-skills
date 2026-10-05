@@ -1,0 +1,62 @@
+name: validate
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      # Templates and skills live in their own repos and are validated in their own
+      # CI (the composite action in .github/actions/validate). Here we check the
+      # registry itself: templates.json, skills.json, the schema, the tools and the
+      # index build.
+      # A shallow checkout is enough: nothing here reads this repo's own history
+      # (every git call in scripts/ targets a template clone or a remote ref).
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install pytest
+        run: pip install --quiet pytest
+
+      - name: Registry listing
+        # templates.json and skills.json ARE the registry: a name and a GitHub link
+        # per duty template / skill, unique across both files.
+        # Checks the listing and the boundary around it — valid unique ids, an
+        # https://github.com/<owner>/<repo> URL with no credentials or query, a
+        # sane ref, and that the ref resolves on the remote. What a butler
+        # actually trusts is the resolved commit + per-file sha256 the publish
+        # build writes into the index, not this file.
+        run: python3 scripts/check_registry.py
+
+      - name: Validate all templates and skills
+        # The butler- prefix is maintainer-only (bevo- is always refused). author_association is a trusted GitHub
+        # Actions context value (OWNER/MEMBER/COLLABORATOR for people with write access to
+        # this repo) — external, non-maintainer PRs run the strict, non-maintainer check.
+        env:
+          AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
+          # A branch that lives in THIS repo can only have been pushed by someone
+          # with write access — that is the maintainer signal; forks are community.
+          # author_association alone reports CONTRIBUTOR for members whose org
+          # membership is private, so it is an OR, not the sole test.
+          HEAD_IN_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+        run: |
+          if [[ "$HEAD_IN_REPO" == "true" || "$AUTHOR_ASSOCIATION" == "OWNER" || "$AUTHOR_ASSOCIATION" == "MEMBER" || "$AUTHOR_ASSOCIATION" == "COLLABORATOR" ]]; then
+            python3 scripts/validate.py --all --maintainer
+          else
+            python3 scripts/validate.py --all
+          fi
+
+      - name: Unit + fixture tests
+        run: python3 -m pytest tests -q
+
+      - name: build_index dry run
+        run: python3 scripts/build_index.py --dry-run
+

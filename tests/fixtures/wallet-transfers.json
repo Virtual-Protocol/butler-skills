@@ -1,0 +1,13 @@
+{
+  "transfers": [
+    {
+      "id": 501,
+      "direction": "in",
+      "token": "USDC",
+      "amount": "100.00",
+      "counterparty": "0xSomeoneElse00000000000000000000000000009",
+      "chainId": "8453",
+      "createdAt": "2026-09-03T09:00:00Z"
+    }
+  ]
+}
