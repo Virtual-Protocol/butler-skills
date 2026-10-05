@@ -218,7 +218,13 @@ def main() -> int:
     cwd = os.getcwd()
     os.chdir(state_dir)
     try:
-        runpy.run_path(str(duty_path), run_name="__main__")
+        try:
+            runpy.run_path(str(duty_path), run_name="__main__")
+        except SystemExit as exc:
+            # bevo.done() ends the program like the real SDK; the recorded
+            # actions (including the done itself) must still print below.
+            if exc.code not in (None, 0):
+                raise
     finally:
         os.chdir(cwd)
 

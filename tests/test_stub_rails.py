@@ -90,8 +90,69 @@ def test_exec_status_finds_a_recorded_key():
     stub_bevo.RECORDED_ACTIONS.clear()
     subprocess.run(["acp", "trade", "--idempotency-key", "abc"], capture_output=True, text=True, check=False)
     assert stub_bevo.exec_status("abc")["state"] == "executed"
-    assert stub_bevo.exec_status("no-such-key")["state"] == "unknown"
+    assert stub_bevo.exec_status("no-such-key")["state"] == "not_found"
     stub_bevo.RECORDED_ACTIONS.clear()
+
+
+# --- key() / fail() / done() / notify(push=) / state ------------------------------------
+
+
+def test_key_matches_the_live_sdk_grammar_and_digest():
+    assert stub_bevo.key("dca", "svc", "2026-01-03T09:00@Asia/Singapore") == (
+        "dca:svc:2026-01-03T09:00-Asia-Singapore"
+    )
+    long_key = stub_bevo.key("x", "a" * 200)
+    assert len(long_key) == 128 and re.fullmatch(r"[A-Za-z0-9:_.\-]{1,128}", long_key)
+    assert long_key != stub_bevo.key("x", "a" * 200 + "b")
+    for bad in ((), ("a", None), ("a", "")):
+        with pytest.raises(ValueError):
+            stub_bevo.key(*bad)
+
+
+def test_fail_is_recorded_and_returns():
+    stub_bevo.RECORDED_ACTIONS.clear()
+    assert stub_bevo.fail("  read   failed\n") is None
+    assert stub_bevo.RECORDED_ACTIONS == [{"call": "fail", "reason": "read failed"}]
+    stub_bevo.RECORDED_ACTIONS.clear()
+
+
+def test_done_is_recorded_then_exits_zero():
+    stub_bevo.RECORDED_ACTIONS.clear()
+    with pytest.raises(SystemExit) as exc:
+        stub_bevo.done("all filed")
+    assert exc.value.code == 0
+    assert stub_bevo.RECORDED_ACTIONS == [{"call": "done", "summary": "all filed"}]
+    stub_bevo.RECORDED_ACTIONS.clear()
+
+
+def test_notify_records_push():
+    stub_bevo.RECORDED_ACTIONS.clear()
+    stub_bevo.notify("hello", push=" Alert ")
+    stub_bevo.notify("quiet one", quiet=True)
+    assert [a["push"] for a in stub_bevo.RECORDED_ACTIONS] == ["Alert", ""]
+    stub_bevo.RECORDED_ACTIONS.clear()
+
+
+def test_state_refuses_non_json_values(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    import datetime
+
+    st = stub_bevo._State()
+    with pytest.raises(TypeError):
+        st["at"] = datetime.datetime.now()
+    assert "at" not in st
+
+
+def test_replay_prints_actions_after_a_duty_calls_done(tmp_path):
+    duty = tmp_path / "duty.py"
+    duty.write_text("import bevo\nbevo.notify('x')\nbevo.done('finished')\n")
+    done = subprocess.run(
+        ["python3", str(REPO_ROOT / "tests" / "replay.py"), str(tmp_path), "--fixture",
+         "trade-activity-page", "--no-download"],
+        capture_output=True, text=True, check=False,
+    )
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert '"call": "done"' in done.stdout and '"summary": "finished"' in done.stdout
 
 
 # --- prompt() / decide() ------------------------------------------------------------------
