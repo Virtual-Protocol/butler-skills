@@ -2,15 +2,14 @@
 """new_skill.py <name> — print the exact commands to start a new duty template or skill.
 
 Usage:
-    scripts/new_skill.py my-dca [--owner <github-user-or-org>] [--maintainer]            # a duty template
-    scripts/new_skill.py my-skill --skill [--owner <github-user-or-org>] [--maintainer]  # a skill
+    scripts/new_skill.py my-dca [--owner <github-user-or-org>]            # a duty template
+    scripts/new_skill.py my-skill --skill [--owner <github-user-or-org>]  # a skill
 
 Both kinds are git-backed: each one is its own repository, and this registry
 lists it as a name, a link and a ref — a duty template in templates.json
 (recipe.json, duty.py and README.md at the repo root), a skill in skills.json
 (SKILL.md, README.md and CHANGELOG.md). So this script does not scaffold a
-directory here — it checks the name (pattern, reserved list, the
-maintainer-only butler- prefix; bevo- is the container's bundled-command
+directory here — it checks the name (pattern, reserved list; bevo- is the container's bundled-command
 namespace and is refused outright) and prints, in order:
 
   1. the commands to create the repo and what to lay out in it,
@@ -35,7 +34,7 @@ REGISTRY_REPO = "Virtual-Protocol/butler-skills"
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,63}$")
 # Mastra's skill-name rule; a skill that breaks it is silently dropped.
 SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
-MAINTAINER_PREFIX = "butler-"
+TEAM_PREFIX = "butler-"
 CONTAINER_PREFIX = "bevo-"
 TOOLS_URL = "https://virtual-protocol.github.io/butler-skills/tools"
 
@@ -43,7 +42,7 @@ TOOLS_URL = "https://virtual-protocol.github.io/butler-skills/tools"
 def repo_name_for(name: str) -> str:
     """Template `copytrade` lives in `butler-skill-copytrade`; a community
     template `my-dca` lives in `butler-skill-my-dca`. Skills follow the same rule."""
-    base = name[len(MAINTAINER_PREFIX):] if name.startswith(MAINTAINER_PREFIX) else name
+    base = name[len(TEAM_PREFIX):] if name.startswith(TEAM_PREFIX) else name
     return f"butler-skill-{base}"
 
 
@@ -106,7 +105,7 @@ cd {repo}
 
 # 2. Validate locally — no Butler account, container or registry checkout needed. A
 #    skill's CI is the same check as one step:
-#    `uses: {REGISTRY_REPO}/.github/actions/validate@main` (with `maintainer: "true"` for a butler- name).
+#    `uses: {REGISTRY_REPO}/.github/actions/validate@main`.
 curl -sSLO {TOOLS_URL}/validate.py
 python3 validate.py --standalone .
 
@@ -127,7 +126,6 @@ def main() -> int:
     parser.add_argument("name", help="the registry name (recipe.json's `id`, or SKILL.md's `name`), e.g. my-dca")
     parser.add_argument("--skill", action="store_true", help="a skill (SKILL.md, listed in skills.json) instead of a duty template")
     parser.add_argument("--owner", default="<you>", help="GitHub user/org that will own the repo (default: a <you> placeholder)")
-    parser.add_argument("--maintainer", action="store_true", help="allow the maintainer-only butler- prefix (bevo- is always refused)")
     args = parser.parse_args()
 
     name = args.name
@@ -143,10 +141,8 @@ def main() -> int:
     if name.startswith(CONTAINER_PREFIX):
         parser.error(
             f"{name!r} uses the '{CONTAINER_PREFIX}' prefix — that is the container's bundled-command "
-            f"namespace; nothing in the hub may use it. Team entries use '{MAINTAINER_PREFIX}'"
+            f"namespace; nothing in the hub may use it"
         )
-    if name.startswith(MAINTAINER_PREFIX) and not args.maintainer:
-        parser.error(f"{name!r} uses the maintainer-only '{MAINTAINER_PREFIX}' prefix; pass --maintainer if you are one")
 
     sys.stdout.write(render_skill(name, args.owner) if args.skill else render(name, args.owner))
     return 0

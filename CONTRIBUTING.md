@@ -41,7 +41,7 @@ skill listing is held tighter than the template listing:
   A community author who wants a skill listed asks a maintainer to review and list it.
 - **Two maintainer reviews when the skill moves money** (`"moneyMoving": true`), one
   otherwise. The reviewers read the skill repo **at the `ref` being listed**.
-- The skill must pass `python3 scripts/validate.py --all --maintainer` — the same check
+- The skill must pass `python3 scripts/validate.py --all` — the same check
   every publish build runs. **A listed skill that stops validating fails the whole publish
   build** (the last deploy stays live) until it is fixed or de-listed, so whoever lists a
   skill owns keeping its `ref` valid.
@@ -133,7 +133,7 @@ new version of an already-listed template needs none of this. Add the entry to
 git add templates.json
 git commit -m "templates: add <id>"
 python3 scripts/check_registry.py        # the listing checks CI will run (--offline skips the remote ref check)
-python3 scripts/validate.py --all        # add --maintainer for a butler- id (bevo- is refused)
+python3 scripts/validate.py --all        # bevo- ids are refused
 python3 -m pytest tests -q               # the full local suite
 ```
 
