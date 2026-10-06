@@ -15,6 +15,11 @@
       "name": "index-rebalance",
       "repo": "https://github.com/mamamatcha/butler-skill-index-rebalance",
       "ref": "main"
+    },
+    {
+      "name": "x-portfolio",
+      "repo": "https://github.com/Virtual-Protocol/butler-skill-x-portfolio",
+      "ref": "v1"
     }
   ]
 }
