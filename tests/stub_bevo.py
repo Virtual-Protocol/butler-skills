@@ -37,8 +37,10 @@ Python 3.11 stdlib only.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 import subprocess as _real_subprocess
 import time
 from pathlib import Path
@@ -58,10 +60,11 @@ IDEMPOTENCY_FLAG = "--idempotency-key"
 
 
 class BevoError(Exception):
-    def __init__(self, message, code=None, retry_after_s=None):
+    def __init__(self, message, code=None, retry_after_s=None, reason=None):
         super().__init__(message)
         self.code = code
         self.retry_after_s = retry_after_s
+        self.reason = reason
 
 
 def _download_fixture(name: str, dest: Path) -> bool:
@@ -812,6 +815,20 @@ def log(message) -> None:
         pass
 
 
+def _json_only(value):
+    """The live SDK refuses what `json.dump` cannot write BEFORE it reaches the
+    dict (a `datetime` stored first poisoned every later save). Same here, so a
+    duty that stores `tick.at` fails under replay rather than only in production."""
+    try:
+        json.dumps(value)
+    except (TypeError, ValueError) as exc:
+        raise TypeError(
+            f"bevo.state holds JSON only (str, int, float, bool, None, list, "
+            f"dict): {exc}. Store a time as .isoformat()."
+        ) from None
+    return value
+
+
 class _State(dict):
     """`bevo.state` — the live SDK's dict-on-disk, saved on every write.
 
@@ -881,7 +898,7 @@ class _State(dict):
 
     def __setitem__(self, key, value):
         self._load()
-        dict.__setitem__(self, key, value)
+        dict.__setitem__(self, key, _json_only(value))
         self._save()
 
     def __delitem__(self, key):
@@ -904,8 +921,11 @@ class _State(dict):
 
     def update(self, *args, **kwargs):
         self._load()
-        dict.update(self, *args, **kwargs)
-        self._save()
+        merged = dict(*args, **kwargs)
+        _json_only(merged)
+        dict.update(self, merged)
+        if args or kwargs:
+            self._save()
 
 
 state = _State()
@@ -948,10 +968,43 @@ def sleep(seconds) -> None:
 # --- talking to the outside --------------------------------------------------------------
 
 
-def notify(text, quiet=False) -> dict:
-    action = {"call": "notify", "text": str(text)[:500], "quiet": bool(quiet)}
+def notify(text, quiet=False, push=None) -> dict:
+    """Records instead of sending. `push` is the lock-screen line; like the real
+    SDK it is stripped, and it is "" when not given (it does nothing under
+    quiet=True live, but the call is still recorded as made)."""
+    action = {
+        "call": "notify",
+        "text": str(text)[:500],
+        "quiet": bool(quiet),
+        "push": str(push).strip() if push is not None else "",
+    }
     RECORDED_ACTIONS.append(action)
     return {"ok": True}
+
+
+_FAIL_REASON_MAX = 500
+
+
+def fail(reason) -> None:
+    """This run could not do its job. Recorded; returns (it does not raise or
+    exit), exactly like the real SDK."""
+    text = " ".join(str(reason).split())[:_FAIL_REASON_MAX] or "failed"
+    log(f"[bevo-sdk] run failed: {text}")
+    RECORDED_ACTIONS.append({"call": "fail", "reason": text})
+
+
+_DONE_SUMMARY_MAX = 1000
+
+
+def done(summary=None):
+    """This duty's job is finished. Recorded, then SystemExit(0) like the real
+    SDK; replay.py catches the exit around the duty so actions still print."""
+    action = {"call": "done"}
+    text = "" if summary is None else str(summary).strip()
+    if text:
+        action["summary"] = text[:_DONE_SUMMARY_MAX]
+    RECORDED_ACTIONS.append(action)
+    raise SystemExit(0)
 
 
 def escalate(reason, events=None) -> dict:
@@ -973,7 +1026,7 @@ def prompt(text, *, system=None, schema=None, max_tokens=None):
     )
 
 
-def decide(question, options, *, context=None):
+def decide(question, options, *, context=None, why=False):
     options = [str(o) for o in (options or [])]
     if not 2 <= len(options) <= 12:
         raise ValueError("decide() needs between 2 and 12 options")
@@ -1089,10 +1142,44 @@ def group_messages(group_id, since=None, limit=100):
 
 
 def exec_status(key, route="trade"):
+    """A key sent in this run is `executed`; one never sent is `not_found`, the
+    ledger's own answer for a key it never saw (`unknown` is reserved for an
+    unreadable ledger, which a replay does not have)."""
+    if route not in ("trade", "execute", "transfer"):
+        raise ValueError("route must be trade, execute or transfer")
     for action in RECORDED_ACTIONS:
         if action.get("key") == key:
-            return {"state": "executed", "route": route, "idempotencyKey": key}
-    return {"state": "unknown", "route": route, "idempotencyKey": key}
+            # The ledger DTO carries the settled hash under `response`.
+            tx = "0x" + hashlib.sha256(str(key).encode("utf-8")).hexdigest()
+            return {"state": "executed", "route": route, "key": key, "idempotencyKey": key,
+                    "response": {"txHash": tx}}
+    return {"state": "not_found", "route": route, "idempotencyKey": key}
+
+
+_KEY_REFUSED = re.compile(r"[^A-Za-z0-9:_.\-]")
+_KEY_MAX = 128
+_KEY_DIGEST = 16
+
+
+def key(*parts):
+    """The idempotency key for these parts — a verbatim port of the live SDK's
+    `key()`: parts joined with `:`, refused characters become `-`, and a key past
+    128 characters keeps its head and ends in a sha256 digest of the whole. A
+    None or empty part raises ValueError."""
+    if not parts:
+        raise ValueError("key() needs at least one part")
+    for part in parts:
+        if part is None or str(part) == "":
+            raise ValueError(
+                f"key() got an empty part in {parts!r} — there is nothing to key "
+                "this on, so do not file the command"
+            )
+    joined = ":".join(str(part) for part in parts)
+    safe = _KEY_REFUSED.sub("-", joined)
+    if len(safe) <= _KEY_MAX:
+        return safe
+    digest = hashlib.sha256(joined.encode("utf-8")).hexdigest()[:_KEY_DIGEST]
+    return f"{safe[:_KEY_MAX - _KEY_DIGEST - 1]}.{digest}"
 
 
 # --- money: intercepting the shelled `acp` command ------------------------------------------
