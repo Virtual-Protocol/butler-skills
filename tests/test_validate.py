@@ -960,6 +960,9 @@ def test_a_money_moving_skill_must_say_do_not_re_run(tmp_path):
     "acp --json trade --side long --token BTC --amount-usdc 20 --leverage 2",
     "acp wallet send-transaction --to <ADDRESS> --data <HEX> --json",
     "acp card issue --amount 500 --merchant <M> --purpose <P> --json",
+    "acp options open --instrument <I> --size <N> --min-premium <P> --max-collateral <C> --idempotency-key <K>",
+    "acp options deposit --amount <N> --idempotency-key <K>",
+    "acp options withdraw --amount <N> --idempotency-key <K>",
     "bevo-send --to @someone --amount 1 --token usdc",
     "app-checkout checkpoint --app GrabFood --amount 12.40 --currency MYR --wait 0",
 ])
@@ -989,7 +992,10 @@ def test_money_commands_need_money_moving_true(tmp_path):
 
 def test_reads_are_not_money_and_need_no_fixed_step(tmp_path):
     fm = {"metadata": '{"butler":{"moneyMoving":false,"keywords":["x"],"requires":{"bins":["acp","bevo-read"]}}}'}
-    steps = "1. [ADAPT] Look:\n\n   ```sh\n   acp wallet balance --ticker ETH --json\n   bevo-read assets\n   ```\n"
+    steps = (
+        "1. [ADAPT] Look:\n\n   ```sh\n   acp wallet balance --ticker ETH --json\n"
+        "   acp options account --json\n   bevo-read assets\n   ```\n"
+    )
     ok, result = check_skill(write_skill(tmp_path, fm=fm, body=procedure_body(steps, moneyish=False)))
     assert ok, result["errors"]
 
