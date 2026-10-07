@@ -259,8 +259,9 @@ outright.
 `duty.py`'s other tools:
 
 - `bevo.read(path, params=None)` — any `/butler-read` endpoint (a path such as
-  `"/token-price"`), parsed JSON; raises `BevoError` on failure. A ticker's price is
-  `bevo.read("/token-price", {"q": "BTC"})` — `/token-search` is identity, not price. Also
+  `"/token-search"`), parsed JSON; raises `BevoError` on failure. A ticker's price is a
+  row of `bevo.read("/token-search", {"q": "BTC"})["tokens"]` — take the row you trade
+  (`kind` "stock" is what `acp trade --token` buys, any other row its address). Also
   `bevo.balance()`, `bevo.holdings()`, `bevo.stocks()`, `bevo.positions()`,
   `bevo.user(handle)`, `bevo.groups()`, `bevo.group_messages(group_id)` — typed helpers
   over the same reads that answer empty instead of raising when a read fails

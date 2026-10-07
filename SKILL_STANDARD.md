@@ -158,7 +158,7 @@ are held to what the container accepts, so a skill cannot call one it lacks:
 
 | Command | Allowed subcommands (argv[0], or the acp group) |
 | --- | --- |
-| `bevo-read` | `get`, `messages`, `channel-messages`, `participants`, `summary`, `search`, `groups`, `user`, `assets`, `me`, `policy`, `token-search`, `token`, `token-balance`, `token-price`, `stock-min`, `token-stats`, `trade-activity`, `trade-executions`, `wallet-transfers`, `request`, `card-budget` |
+| `bevo-read` | `get`, `messages`, `channel-messages`, `participants`, `summary`, `search`, `groups`, `user`, `assets`, `me`, `policy`, `token-search`, `token`, `token-balance`, `stock-min`, `token-stats`, `trade-activity`, `trade-executions`, `wallet-transfers`, `request`, `card-budget` |
 | `bevo-sms` | `number`, `status`, `otp` |
 | `bevo-automation` | `create`, `validate`, `update`, `enable`, `disable`, `delete`, `list`, `show`, `logs` |
 | `bevo-x` | `search` |

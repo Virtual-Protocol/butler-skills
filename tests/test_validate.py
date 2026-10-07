@@ -1014,7 +1014,7 @@ def _commands(tmp_path, lines: str, bins: str = '["acp","app-checkout","bevo-aut
 @pytest.mark.parametrize("line", [
     "acp email inbox --json", "acp agent whoami", "acp job list", "acp wallet balance --ticker ETH",
     "bevo-sms otp --since 2026-09-09T07:20:00Z", "bevo-x search virtuals", "app-checkout screen",
-    "bevo-automation create @duty.json", "bevo-read token-price VIRTUAL",
+    "bevo-automation create @duty.json", "bevo-read token-search VIRTUAL",
 ])
 def test_commands_the_container_has_pass(tmp_path, line):
     ok, errors = _commands(tmp_path, line)
@@ -1050,9 +1050,9 @@ def test_commands_the_container_lacks_are_refused(tmp_path, line, needle):
     ("python3 - <<'EOF'\nimport urllib.request\nEOF", '["python3"]'),
     ("node -e 'console.log(1)'", '["node"]'),
     ('API=https://api.llama.fi curl -s "$API/protocols"', '["curl"]'),
-    ('bevo-read token-price "$(curl -s https://example.com/sym)"', '["bevo-read","curl"]'),
+    ('bevo-read token-search "$(curl -s https://example.com/sym)"', '["bevo-read","curl"]'),
     ("if curl -fs https://example.com; then echo up; fi", '["curl","echo"]'),
-    ("for s in BTC ETH; do bevo-read token-price $s; done", '["bevo-read"]'),
+    ("for s in BTC ETH; do bevo-read token-search $s; done", '["bevo-read"]'),
     ("(cd /tmp && curl -sO https://example.com/a.json)", '["curl"]'),
     ("echo $((1 + 2))", '["echo"]'),
     ("diff <(bevo-read me) <(bevo-read me)", '["bevo-read","diff"]'),
@@ -1066,7 +1066,7 @@ def test_any_program_may_run_when_declared(tmp_path, line, bins):
 
 def test_an_undeclared_program_is_refused(tmp_path):
     fm = {"metadata": '{"butler":{"moneyMoving":false,"keywords":["x"],"requires":{"bins":["bevo-read"]}}}'}
-    body = procedure_body("1. [ADAPT] Run:\n\n```sh\nbevo-read token-price \"$(curl -s x)\"\n```\n", moneyish=False)
+    body = procedure_body("1. [ADAPT] Run:\n\n```sh\nbevo-read token-search \"$(curl -s x)\"\n```\n", moneyish=False)
     ok, result = check_skill(write_skill(tmp_path, fm=fm, body=body))
     assert not ok
     assert "metadata.butler.requires.bins: 'curl' runs in a shell block but is not declared — add it to requires.bins" in result["errors"]
