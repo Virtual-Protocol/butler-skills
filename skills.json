@@ -4,7 +4,7 @@
     {
       "name": "butler-app-checkout",
       "repo": "https://github.com/Virtual-Protocol/butler-skill-app-checkout",
-      "ref": "v2.1.4"
+      "ref": "v2.1.5"
     },
     {
       "name": "butler-grabfood",
