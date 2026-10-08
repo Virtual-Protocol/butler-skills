@@ -170,7 +170,7 @@ Rules the validator enforces by reading the AST:
   variable holds part or all of it) the validator can only warn — it cannot prove the key
   is missing, so the author is on their own for that shape.
 - **Other retired names**, each refused with its replacement: `bevo.escalate` → use
-  `bevo.prompt()`; `bevo.token` → use `bevo.read("/token-price")`; `bevo.is_stock` → read
+  `bevo.prompt()`; `bevo.token` → use `bevo.read("/token-search")`; `bevo.is_stock` → read
   `spot.stocks[]` via `bevo.read("/user-assets")`.
 - **A trigger with nothing waiting on it is refused.** If `recipe.json` declares
   `triggers`, `duty.py` must call at least one waiter somewhere:

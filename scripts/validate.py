@@ -173,7 +173,7 @@ RETIRED_BEVO_CALLS = {
     "stock_buy": _ACP_TRADE_REPLACEMENT,
     "stock_sell": _ACP_TRADE_REPLACEMENT,
     "escalate": "bevo.prompt",
-    "token": 'bevo.read("/token-price")',
+    "token": 'bevo.read("/token-search")',
     "is_stock": "no replacement — read spot.stocks[] via bevo.read(\"/user-assets\")",
 }
 
@@ -842,7 +842,7 @@ SKILL_COMMANDS = frozenset({
 SKILL_SUBCOMMANDS = {
     "bevo-read": frozenset({  # read.mjs COMMANDS
         "get", "messages", "channel-messages", "participants", "summary", "search", "groups",
-        "user", "assets", "me", "policy", "token-search", "token", "token-balance", "token-price",
+        "user", "assets", "me", "policy", "token-search", "token", "token-balance",
         "stock-min", "token-stats", "trade-activity", "trade-executions", "wallet-transfers",
         "request", "card-budget",
     }),
