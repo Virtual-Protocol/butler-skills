@@ -10,6 +10,11 @@
       "name": "butler-grabfood",
       "repo": "https://github.com/Virtual-Protocol/butler-skill-grabfood",
       "ref": "v1.0.0"
+    },
+    {
+      "name": "options-trading",
+      "repo": "https://github.com/mamamatcha/butler-skill-yield-notes",
+      "ref": "v2.1.1"
     }
   ]
 }
