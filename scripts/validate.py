@@ -181,7 +181,7 @@ RETIRED_BEVO_CALLS = {
 # Only these two-word acp command groups move the owner's money.
 SHELL_CALL_ATTRS = {"run", "check_output", "Popen", "call", "check_call"}
 MONEY_BIN = "acp"
-MONEY_SUBCOMMANDS = {"trade", "wallet", "card"}
+MONEY_SUBCOMMANDS = {"trade", "wallet", "card", "options"}
 IDEMPOTENCY_FLAG = "--idempotency-key"
 
 # Every os.environ key a duty may read besides its own declared params.
@@ -858,14 +858,17 @@ SKILL_SUBCOMMANDS = {
 }
 
 # The acp command groups the container's wrapper lets through (wrapper.ts): the groups
-# acp-cli runs on its access token alone, plus trade/wallet/card, which the butler rail
-# forwards to bevo-server's signer. `client`, `compute` and `configure` are refused there.
+# acp-cli runs on its access token alone, plus trade/wallet/card/options, which the butler
+# rail forwards to bevo-server's signer. `client`, `compute` and `configure` are refused there.
 # The group is the first non-option argument, as the wrapper reads it.
 ACP_GROUPS = frozenset({
     "agent", "browse", "card", "chain", "email", "events", "job", "message", "offering",
-    "policy", "provider", "resource", "skill", "subscription", "trade", "wallet",
+    "options", "policy", "provider", "resource", "skill", "subscription", "trade", "wallet",
 })
 ACP_REFUSED_GROUPS = frozenset({"client", "compute", "configure"})
+# `acp options` (Derive yield notes): these file an approval card and move money;
+# `account` is a read.
+OPTIONS_MONEY_SUBCOMMANDS = frozenset({"open", "deposit", "withdraw"})
 ACP_AGENT_SUBCOMMANDS = frozenset({  # wrapper.ts AGENT_ALLOWED
     "whoami", "list", "use", "link", "generate-signer-key", "signer-status", "help",
 })
@@ -1420,7 +1423,8 @@ def split_simple_commands(line: str) -> list[tuple[str | None, list[str]]]:
 
 
 def is_money_command(argv: list[str]) -> bool:
-    """acp trade, acp wallet send-transaction, acp card, bevo-send, app-checkout checkpoint."""
+    """acp trade, acp wallet send-transaction, acp card, acp options open|deposit|withdraw,
+    bevo-send, app-checkout checkpoint."""
     first, args = argv[0], argv[1:]
     if first == "bevo-send":
         return True
@@ -1430,7 +1434,11 @@ def is_money_command(argv: list[str]) -> bool:
         positionals = [a for a in args if not a.startswith("-")]
         group = positionals[0] if positionals else None
         sub = positionals[1] if len(positionals) > 1 else None
-        return group in ("trade", "card") or (group == "wallet" and sub == "send-transaction")
+        return (
+            group in ("trade", "card")
+            or (group == "wallet" and sub == "send-transaction")
+            or (group == "options" and sub in OPTIONS_MONEY_SUBCOMMANDS)
+        )
     return False
 
 

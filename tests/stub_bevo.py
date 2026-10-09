@@ -55,7 +55,7 @@ SESSION_ID = os.environ.get("BEVO_SESSION_ID", "stub-session-id")
 RECORDED_ACTIONS: list[dict] = []
 
 MONEY_BIN = "acp"
-MONEY_SUBCOMMANDS = ("trade", "wallet", "card")
+MONEY_SUBCOMMANDS = ("trade", "wallet", "card", "options")
 IDEMPOTENCY_FLAG = "--idempotency-key"
 
 

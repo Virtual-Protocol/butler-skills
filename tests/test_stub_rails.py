@@ -57,7 +57,7 @@ def test_acp_trade_is_recorded_and_never_actually_spawned(monkeypatch):
     stub_bevo.RECORDED_ACTIONS.clear()
 
 
-@pytest.mark.parametrize("subcommand", ["trade", "wallet", "card"])
+@pytest.mark.parametrize("subcommand", ["trade", "wallet", "card", "options"])
 def test_every_money_subcommand_is_intercepted(subcommand):
     stub_bevo.RECORDED_ACTIONS.clear()
     subprocess.run(["acp", subcommand, "--idempotency-key", "k"], capture_output=True, text=True, check=False)
