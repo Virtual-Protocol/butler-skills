@@ -961,6 +961,8 @@ def test_a_money_moving_skill_must_say_do_not_re_run(tmp_path):
     "acp wallet send-transaction --to <ADDRESS> --data <HEX> --json",
     "acp card issue --amount 500 --merchant <M> --purpose <P> --json",
     "acp options open --instrument <I> --size <N> --min-premium <P> --max-collateral <C> --idempotency-key <K>",
+    "acp options buy --instrument <I> --size <N> --max-cost <C> --idempotency-key <K>",
+    "acp options close --instrument <I> --size <N> --min-proceeds <P> --idempotency-key <K>",
     "acp options deposit --amount <N> --idempotency-key <K>",
     "acp options withdraw --amount <N> --idempotency-key <K>",
     "bevo-send --to @someone --amount 1 --token usdc",
