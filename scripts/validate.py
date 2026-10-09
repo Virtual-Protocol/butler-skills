@@ -868,7 +868,7 @@ ACP_GROUPS = frozenset({
 ACP_REFUSED_GROUPS = frozenset({"client", "compute", "configure"})
 # `acp options` (Derive yield notes): these file an approval card and move money;
 # `account` is a read.
-OPTIONS_MONEY_SUBCOMMANDS = frozenset({"open", "deposit", "withdraw"})
+OPTIONS_MONEY_SUBCOMMANDS = frozenset({"open", "buy", "close", "deposit", "withdraw"})
 ACP_AGENT_SUBCOMMANDS = frozenset({  # wrapper.ts AGENT_ALLOWED
     "whoami", "list", "use", "link", "generate-signer-key", "signer-status", "help",
 })
@@ -1423,8 +1423,8 @@ def split_simple_commands(line: str) -> list[tuple[str | None, list[str]]]:
 
 
 def is_money_command(argv: list[str]) -> bool:
-    """acp trade, acp wallet send-transaction, acp card, acp options open|deposit|withdraw,
-    bevo-send, app-checkout checkpoint."""
+    """acp trade, acp wallet send-transaction, acp card,
+    acp options open|buy|close|deposit|withdraw, bevo-send, app-checkout checkpoint."""
     first, args = argv[0], argv[1:]
     if first == "bevo-send":
         return True
