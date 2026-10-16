@@ -1422,9 +1422,15 @@ def split_simple_commands(line: str) -> list[tuple[str | None, list[str]]]:
     return [(sep, argv) for sep, argv in commands if argv]
 
 
+WALLET_MONEY_SUBCOMMANDS = frozenset({"send-transaction", "sign-typed-data", "sign-message"})
+
+
 def is_money_command(argv: list[str]) -> bool:
-    """acp trade, acp wallet send-transaction, acp card,
-    acp options open|buy|close|deposit|withdraw, bevo-send, app-checkout checkpoint."""
+    """acp trade, acp wallet send-transaction|sign-typed-data|sign-message, acp card,
+    acp options open|buy|close|deposit|withdraw, bevo-send, app-checkout checkpoint.
+
+    A signature counts: an EIP-712 Permit, a payment authorization or a venue's
+    withdrawal moves funds as surely as a transaction does."""
     first, args = argv[0], argv[1:]
     if first == "bevo-send":
         return True
@@ -1436,7 +1442,7 @@ def is_money_command(argv: list[str]) -> bool:
         sub = positionals[1] if len(positionals) > 1 else None
         return (
             group in ("trade", "card")
-            or (group == "wallet" and sub == "send-transaction")
+            or (group == "wallet" and sub in WALLET_MONEY_SUBCOMMANDS)
             or (group == "options" and sub in OPTIONS_MONEY_SUBCOMMANDS)
         )
     return False

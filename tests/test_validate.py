@@ -959,6 +959,8 @@ def test_a_money_moving_skill_must_say_do_not_re_run(tmp_path):
     "acp trade --token-in usdc --amount-in 5 --token-out <T> --json",
     "acp --json trade --side long --token BTC --amount-usdc 20 --leverage 2",
     "acp wallet send-transaction --to <ADDRESS> --data <HEX> --json",
+    "acp wallet sign-typed-data --data <JSON> --chain-id 999 --idempotency-key <K>",
+    "acp wallet sign-message --message <M> --chain-id 8453 --idempotency-key <K>",
     "acp card issue --amount 500 --merchant <M> --purpose <P> --json",
     "acp options open --instrument <I> --size <N> --min-premium <P> --max-collateral <C> --idempotency-key <K>",
     "acp options buy --instrument <I> --size <N> --max-cost <C> --idempotency-key <K>",

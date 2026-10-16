@@ -132,7 +132,8 @@ duty template, never a skill section.
 - `## Procedure` has at least one numbered step, and **every** numbered step there carries
   `[FIXED]` (do exactly this) or `[ADAPT]` (shape it to the request). Numbered lists in
   other sections are prose.
-- A **money command** — `acp trade`, `acp wallet send-transaction`, `acp card`,
+- A **money command** — `acp trade`, `acp wallet send-transaction`,
+  `acp wallet sign-typed-data`, `acp wallet sign-message`, `acp card`,
   `acp options open|buy|close|deposit|withdraw`,
   `bevo-send`, `app-checkout checkpoint` — may only appear in a shell block inside a
   `[FIXED]` step of `## Procedure`. The step is the numbered line above the block; any
@@ -164,7 +165,7 @@ are held to what the container accepts, so a skill cannot call one it lacks:
 | `bevo-automation` | `create`, `validate`, `update`, `enable`, `disable`, `delete`, `list`, `show`, `logs` |
 | `bevo-x` | `search` |
 | `app-checkout` | `start`, `status`, `screen`, `shot`, `tap`, `type`, `key`, `swipe`, `wait`, `install`, `open`, `grant`, `do`, `checkpoint`, `end` |
-| `acp` | the groups the container's `acp` wrapper lets through: `agent` (only `whoami`, `list`, `use`, `link`, `generate-signer-key`, `signer-status`, `help`), `browse`, `card`, `chain`, `email`, `events`, `job`, `message`, `offering`, `options` (`account` reads; `open`, `buy`, `close`, `deposit`, `withdraw` move money), `policy`, `provider`, `resource`, `skill`, `subscription`, `trade`, `wallet`. `client`, `compute` and `configure` are refused; a bare `acp` / `acp --help` is refused |
+| `acp` | the groups the container's `acp` wrapper lets through: `agent` (only `whoami`, `list`, `use`, `link`, `generate-signer-key`, `signer-status`, `help`), `browse`, `card`, `chain`, `email`, `events`, `job`, `message`, `offering`, `options` (`account` reads; `open`, `buy`, `close`, `deposit`, `withdraw` move money), `policy`, `provider`, `resource`, `skill`, `subscription`, `trade`, `wallet` (`send-transaction`, `sign-typed-data` and `sign-message` move money: a signature can authorize a transfer). `client`, `compute` and `configure` are refused; a bare `acp` / `acp --help` is refused |
 | `bevo-send`, `bevo-rpc`, `bevo-notify` | any arguments |
 
 Any other `bevo-*` name is refused: it is not the container's, and the butler's hub
