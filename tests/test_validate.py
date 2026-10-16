@@ -968,10 +968,14 @@ def test_a_money_moving_skill_must_say_do_not_re_run(tmp_path):
     "acp options deposit --amount <N> --idempotency-key <K>",
     "acp options withdraw --amount <N> --idempotency-key <K>",
     "bevo-send --to @someone --amount 1 --token usdc",
+    "bevo-wallet fund --wallet <W> --amount 10 --idempotency-key <K>",
+    "bevo-wallet withdraw --wallet <W> --all --idempotency-key <K>",
+    "bevo-wallet bridge-prl --wallet <W> --amount 10 --idempotency-key <K>",
+    "bevo-wallet bind --wallet <W> --duty <D> --fund 20",
     "app-checkout checkpoint --app GrabFood --amount 12.40 --currency MYR --wait 0",
 ])
 def test_every_money_command_needs_a_fixed_step(tmp_path, command):
-    bins = '["acp","bevo-send","app-checkout"]'
+    bins = '["acp","bevo-send","bevo-wallet","app-checkout"]'
     fm = {"metadata": '{"butler":{"moneyMoving":true,"keywords":["x"],"requires":{"bins":' + bins + '}}}'}
     fixed = procedure_body(f"1. [FIXED] Do it:\n\n   ```sh\n   {command}\n   ```\n")
     assert check_skill(write_skill(tmp_path / "fixed", fm=fm, body=fixed))[0]
@@ -1014,7 +1018,7 @@ def test_body_size_and_unclosed_fence(tmp_path):
 # --- body: the commands a skill may run -------------------------------------------------------
 
 
-def _commands(tmp_path, lines: str, bins: str = '["acp","app-checkout","bevo-automation","bevo-read","bevo-sms","bevo-x"]'):
+def _commands(tmp_path, lines: str, bins: str = '["acp","app-checkout","bevo-automation","bevo-read","bevo-sms","bevo-wallet","bevo-x"]'):
     fm = {"metadata": '{"butler":{"moneyMoving":false,"keywords":["x"],"requires":{"bins":' + bins + '}}}'}
     body = procedure_body(f"1. [ADAPT] Run:\n\n```sh\n{lines}\n```\n", moneyish=False)
     ok, result = check_skill(write_skill(tmp_path, fm=fm, body=body))
@@ -1025,6 +1029,7 @@ def _commands(tmp_path, lines: str, bins: str = '["acp","app-checkout","bevo-aut
     "acp email inbox --json", "acp agent whoami", "acp job list", "acp wallet balance --ticker ETH",
     "bevo-sms otp --since 2026-09-09T07:20:00Z", "bevo-x search virtuals", "app-checkout screen",
     "bevo-automation create @duty.json", "bevo-read token-search VIRTUAL",
+    "bevo-wallet list", "bevo-wallet create --chain pearl --label Pearl",
 ])
 def test_commands_the_container_has_pass(tmp_path, line):
     ok, errors = _commands(tmp_path, line)
@@ -1039,6 +1044,7 @@ def test_commands_the_container_has_pass(tmp_path, line):
     ("acp frobnicate", "`acp frobnicate` is not an acp command group"),
     ("acp agent create", "`acp agent create` is refused"),
     ("bevo-sms call", "`bevo-sms call` is not one of bevo-sms's subcommands"),
+    ("bevo-wallet bridge", "`bevo-wallet bridge` is not one of bevo-wallet's subcommands"),
     ("app-checkout phone", "`app-checkout phone` is not one of app-checkout's subcommands"),
     ("app-checkout otp --type", "`app-checkout otp`"),
     ("bevo-automation frobnicate", "`bevo-automation frobnicate`"),
