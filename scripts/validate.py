@@ -833,8 +833,8 @@ SHELL_LANGS = frozenset({"", "sh", "bash", "shell", "console", "zsh", "shell-ses
 # acp-cli (src/integrations/acp/wrapper.ts); `app-checkout` is the phone rail's container
 # primitive. Any other `bevo-*` name is not the container's: its hub reports it missing.
 SKILL_COMMANDS = frozenset({
-    "bevo-read", "bevo-send", "bevo-rpc", "bevo-notify", "bevo-sms", "bevo-x", "bevo-automation",
-    "acp", "app-checkout",
+    "bevo-read", "bevo-send", "bevo-wallet", "bevo-rpc", "bevo-notify", "bevo-sms", "bevo-x",
+    "bevo-automation", "acp", "app-checkout",
 })
 
 # Subcommand tables, each read off the command's own dispatch in virtuals-agent
@@ -847,6 +847,9 @@ SKILL_SUBCOMMANDS = {
         "request", "card-budget",
     }),
     "bevo-sms": frozenset({"number", "status", "otp"}),  # sms.mjs COMMANDS
+    "bevo-wallet": frozenset({  # wallet.mjs COMMANDS
+        "chains", "list", "create", "fund", "withdraw", "bridge-prl", "bind", "unbind", "archive",
+    }),
     "bevo-automation": frozenset({  # automation.mjs main()
         "create", "validate", "update", "enable", "disable", "delete", "list", "show", "logs",
     }),
@@ -1423,17 +1426,22 @@ def split_simple_commands(line: str) -> list[tuple[str | None, list[str]]]:
 
 
 WALLET_MONEY_SUBCOMMANDS = frozenset({"send-transaction", "sign-typed-data", "sign-message"})
+# `bind` counts: binding a wallet that holds money, or with --fund, files a card.
+BEVO_WALLET_MONEY_SUBCOMMANDS = frozenset({"fund", "withdraw", "bridge-prl", "bind"})
 
 
 def is_money_command(argv: list[str]) -> bool:
     """acp trade, acp wallet send-transaction|sign-typed-data|sign-message, acp card,
-    acp options open|buy|close|deposit|withdraw, bevo-send, app-checkout checkpoint.
+    acp options open|buy|close|deposit|withdraw, bevo-send,
+    bevo-wallet fund|withdraw|bridge-prl|bind, app-checkout checkpoint.
 
     A signature counts: an EIP-712 Permit, a payment authorization or a venue's
     withdrawal moves funds as surely as a transaction does."""
     first, args = argv[0], argv[1:]
     if first == "bevo-send":
         return True
+    if first == "bevo-wallet":
+        return bool(args) and args[0] in BEVO_WALLET_MONEY_SUBCOMMANDS
     if first == "app-checkout":
         return args[:1] == ["checkpoint"]
     if first == "acp":
