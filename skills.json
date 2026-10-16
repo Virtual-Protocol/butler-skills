@@ -12,6 +12,11 @@
       "ref": "v1.0.0"
     },
     {
+      "name": "canaryguard",
+      "repo": "https://github.com/ak10082247-max/butler-skill-canaryguard",
+      "ref": "v1.0.0"
+    },
+    {
       "name": "options-trading",
       "repo": "https://github.com/mamamatcha/butler-skill-yield-notes",
       "ref": "v2.3.2"
