@@ -599,6 +599,131 @@ def _contains_waiter_call(node: ast.AST) -> bool:
     return False
 
 
+# --- status line ---------------------------------------------------------------------------
+#
+# A duty's row in the owner's Duties list is its title and one status line. The
+# code reports which state it is in and the values it measured —
+# bevo.status("bought", n=3) — and recipe.json `status` words each state, so the
+# wording can be read and checked here, and changed without touching the code.
+# The container enforces the same rules on a duty Butler writes itself
+# (virtuals-agent status-template.mjs `wordingIssues`); keep the two alike.
+
+STATUS_STATE_RE = re.compile(r"^[a-z][a-z0-9_]{0,23}$")
+STATUS_PLACEHOLDER_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+STATUS_MAX_TEXT = 120
+STATUS_MAX_STATES = 12
+#: The row fits about this many characters after "On · ", measured with {next}
+#: written as the app writes a time a week away ("Mon 9am") and each value at five.
+STATUS_FITS = 46
+#: Values every status line may use, whatever the code passes.
+STATUS_BUILTINS = {"next", "ran", "day", "runs_today"}
+#: A state the duty never acts again after, or one only the owner can clear:
+#: it needs no next run.
+STATUS_RESTING = re.compile(r"^(done|finished|complete|completed|stopped|ended|expired|exhausted|closed|paused|blocked)(_|$)")
+#: Words that only lead into a time — "next {next}" still says nothing about what happens then.
+STATUS_LEAD_INS = {"next", "at", "by", "on", "the", "in", "from", "until", "till", "·", "—", "-"}
+
+
+def _status_calls(tree: ast.AST) -> list[tuple[int, str | None, set[str]]]:
+    """Every bevo.status(...) call: (line, literal state or None, value names)."""
+    calls = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not (isinstance(func, ast.Attribute) and func.attr == "status"
+                and isinstance(func.value, ast.Name) and func.value.id == "bevo"):
+            continue
+        state = _const_str(node.args[0]) if node.args else None
+        names = {kw.arg for kw in node.keywords if kw.arg and kw.arg not in ("last", "next_at")}
+        calls.append((node.lineno, state, names))
+    return calls
+
+
+def check_status(template_dir: Path, recipe: dict, standalone: bool, issues: Issues) -> None:
+    """recipe.json `status` against the bevo.status() calls in duty.py.
+
+    Missing altogether is a warning, not a refusal, so a listed template
+    published before this rule keeps publishing; the standard requires both.
+    """
+    duty = template_dir / "duty.py"
+    try:
+        tree = ast.parse(duty.read_text(encoding="utf-8")) if duty.is_file() else None
+    except SyntaxError:
+        return  # check_duty_py reports it
+    calls = _status_calls(tree) if tree is not None else []
+    status = recipe.get("status")
+
+    if status is None and not calls:
+        msg = ("no status line: duty.py never calls bevo.status() and recipe.json has no `status`, "
+               "so the owner's Duties row can only say when it last ran")
+        issues.warn("status", msg)
+        return
+    if status is None:
+        issues.error("status", "duty.py calls bevo.status() but recipe.json has no `status` to word it")
+        return
+    if not isinstance(status, dict) or not status:
+        issues.error("status", "must be an object of state name -> line")
+        return
+    if len(status) > STATUS_MAX_STATES:
+        issues.error("status", f"has {len(status)} states; keep it to {STATUS_MAX_STATES}")
+    if not calls:
+        issues.warn("status", "recipe.json words states but duty.py never calls bevo.status(), so only \"starting\" ever shows")
+
+    for line, state, _ in calls:
+        if state is None:
+            issues.error("duty.py", f"line {line}: bevo.status() takes a state name as a literal string "
+                                    "(bevo.status(\"bought\", n=n)); the words belong in recipe.json `status`")
+        elif state not in status:
+            issues.error("status", f"duty.py line {line} reports \"{state}\", which `status` does not word")
+    if "starting" not in status:
+        issues.error("status", "add a \"starting\" line: it shows until the first run")
+
+    params = recipe.get("params") if isinstance(recipe.get("params"), dict) else {}
+    settings = set((params.get("properties") or {}).keys())
+    timer = "timer" in (recipe.get("triggers") or [])
+    available = STATUS_BUILTINS | settings
+    for _, _, names in calls:
+        available |= names
+
+    for state, entry in status.items():
+        where = f"status.{state}"
+        if not STATUS_STATE_RE.match(state):
+            issues.error(where, "state names are lowercase letters, digits and _")
+        if isinstance(entry, str):
+            parts = [entry]
+        elif isinstance(entry, dict) and entry and set(entry) <= {"last", "next"}:
+            parts = [entry.get("last"), entry.get("next")]
+            parts = [p for p in parts if p is not None]
+        else:
+            issues.error(where, "must be a line, or {\"last\": ..., \"next\": ...}")
+            continue
+        if not all(isinstance(p, str) and p.strip() for p in parts):
+            issues.error(where, "has an empty line")
+            continue
+        for p in parts:
+            if len(p) > STATUS_MAX_TEXT:
+                issues.error(where, f"is {len(p)} characters; keep each line to {STATUS_MAX_TEXT}")
+        text = " · ".join(parts)
+        for name in STATUS_PLACEHOLDER_RE.findall(text):
+            if name not in available:
+                issues.error(where, f"uses {{{name}}}, which neither the code nor a setting supplies")
+        if timer and "{next}" not in text and not STATUS_RESTING.match(state):
+            issues.error(where, "never says when the duty acts next ({next}); a state it never runs after "
+                                "is named done/finished/paused/...")
+        for part in text.split(" · "):
+            at = part.find("{next}")
+            if at == -1:
+                continue
+            lead = [w for w in part[:at].split() if w.lower() not in STATUS_LEAD_INS]
+            if not lead:
+                issues.error(where, f"\"{part.strip()}\" does not say what happens at that time "
+                                    "(\"next buy {next}\", not \"next {next}\")")
+        filled = STATUS_PLACEHOLDER_RE.sub(lambda m: "Mon 9am" if m.group(1) == "next" else "12345", text)
+        if len(filled) > STATUS_FITS:
+            issues.error(where, f"is about {len(filled)} characters filled; the row fits {STATUS_FITS}")
+
+
 def check_duty_py(template_dir: Path, recipe: dict, issues: Issues) -> None:
     duty_path = template_dir / "duty.py"
     if not duty_path.is_file():
@@ -1871,6 +1996,7 @@ def validate_template(
 
     check_readme(template_dir, issues)
     check_duty_py(template_dir, recipe, issues)
+    check_status(template_dir, recipe, standalone, issues)
 
     full_text = ""
     for name in REQUIRED_FILES:

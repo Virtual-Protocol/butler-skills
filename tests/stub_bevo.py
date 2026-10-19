@@ -53,6 +53,8 @@ SERVICE_ID = os.environ.get("BEVO_SERVICE_ID", "stub-service-id")
 SESSION_ID = os.environ.get("BEVO_SESSION_ID", "stub-session-id")
 
 RECORDED_ACTIONS: list[dict] = []
+#: Every bevo.status() call, in order — what the owner's Duties row would have said.
+STATUS_REPORTS: list[dict] = []
 
 MONEY_BIN = "acp"
 MONEY_SUBCOMMANDS = ("trade", "wallet", "card", "options")
@@ -966,6 +968,12 @@ def sleep(seconds) -> None:
 
 
 # --- talking to the outside --------------------------------------------------------------
+
+
+def status(next, last=None, next_at=None, **values) -> None:
+    """Records the state and values, as the row would be reported — apart from
+    RECORDED_ACTIONS, which is what the duty DID."""
+    STATUS_REPORTS.append({"state": str(next), "values": dict(values)})
 
 
 def notify(text, quiet=False, push=None) -> dict:

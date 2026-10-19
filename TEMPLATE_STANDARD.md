@@ -89,6 +89,7 @@ This shape is fixed by the container's template installer — do not add or rena
 | `supersedes` | optional array of older refs this version replaces, e.g. `["dca@1"]`; flattened by `build_index.py` into the published index's `aliases` |
 | `keys` | optional array of the stable idempotency-key format(s) `duty.py` uses — documentation only |
 | `params` | required, a JSON-Schema **object** describing the settings a duty made from this template takes — see Params below |
+| `status` | required for a new template: the duty's status line, by state — see Status line below |
 
 ## Params
 
@@ -181,6 +182,44 @@ Rules the validator enforces by reading the AST:
 - **`uses bevo.* but never imports it`** is refused — a `bevo` attribute access with no
   `import bevo` in the file is always a bug, not a lint nit.
 - Must parse as valid Python 3.11.
+
+## Status line
+
+The owner's Duties list shows each duty as its title and **one status line**. `duty.py`
+reports which state it is in and the values it measured; `recipe.json` `status` words each
+state, so the line can be checked here and reworded without touching the code.
+
+```python
+bevo.status("bought", n=bought, total=TOTAL)
+```
+
+```json
+"status": {
+  "starting": "First buy {next}",
+  "bought": { "last": "Bought {n} of {total}", "next": "next buy {next}" },
+  "paused": "Paused until the token is confirmed"
+}
+```
+
+- A line is a string, or `{"last", "next"}`: `last` stays until a later state replaces it.
+- `{next}` is the next run, written by the app ("in 8 min", "7am", "Mon 9am"); `{name}` is a
+  value the call passes, or a setting by name. `{ran}`, `{day}` and `{runs_today}` are there too.
+  Pass numbers, never formatted text: write "$" in the line, not in the value.
+- A part (between `" · "`) whose value is missing is dropped, so `"Now ${price} · next check {next}"`
+  reads `"next check in 8 min"` when the price could not be read.
+
+`validate.py` refuses, and the container refuses the same on a duty Butler writes itself:
+
+| Rule | Why |
+| --- | --- |
+| a `starting` line | it is all the row shows until the first run |
+| every state `duty.py` reports is worded; the state is a literal string | otherwise the row keeps its last line |
+| on a timer, every state says when it acts next with `{next}` — except one named `done`, `finished`, `paused`, `blocked`, … | the owner's first question about a scheduled duty |
+| `{next}` has a word before it saying what happens then: `next buy {next}`, never `next {next}` or a bare `{next}` | "· 7am" alone means nothing |
+| about 46 characters once filled | the row is one line; the rest is cut |
+
+Keep it to what the owner wants at a glance: the latest result or progress, and what comes next.
+Never repeat the title (its token, city or schedule) — it sits right above the line.
 
 ## `README.md`
 

@@ -278,11 +278,12 @@ def _write_minimal_template(template_dir: Path, tid: str, triggers=None) -> None
         "version": 1,
         "description": "A minimal fixture template.",
         "params": {"type": "object", "properties": {}},
+        "status": {"starting": "Waiting for the first event", "ran": "Ran"},
     }
     if triggers is not None:
         recipe["triggers"] = triggers
     (template_dir / "recipe.json").write_text(json.dumps(recipe))
-    (template_dir / "duty.py").write_text("import bevo\nbevo.log('x')\n")
+    (template_dir / "duty.py").write_text("import bevo\nbevo.log('x')\nbevo.status('ran')\n")
     (template_dir / "README.md").write_text("# fixture\n")
 
 
@@ -1302,3 +1303,57 @@ def test_all_refuses_a_requirement_cycle(tmp_path, monkeypatch, capsys):
     assert results["two"]["errors"] == [
         "metadata.butler.requires.skills: forms a cycle (two → one → two) — there is no order to install them in"
     ]
+
+
+# --- status line -------------------------------------------------------------
+
+
+def _status_issues(tmp_path: Path, status, code: str, triggers=("timer",)):
+    template_dir = tmp_path / "foo"
+    _write_minimal_template(template_dir, "foo", triggers=list(triggers))
+    recipe = json.loads((template_dir / "recipe.json").read_text())
+    if status is None:
+        recipe.pop("status", None)
+    else:
+        recipe["status"] = status
+    (template_dir / "recipe.json").write_text(json.dumps(recipe))
+    (template_dir / "duty.py").write_text("import bevo\n" + code)
+    ok, result = validate.validate_template(template_dir, set(), json_mode=True, standalone=True)
+    return ok, result["errors"], result["warnings"]
+
+
+def test_status_states_the_code_reports_must_be_worded(tmp_path):
+    ok, errors, _ = _status_issues(
+        tmp_path, {"starting": "First buy {next}"}, "for t in bevo.ticks():\n    bevo.status('bought')\n"
+    )
+    assert not ok and any('reports "bought"' in e for e in errors)
+
+
+def test_status_needs_a_starting_line_and_a_labelled_next_run(tmp_path):
+    ok, errors, _ = _status_issues(
+        tmp_path, {"bought": "Bought · {next}"}, "for t in bevo.ticks():\n    bevo.status('bought')\n"
+    )
+    assert not ok
+    assert any('"starting"' in e for e in errors)
+    assert any("does not say what happens at that time" in e for e in errors)
+
+
+def test_status_words_belong_in_recipe_json_not_the_code(tmp_path):
+    ok, errors, _ = _status_issues(
+        tmp_path, {"starting": "First buy {next}"}, "for t in bevo.ticks():\n    bevo.status(f'Bought {t}')\n"
+    )
+    assert not ok and any("literal string" in e for e in errors)
+
+
+def test_status_line_that_reads_right_passes(tmp_path):
+    ok, errors, _ = _status_issues(
+        tmp_path,
+        {"starting": "First buy {next}", "bought": {"last": "Bought {n}", "next": "next buy {next}"}, "paused": "Paused"},
+        "for t in bevo.ticks():\n    bevo.status('bought', n=1)\n    bevo.status('paused')\n",
+    )
+    assert ok, errors
+
+
+def test_a_template_without_a_status_line_warns(tmp_path):
+    ok, _, warnings = _status_issues(tmp_path, None, "for t in bevo.ticks():\n    bevo.log('x')\n")
+    assert ok and any("no status line" in w for w in warnings)

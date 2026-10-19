@@ -243,6 +243,18 @@ def main() -> int:
                 ok = False
             seen_keys[key] = action["call"]
 
+    # What the owner's Duties row would have said, state by state. A state
+    # recipe.json does not word would leave the row on its last line.
+    try:
+        worded = json.loads((duty_path.parent / "recipe.json").read_text()).get("status") or {}
+    except (OSError, ValueError):
+        worded = {}
+    for report in stub.STATUS_REPORTS:
+        print(f"# status: {report['state']} {json.dumps(report['values'], default=str)}")
+        if worded and report["state"] not in worded:
+            print(f"ERROR: bevo.status({report['state']!r}) is not a state recipe.json `status` words")
+            ok = False
+
     print("# ACTIONS_JSON_START")
     print(json.dumps(actions, indent=2, default=str))
     print("# ACTIONS_JSON_END")
