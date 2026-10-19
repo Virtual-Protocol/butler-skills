@@ -1357,3 +1357,12 @@ def test_status_line_that_reads_right_passes(tmp_path):
 def test_a_template_without_a_status_line_warns(tmp_path):
     ok, _, warnings = _status_issues(tmp_path, None, "for t in bevo.ticks():\n    bevo.log('x')\n")
     assert ok and any("no status line" in w for w in warnings)
+
+
+def test_status_state_may_be_a_choice_of_literals(tmp_path):
+    ok, errors, _ = _status_issues(
+        tmp_path,
+        {"starting": "First buy {next}", "a": "A · next buy {next}"},
+        "for t in bevo.ticks():\n    bevo.status('a' if t else 'b')\n",
+    )
+    assert not ok and any('reports "b"' in e for e in errors)

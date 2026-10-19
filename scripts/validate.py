@@ -613,7 +613,7 @@ STATUS_PLACEHOLDER_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
 STATUS_MAX_TEXT = 120
 STATUS_MAX_STATES = 12
 #: The row fits about this many characters after "On · ", measured with {next}
-#: written as the app writes a time a week away ("Mon 9am") and each value at five.
+#: as its longest phrase ("in 59 min") and each value at five characters.
 STATUS_FITS = 46
 #: Values every status line may use, whatever the code passes.
 STATUS_BUILTINS = {"next", "ran", "day", "runs_today"}
@@ -624,8 +624,19 @@ STATUS_RESTING = re.compile(r"^(done|finished|complete|completed|stopped|ended|e
 STATUS_LEAD_INS = {"next", "at", "by", "on", "the", "in", "from", "until", "till", "·", "—", "-"}
 
 
+def _literal_states(node) -> list[str] | None:
+    """The state names an argument can be: a literal, or `"a" if x else "b"`
+    chains of literals. None when any branch is not a literal."""
+    if isinstance(node, ast.IfExp):
+        body, orelse = _literal_states(node.body), _literal_states(node.orelse)
+        return None if body is None or orelse is None else body + orelse
+    value = _const_str(node)
+    return None if value is None else [value]
+
+
 def _status_calls(tree: ast.AST) -> list[tuple[int, str | None, set[str]]]:
-    """Every bevo.status(...) call: (line, literal state or None, value names)."""
+    """Every bevo.status(...) call, one row per state it can report:
+    (line, literal state or None, value names)."""
     calls = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -634,9 +645,10 @@ def _status_calls(tree: ast.AST) -> list[tuple[int, str | None, set[str]]]:
         if not (isinstance(func, ast.Attribute) and func.attr == "status"
                 and isinstance(func.value, ast.Name) and func.value.id == "bevo"):
             continue
-        state = _const_str(node.args[0]) if node.args else None
+        states = _literal_states(node.args[0]) if node.args else None
         names = {kw.arg for kw in node.keywords if kw.arg and kw.arg not in ("last", "next_at")}
-        calls.append((node.lineno, state, names))
+        for state in states or [None]:
+            calls.append((node.lineno, state, names))
     return calls
 
 
@@ -719,7 +731,7 @@ def check_status(template_dir: Path, recipe: dict, standalone: bool, issues: Iss
             if not lead:
                 issues.error(where, f"\"{part.strip()}\" does not say what happens at that time "
                                     "(\"next buy {next}\", not \"next {next}\")")
-        filled = STATUS_PLACEHOLDER_RE.sub(lambda m: "Mon 9am" if m.group(1) == "next" else "12345", text)
+        filled = STATUS_PLACEHOLDER_RE.sub(lambda m: "in 59 min" if m.group(1) == "next" else "12345", text)
         if len(filled) > STATUS_FITS:
             issues.error(where, f"is about {len(filled)} characters filled; the row fits {STATUS_FITS}")
 
