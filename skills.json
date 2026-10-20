@@ -12,6 +12,11 @@
       "ref": "v1.0.1"
     },
     {
+      "name": "canaryguard",
+      "repo": "https://github.com/ak10082247-max/butler-skill-canaryguard",
+      "ref": "v1.0.0"
+    },
+    {
       "name": "options-trading",
       "repo": "https://github.com/mamamatcha/butler-skill-yield-notes",
       "ref": "v2.4.0"
@@ -20,6 +25,16 @@
       "name": "papertrade-xyz",
       "repo": "https://github.com/Virtual-Protocol/butler-skill-papertrade-xyz",
       "ref": "v1.3.0"
+    },
+    {
+      "name": "rugshield",
+      "repo": "https://github.com/ak10082247-max/butler-skill-rugshield",
+      "ref": "v1.0.0"
+    },
+    {
+      "name": "stealthguard",
+      "repo": "https://github.com/ak10082247-max/butler-skill-stealthguard",
+      "ref": "v1.0.0"
     }
   ]
 }
