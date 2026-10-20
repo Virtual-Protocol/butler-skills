@@ -12,14 +12,21 @@
       "ref": "main"
     },
     {
+      "name": "derive-account",
+      "repo": "https://github.com/mamamatcha/butler-skill-yield-notes",
+      "ref": "v2.4.0",
+      "path": "templates/derive-account"
+    },
+    {
       "name": "index-rebalance",
       "repo": "https://github.com/mamamatcha/butler-skill-index-rebalance",
       "ref": "main"
     },
     {
       "name": "options-lifecycle",
-      "repo": "https://github.com/mamamatcha/butler-skill-options-lifecycle",
-      "ref": "v5"
+      "repo": "https://github.com/mamamatcha/butler-skill-yield-notes",
+      "ref": "v2.4.0",
+      "path": "templates/options-lifecycle"
     },
     {
       "name": "x-portfolio",
