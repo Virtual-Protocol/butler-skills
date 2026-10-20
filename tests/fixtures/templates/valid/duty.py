@@ -22,6 +22,7 @@ def main():
             capture_output=True, text=True, timeout=180, check=False,
         )
         bevo.log(f"copied trade {trade.id} for {AMOUNT_USD}")
+        bevo.status("copied")
 
 
 if __name__ == "__main__":
