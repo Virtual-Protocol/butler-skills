@@ -652,6 +652,10 @@ STATUS_BUILTINS = {"next", "ran", "day", "runs_today"}
 STATUS_RESTING = re.compile(r"^(done|finished|complete|completed|stopped|ended|expired|exhausted|closed|paused|blocked)(_|$)")
 #: Words that only lead into a time — "next {next}" still says nothing about what happens then.
 STATUS_LEAD_INS = {"next", "at", "by", "on", "the", "in", "from", "until", "till", "·", "—", "-"}
+#: Listed templates published before a status line was required: they warn
+#: instead of failing until they add one. Never add to this set — a template
+#: leaves it when it words its row (2026-10-20: x-portfolio@v2 has none).
+STATUS_OPTIONAL_LISTED = {"x-portfolio"}
 
 
 def _literal_states(node) -> list[str] | None:
@@ -685,8 +689,10 @@ def _status_calls(tree: ast.AST) -> list[tuple[int, str | None, set[str]]]:
 def check_status(template_dir: Path, recipe: dict, standalone: bool, issues: Issues) -> None:
     """recipe.json `status` against the bevo.status() calls in duty.py.
 
-    Missing altogether is a warning, not a refusal, so a listed template
-    published before this rule keeps publishing; the standard requires both.
+    Missing altogether is a refusal (2026-10-20): the row is all the owner
+    sees of a duty, and without it it can only say when the duty last ran.
+    Only a listed template published before the rule (STATUS_OPTIONAL_LISTED)
+    warns instead, so it keeps publishing until it adds one.
     """
     duty = template_dir / "duty.py"
     try:
@@ -698,8 +704,12 @@ def check_status(template_dir: Path, recipe: dict, standalone: bool, issues: Iss
 
     if status is None and not calls:
         msg = ("no status line: duty.py never calls bevo.status() and recipe.json has no `status`, "
-               "so the owner's Duties row can only say when it last ran")
-        issues.warn("status", msg)
+               "so the owner's Duties row can only say when it last ran — add a `status` with at "
+               "least a \"starting\" line (TEMPLATE_STANDARD.md § Status line)")
+        if recipe.get("id") in STATUS_OPTIONAL_LISTED:
+            issues.warn("status", msg)
+        else:
+            issues.error("status", msg)
         return
     if status is None:
         issues.error("status", "duty.py calls bevo.status() but recipe.json has no `status` to word it")
@@ -750,9 +760,6 @@ def check_status(template_dir: Path, recipe: dict, standalone: bool, issues: Iss
         for name in STATUS_PLACEHOLDER_RE.findall(text):
             if name not in available:
                 issues.error(where, f"uses {{{name}}}, which neither the code nor a setting supplies")
-        if timer and "{next}" not in text and not STATUS_RESTING.match(state):
-            issues.error(where, "never says when the duty acts next ({next}); a state it never runs after "
-                                "is named done/finished/paused/...")
         for part in text.split(" · "):
             at = part.find("{next}")
             if at == -1:
@@ -764,6 +771,23 @@ def check_status(template_dir: Path, recipe: dict, standalone: bool, issues: Iss
         filled = STATUS_PLACEHOLDER_RE.sub(lambda m: "in 59 min" if m.group(1) == "next" else "12345", text)
         if len(filled) > STATUS_FITS:
             issues.error(where, f"is about {len(filled)} characters filled; the row fits {STATUS_FITS}")
+
+    # A timer duty says when it acts next: on its first line, and on at least
+    # one line after the first run — not on every line. Every line was too
+    # much for a timer duty that really waits on a price: no wording fit both
+    # that and the row's width (the container's farm duty, 2026-10-20; the
+    # container holds the same rule, wordingIssues in status-template.mjs).
+    if timer:
+        def has_next(entry) -> bool:
+            parts = [entry] if isinstance(entry, str) else [entry.get("last"), entry.get("next")] if isinstance(entry, dict) else []
+            return any(isinstance(p, str) and "{next}" in p for p in parts)
+        starting = status.get("starting")
+        if starting is not None and not has_next(starting):
+            issues.error("status.starting", "never says when the first run is ({next})")
+        running = [state for state in status if state != "starting" and not STATUS_RESTING.match(state)]
+        if running and not any(has_next(status[state]) for state in running):
+            issues.error("status", "no line after the first run says when the duty acts next ({next}); put it "
+                                   "on the state shown most, or name a state it never runs after done/finished/paused/...")
 
 
 def check_duty_py(template_dir: Path, recipe: dict, issues: Issues) -> None:

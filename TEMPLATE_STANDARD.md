@@ -214,11 +214,14 @@ bevo.status("bought", n=bought, total=TOTAL)
 
 | Rule | Why |
 | --- | --- |
-| a `starting` line | it is all the row shows until the first run |
+| a `status` at all, with a `starting` line | it is all the row shows until the first run; without one the row can only say when the duty last ran |
 | every state `duty.py` reports is worded; the state is a literal string | otherwise the row keeps its last line |
-| on a timer, every state says when it acts next with `{next}` — except one named `done`, `finished`, `paused`, `blocked`, … | the owner's first question about a scheduled duty |
+| on a timer, `starting` says when the first run is with `{next}`, and at least one later state says when it acts next — not every state; one named `done`, `finished`, `paused`, `blocked`, … never needs it | the owner's first question about a scheduled duty — but a timer duty that waits on a price ("Watching for $0.10") need not fit a time on every line |
 | `{next}` has a word before it saying what happens then: `next buy {next}`, never `next {next}` or a bare `{next}` | "· 7am" alone means nothing |
 | about 46 characters once filled | the row is one line; the rest is cut |
+
+A template listed before `status` was required (only `x-portfolio`) still publishes without one,
+with a warning, until it adds one.
 
 Keep it to what the owner wants at a glance: the latest result or progress, and what comes next.
 Never repeat the title (its token, city or schedule) — it sits right above the line.

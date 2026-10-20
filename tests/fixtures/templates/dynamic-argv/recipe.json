@@ -8,5 +8,6 @@
     "properties": {
       "AMOUNT_USD": { "type": "number", "default": 5 }
     }
-  }
+  },
+  "status": { "starting": "First buy {next}" }
 }

@@ -56,9 +56,13 @@ def render(name: str, owner: str) -> str:
 gh repo create {owner}/{repo} --public --clone
 cd {repo}
 #    Write recipe.json (id "{name}", an integer version, a description, the
-#    trigger kinds it accepts, and a params JSON-Schema), duty.py (the whole
-#    program — waiters, `bevo.*` reads, and money through a shelled
-#    `acp trade ... --idempotency-key ...`) and README.md.
+#    trigger kinds it accepts, a params JSON-Schema, and a `status` that words
+#    each state duty.py reports — at least a "starting" line; on a timer,
+#    "starting" and one later state say when it acts next with {{next}}),
+#    duty.py (the whole program — waiters, `bevo.*` reads, `bevo.status("<state>",
+#    value=...)` after each run, and money through a shelled
+#    `acp trade ... --idempotency-key ...`) and README.md. The status line is
+#    required: see TEMPLATE_STANDARD.md § Status line.
 
 # 2. Validate locally — no Butler account, container or registry checkout
 #    needed; the hub publishes its validator and replay harness as standalone files

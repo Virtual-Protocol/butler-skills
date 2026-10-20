@@ -105,6 +105,7 @@ def _write_params_template(tmp_path, tid: str, params: dict):
         "version": 1,
         "description": "A conditional-params fixture template.",
         "params": params,
+        "status": {"starting": "Waiting for the first event"},
     }
     (template_dir / "recipe.json").write_text(json.dumps(recipe))
     (template_dir / "duty.py").write_text("import bevo\nbevo.log('x')\n")
@@ -1401,9 +1402,29 @@ def test_status_line_that_reads_right_passes(tmp_path):
     assert ok, errors
 
 
-def test_a_template_without_a_status_line_warns(tmp_path):
+def test_a_template_without_a_status_line_is_refused(tmp_path):
+    ok, errors, _ = _status_issues(tmp_path, None, "for t in bevo.ticks():\n    bevo.log('x')\n")
+    assert not ok and any("no status line" in e for e in errors)
+
+
+def test_a_listed_template_from_before_the_rule_only_warns(tmp_path, monkeypatch):
+    monkeypatch.setattr(validate, "STATUS_OPTIONAL_LISTED", {"foo"})
     ok, _, warnings = _status_issues(tmp_path, None, "for t in bevo.ticks():\n    bevo.log('x')\n")
     assert ok and any("no status line" in w for w in warnings)
+
+
+# The container's farm duty, a timer duty that waits on a price, had no
+# wording that carried {next} on every state inside the row's width
+# (2026-10-20): {next} goes on the first line and one later line.
+def test_a_timer_duty_needs_next_on_its_first_line_and_one_later_line_only(tmp_path):
+    code = "for t in bevo.ticks():\n    bevo.status('waiting')\n    bevo.status('below')\n"
+    waits = {"starting": "First check {next}", "waiting": "Watching for $0.10 · next check {next}", "below": "Under target"}
+    ok, errors, _ = _status_issues(tmp_path, waits, code)
+    assert ok, errors
+    ok, errors, _ = _status_issues(tmp_path, {**waits, "waiting": "Watching for $0.10"}, code)
+    assert not ok and any("no line after the first run says when" in e for e in errors)
+    ok, errors, _ = _status_issues(tmp_path, {**waits, "starting": "Getting ready"}, code)
+    assert not ok and any("never says when the first run is" in e for e in errors)
 
 
 def test_status_state_may_be_a_choice_of_literals(tmp_path):
