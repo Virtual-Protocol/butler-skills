@@ -1413,3 +1413,36 @@ def test_status_state_may_be_a_choice_of_literals(tmp_path):
         "for t in bevo.ticks():\n    bevo.status('a' if t else 'b')\n",
     )
     assert not ok and any('reports "b"' in e for e in errors)
+
+
+def _platform_template(tmp_path: Path, duty: str, readme: str = "# fixture\n") -> Path:
+    template_dir = tmp_path / "foo"
+    _write_minimal_template(template_dir, "foo", triggers=[])
+    (template_dir / "duty.py").write_text("import bevo\n" + duty + "bevo.status('ran')\n")
+    (template_dir / "README.md").write_text(readme)
+    return template_dir
+
+
+def _url_errors(template_dir: Path) -> list[str]:
+    _, result = validate.validate_template(template_dir, set(), json_mode=True, standalone=True)
+    return [e for e in result["errors"] if e.startswith("url-lint")]
+
+
+def test_the_site_a_duty_keeps_a_platforms_row_for_is_allowed(tmp_path):
+    d = _platform_template(tmp_path, 'bevo.platform_balance("https://www.derive.xyz", "Derive", 12.5,\n'
+                                     '                      account="0xabc")\n',
+                           readme="# fixture\n\nThe row for https://www.derive.xyz.\n")
+    assert _url_errors(d) == []
+    d2 = _platform_template(tmp_path / "kw", 'bevo.platform_balance(site="https://stake.com/", name="Stake", usd=1)\n')
+    assert _url_errors(d2) == []
+
+
+def test_only_that_literal_origin_is_allowed(tmp_path):
+    # Another host, the same host with a path, and a site passed through a variable.
+    d = _platform_template(tmp_path, 'bevo.platform_balance("https://www.derive.xyz", "Derive", 1)\n'
+                                     'bevo.log("https://www.derive.xyz.evil.example")\n'
+                                     'bevo.log("https://www.derive.xyz/portfolio")\n')
+    errors = _url_errors(d)
+    assert len(errors) == 2, errors
+    v = _platform_template(tmp_path / "var", 'SITE = "https://stake.com"\nbevo.platform_balance(SITE, "Stake", 1)\n')
+    assert len(_url_errors(v)) == 1

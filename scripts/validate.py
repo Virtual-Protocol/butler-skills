@@ -548,13 +548,43 @@ def check_reserved(rid: str, reserved: set[str], issues: Issues) -> None:
         )
 
 
-def check_secrets_and_urls(full_text: str, issues: Issues) -> None:
+#: A Platforms row's site: an https origin and nothing after it.
+PLATFORM_SITE_RE = re.compile(r"^https://[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+/?$")
+
+
+def platform_sites(template_dir: Path) -> set[str]:
+    """The sites duty.py passes to bevo.platform_balance() as a literal first argument.
+
+    A Platforms row is keyed by its site, and bevo-platforms takes only a full https
+    URL, so a template that keeps one has to name it. That origin, exactly, is the one
+    outside URL a template may carry; a variable, a path or another host is not."""
+    duty = template_dir / "duty.py"
+    try:
+        tree = ast.parse(duty.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError):
+        return set()
+    sites: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or _attr_call_name(node.func) != ("bevo", "platform_balance"):
+            continue
+        args = node.args[:1] + [kw.value for kw in node.keywords if kw.arg == "site"]
+        for arg in args:
+            site = _const_str(arg)
+            if site and PLATFORM_SITE_RE.match(site):
+                sites.add(site.rstrip("/"))
+    return sites
+
+
+def check_secrets_and_urls(full_text: str, issues: Issues, sites: set[str] = frozenset()) -> None:
     for pat in SECRET_PATTERNS:
         m = pat.search(full_text)
         if m:
             issues.error("secrets-lint", f"looks like a credential: {m.group(0)[:12]}...")
     for m in URL_RE.finditer(full_text):
         url = m.group(0)
+        # URL_RE runs on through quotes and commas: "https://x.com", is one match.
+        if url.rstrip("\"',;.").rstrip("/") in sites:
+            continue
         if not any(url.startswith(p) for p in ALLOWED_URL_PREFIXES):
             issues.error("url-lint", f"disallowed URL {url!r} (only github.com/Virtual-Protocol links allowed)")
     if "​" in full_text:
@@ -2015,7 +2045,7 @@ def validate_template(
         p = template_dir / name
         if p.is_file():
             full_text += p.read_text(encoding="utf-8", errors="replace") + "\n"
-    check_secrets_and_urls(full_text, issues)
+    check_secrets_and_urls(full_text, issues, platform_sites(template_dir))
 
     cost = prompt_cost(template_name, recipe.get("description", "") or "", f"templates/{template_name}/recipe.json")
     if not json_mode:

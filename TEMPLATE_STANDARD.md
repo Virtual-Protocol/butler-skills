@@ -258,7 +258,9 @@ what unit, wherever a bare number is ambiguous.
 - No secrets (`brt_...`, `sk-...`, 64-hex strings, JWTs) anywhere in `recipe.json`,
   `duty.py` or `README.md`.
 - No URLs except `github.com/Virtual-Protocol` / `raw.githubusercontent.com/Virtual-Protocol`
-  links.
+  links, and one exception: the site a duty keeps a wallet Platforms row for. When
+  `duty.py` passes an https origin as a literal to `bevo.platform_balance("https://stake.com", ...)`,
+  that origin (no path) may appear in the template.
 - Every `templates.json` entry is an `https://github.com/<owner>/<repo>` URL with a ref
   that resolves on the remote (`tests/test_templates_registry.py`,
   `scripts/check_registry.py`).
