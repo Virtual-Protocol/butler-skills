@@ -81,7 +81,7 @@ A **template** is that program, packaged as a reusable, versioned bundle at the 
 its own git repository:
 
 ```
-recipe.json     the manifest — id, version, description, triggers, params
+recipe.json     the manifest — id, version, description, triggers, params, status
 duty.py         the whole program
 README.md       what the program does — read by Butler, not by you
 ```
@@ -304,7 +304,7 @@ model most containers do not have, and are refused there: do not use them in a t
    `https://github.com/<owner>/<repo>` links) with `recipe.json`, `duty.py` and
    `README.md` at its root. `scripts/new_skill.py <id>` prints a starting checklist
    through the one-line registry PR (`scripts/new_skill.py <name> --skill` does the same
-   for a skill). Where it differs from steps 4–5 — its replay runs one fixture with no
+   for a skill). Where it differs from steps 5–6 — its replay runs one fixture with no
    `--params` — follow the steps here.
 2. Design the settings first: what does `params` need to say, and what does each
    default to? A template with no required params (everything has a sane default) is the
@@ -318,7 +318,15 @@ model most containers do not have, and are refused there: do not use them in a t
    `Virtual-Protocol`'s GitHub, so read outside data through `bevo.read` and `bevo.rpc`.
    That is a lint, not a sandbox: `subprocess` is checked only for `acp` money commands,
    so whatever else a template shells is the maintainers' review.
-4. Validate and replay locally — no registry checkout, no container, no Butler account:
+   Report where the duty stands after each run with `bevo.status("<state>", value=...)` —
+   a state name and the numbers it measured, never words.
+4. Word the owner's status line in `recipe.json` `status`, one line per state `duty.py`
+   reports, plus a `"starting"` line for before the first run; on a timer, `"starting"` and
+   at least one later state say when it acts next (`"First buy {next}"`, `"next buy {next}"`).
+   It is required — the Duties row is all the owner sees of a duty, and without it the row
+   can only say when it last ran. The rules (about 46 characters, a word before every
+   `{next}`, …) are in [TEMPLATE_STANDARD.md § Status line](TEMPLATE_STANDARD.md#status-line).
+5. Validate and replay locally — no registry checkout, no container, no Butler account:
 
    ```bash
    curl -sSLO https://virtual-protocol.github.io/butler-skills/tools/validate.py
@@ -351,7 +359,7 @@ model most containers do not have, and are refused there: do not use them in a t
    `bevo.read()` path that is not a `/butler-read` route, comparing an event's kind to one
    no trigger delivers, a `notify()` that asks a question, and a model answer used inside
    a command.
-5. Open a PR here adding one row to `templates.json` (kept sorted by name):
+6. Open a PR here adding one row to `templates.json` (kept sorted by name):
 
    ```json
    { "name": "<id>", "repo": "https://github.com/<you>/butler-skill-<id>", "ref": "main" }
