@@ -2151,21 +2151,28 @@ def check_listed_skill_dependencies(skill_dirs: list[Path]) -> dict[str, list[st
 
 
 def _clone_entries(rows: list[dict], work_dir: Path) -> list[Path]:
+    """One directory per entry, named after it. An entry with a `path` (a template
+    living in a folder of a bigger repo) is cloned under `.repos/`, which no entry
+    name can be, and its folder is what gets validated."""
     dirs: list[Path] = []
     for entry in rows:
-        name, repo, ref = entry["name"], entry["repo"], entry.get("ref") or "main"
-        dest = work_dir / name
+        name, repo, ref, sub = entry["name"], entry["repo"], entry.get("ref") or "main", entry.get("path")
+        checkout = work_dir / ".repos" / name if sub else work_dir / name
         try:
             subprocess.run(
-                ["git", "clone", "--quiet", "--depth", "1", "--branch", ref, repo, str(dest)],
+                ["git", "clone", "--quiet", "--depth", "1", "--branch", ref, repo, str(checkout)],
                 capture_output=True, text=True, check=True, timeout=300,
             )
         except subprocess.CalledProcessError as e:
             raise SystemExit(f"cannot clone {repo} at {ref!r}: {e.stderr.strip() or e}")
         except (OSError, subprocess.TimeoutExpired) as e:
             raise SystemExit(f"cannot clone {repo} at {ref!r}: {e}")
+        dest = checkout / sub if sub else checkout
+        if sub and (dest.name != name or not dest.resolve().is_relative_to(checkout.resolve())
+                    or not dest.is_dir()):
+            raise SystemExit(f"{repo} at {ref!r}: path {sub!r} must be a folder in the repo named {name!r}")
         dirs.append(dest)
-    return sorted(dirs)
+    return sorted(dirs, key=lambda d: d.name)
 
 
 def load_reserved() -> set[str]:

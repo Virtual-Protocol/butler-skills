@@ -114,6 +114,36 @@ def test_source_block_pins_the_resolved_commit_and_short_repo(tmp_path):
     assert src["commit"] == head(d)
 
 
+def test_a_template_in_a_folder_is_cloned_and_indexed_from_that_folder(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / "templates").mkdir(parents=True)
+    shutil.move(str(make_checkout(tmp_path)), str(repo / "templates" / "dca"))
+    shutil.rmtree(repo / "templates" / "dca" / ".git")
+    (repo / "SKILL.md").write_text("---\nname: a-skill\n---\n")
+    git("init", "-q", "-b", "main", cwd=repo)
+    git("add", "-A", cwd=repo)
+    git("commit", "-q", "-m", "init", cwd=repo)
+    entry = dict(ENTRY, repo=repo.as_uri(), path="templates/dca")
+
+    work = tmp_path / "work"
+    work.mkdir()
+    d = build_index.clone_template(entry, work / "dca")
+    assert d.name == "dca" and (d / "recipe.json").exists()
+    row = build_index.collect_template(d, entry)
+    assert row["source"]["path"] == "templates/dca"
+    assert row["source"]["commit"] == head(repo)
+    assert {f["path"] for f in row["files"]} == {"recipe.json", "duty.py", "README.md"}
+
+
+def test_a_path_with_no_template_in_it_fails_the_build(tmp_path):
+    repo = make_checkout(tmp_path)
+    entry = dict(ENTRY, repo=repo.as_uri(), path="templates/dca")
+    work = tmp_path / "work"
+    work.mkdir()
+    with pytest.raises(SystemExit):
+        build_index.clone_template(entry, work / "dca")
+
+
 def test_collect_template_carries_the_source_block(tmp_path):
     d = make_checkout(tmp_path)
     entry = build_index.collect_template(d, ENTRY)

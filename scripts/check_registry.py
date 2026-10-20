@@ -15,6 +15,9 @@ not a pinned tree:
   (d) the ref actually resolves on the remote (`git ls-remote`), so a typo
       fails here rather than at publish time
   (e) each file is sorted by name
+  (f) a template's optional `path`, the folder it lives in when its repo holds
+      more than one (a skill and the templates it files), is plain relative
+      segments ending in the template's own name
 
 What a container ends up trusting is the RESOLVED commit and per-file sha256
 that build_index.py writes into the index, not these files — the link is how
@@ -44,6 +47,9 @@ SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 MAX_SKILL_NAME = 64
 REF_RE = re.compile(r"^[A-Za-z0-9._/-]{1,100}$")
 REPO_RE = re.compile(r"^https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
+# One folder name inside a template's repo: no "." or "..", nothing hidden.
+PATH_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9._-]*$")
+MAX_PATH = 200
 
 
 def fail(msg: str) -> None:
@@ -65,15 +71,25 @@ def valid_template_name(name) -> bool:
     return bool(NAME_RE.match(str(name or "")))
 
 
+def valid_template_path(path, name) -> bool:
+    """A template's folder inside its repo: plain relative segments, ending in the
+    template's own name, so the checkout validated is still named after the entry."""
+    path = str(path)
+    parts = path.split("/")
+    return len(path) <= MAX_PATH and all(PATH_SEGMENT_RE.match(p) for p in parts) and parts[-1] == name
+
+
 def valid_skill_name(name) -> bool:
     return bool(SKILL_NAME_RE.match(str(name or ""))) and len(str(name)) <= MAX_SKILL_NAME
 
 
 def check_listing(
-    path: Path, key: str, noun: str, name_ok, offline: bool, owners: dict[str, str]
+    path: Path, key: str, noun: str, name_ok, offline: bool, owners: dict[str, str],
+    allow_path: bool = False,
 ) -> int:
     """Check one listing file; returns the number of problems. `owners` maps every
-    name seen so far to the file that listed it, across both files."""
+    name seen so far to the file that listed it, across both files. `allow_path` lets
+    a row name the folder its template lives in (templates.json only)."""
     if not path.exists():
         fail(f"{path.name} not found")
         return 1
@@ -104,9 +120,15 @@ def check_listing(
             fail(f"{name}: repo must be https://github.com/<owner>/<repo>, got {repo!r}"); problems += 1; continue
         if not REF_RE.match(str(ref)):
             fail(f"{name}: bad ref {ref!r}"); problems += 1; continue
+        sub = row.get("path")
+        if sub is not None and not allow_path:
+            fail(f"{name}: `path` is for templates.json only; a skill is its repo's root"); problems += 1; continue
+        if sub is not None and not valid_template_path(sub, name):
+            fail(f"{name}: path must be a folder in the repo ending in {name!r} (templates/{name}), got {sub!r}")
+            problems += 1; continue
         if not offline and not ref_exists(repo, ref):
             fail(f"{name}: {repo} has no ref {ref!r}"); problems += 1; continue
-        print(f"OK    {name} = {repo} @ {ref}")
+        print(f"OK    {name} = {repo} @ {ref}" + (f" : {sub}" if sub is not None else ""))
 
     if sorted(seen) != [r.get("name") for r in rows]:
         fail(f"{path.name} is not sorted by name"); problems += 1
@@ -119,7 +141,9 @@ def main() -> int:
     args = ap.parse_args()
 
     owners: dict[str, str] = {}
-    problems = check_listing(REGISTRY_PATH, "templates", "template id", valid_template_name, args.offline, owners)
+    problems = check_listing(
+        REGISTRY_PATH, "templates", "template id", valid_template_name, args.offline, owners, allow_path=True
+    )
     problems += check_listing(SKILLS_REGISTRY_PATH, "skills", "skill name", valid_skill_name, args.offline, owners)
     return 1 if problems else 0
 

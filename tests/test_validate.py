@@ -474,6 +474,53 @@ def test_clone_registry_templates_fails_loudly_on_a_ref_that_does_not_resolve(tm
     assert "no-such-ref" in str(e.value)
 
 
+def _make_repo_with_template_folder(root: Path, tid: str) -> str:
+    """A repo whose root is something else (here a skill) with the template in
+    templates/<tid>/, the shape a templates.json `path` points into."""
+    (root / "SKILL.md").parent.mkdir(parents=True, exist_ok=True)
+    (root / "SKILL.md").write_text("---\nname: not-the-template\n---\n")
+    _write_minimal_template(root / "templates" / tid, tid, triggers=[])
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com",
+        "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.com",
+    }
+    for cmd in (["init", "-q", "-b", "main"], ["add", "-A"], ["commit", "-q", "-m", "init"]):
+        subprocess.run(["git", *cmd], cwd=str(root), check=True, capture_output=True, env=env)
+    return root.as_uri()
+
+
+def test_all_validates_a_template_listed_with_a_path_as_that_folder(tmp_path, monkeypatch):
+    repo = _make_repo_with_template_folder(tmp_path / "src", "foo")
+    registry = tmp_path / "templates.json"
+    registry.write_text(json.dumps({"templates": [
+        {"name": "bar", "repo": _make_template_repo(tmp_path / "src-bar", "bar"), "ref": "main"},
+        {"name": "foo", "repo": repo, "ref": "main", "path": "templates/foo"},
+    ]}))
+    monkeypatch.setattr(validate, "REGISTRY_PATH", registry)
+    work = tmp_path / "work"
+    work.mkdir()
+    dirs = validate.clone_registry_templates(work)
+    assert [d.name for d in dirs] == ["bar", "foo"]
+    assert dirs[1].as_posix().endswith("/templates/foo")
+    ok, result = validate.validate_template(dirs[1], set(), json_mode=True, standalone=False)
+    assert ok, result["errors"]
+
+
+def test_a_path_that_is_not_in_the_repo_fails_loudly(tmp_path, monkeypatch):
+    repo = _make_repo_with_template_folder(tmp_path / "src", "foo")
+    registry = tmp_path / "templates.json"
+    registry.write_text(json.dumps({"templates": [
+        {"name": "foo", "repo": repo, "ref": "main", "path": "elsewhere/foo"},
+    ]}))
+    monkeypatch.setattr(validate, "REGISTRY_PATH", registry)
+    work = tmp_path / "work"
+    work.mkdir()
+    with pytest.raises(SystemExit) as e:
+        validate.clone_registry_templates(work)
+    assert "elsewhere/foo" in str(e.value)
+
+
 def test_the_local_valid_fixture_passes_in_both_modes(template_checkout):
     reserved = validate.load_reserved()
     ok, result = validate.validate_template(template_checkout, reserved, json_mode=True)

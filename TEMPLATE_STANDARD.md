@@ -14,7 +14,8 @@ of what a template does.
 
 ## Layout
 
-A template is its own git repository, with three files at the **repository root**:
+A template is its own git repository, with three files at the **repository root**, or a
+folder of a repository it shares, such as the skill that files it (see `path` below):
 
 ```
 recipe.json     required — the manifest: id, version, description, triggers, params
@@ -47,6 +48,7 @@ registry CI.
 | `name` | a valid template id (`^[a-z0-9][a-z0-9-]{1,63}$`), listed once, and must equal the `id` the repo's own `recipe.json` declares (`scripts/validate.py --all` checks this by cloning into a directory named after the entry) |
 | `repo` | `https://github.com/<owner>/<repo>` — never ssh, another host, a local path, credentials, a query or a fragment |
 | `ref` | a plain branch or tag name (`^[A-Za-z0-9._/-]{1,100}$`) |
+| `path` | optional: the folder holding the template when it is not the repo's root, e.g. `templates/derive-account` beside a skill's `SKILL.md`. Plain relative segments (letters, digits, `.`, `_`, `-`, none starting with `.`), at most 200 characters, and the last one must equal `name`, so the folder validated is still named after the entry. The tree rules apply to that folder. Templates only: a skill is always its repo's root |
 | Ref resolves | the ref exists on the remote (`git ls-remote`); `--offline` skips this one check |
 | Order | the file is sorted by `name` |
 
