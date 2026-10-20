@@ -4,12 +4,12 @@
     {
       "name": "butler-app-checkout",
       "repo": "https://github.com/Virtual-Protocol/butler-skill-app-checkout",
-      "ref": "v2.1.5"
+      "ref": "v2.1.6"
     },
     {
       "name": "butler-grabfood",
       "repo": "https://github.com/Virtual-Protocol/butler-skill-grabfood",
-      "ref": "v1.0.0"
+      "ref": "v1.0.1"
     },
     {
       "name": "options-trading",
