@@ -200,3 +200,24 @@ def test_online_checks_skill_refs_too(monkeypatch, tmp_path):
     calls: list[tuple[str, str]] = []
     assert run(monkeypatch, tmp_path, GOOD, ref_exists=calls, skill_rows=SKILLS) == 0
     assert calls == [(s["repo"], s["ref"]) for s in GOOD + SKILLS]
+
+
+def test_a_template_may_live_in_a_folder_named_after_it(monkeypatch, tmp_path, capsys):
+    rows = [{"name": "tmpl-alpha", "repo": "https://github.com/someone/butler-skill-x", "ref": "v2.4.0",
+             "path": "templates/tmpl-alpha"}]
+    assert run(monkeypatch, tmp_path, rows, "--offline") == 0
+    assert "OK    tmpl-alpha = https://github.com/someone/butler-skill-x @ v2.4.0 : templates/tmpl-alpha" in capsys.readouterr().out
+
+
+def test_a_template_path_must_end_in_its_name_and_stay_in_the_repo(monkeypatch, tmp_path, capsys):
+    for bad in ("templates/other", "templates/../tmpl-alpha", "/tmpl-alpha", "templates/.tmpl-alpha",
+                "templates//tmpl-alpha", "", "tmpl-alpha/"):
+        rows = [{"name": "tmpl-alpha", "repo": "https://github.com/someone/x", "ref": "main", "path": bad}]
+        assert run(monkeypatch, tmp_path, rows, "--offline") == 1, bad
+        assert "tmpl-alpha: path must be a folder in the repo ending in 'tmpl-alpha'" in capsys.readouterr().out
+
+
+def test_a_skill_is_always_its_repo_root(monkeypatch, tmp_path, capsys):
+    rows = [{"name": "zeta", "repo": "https://github.com/someone/zeta", "ref": "main", "path": "skills/zeta"}]
+    assert run(monkeypatch, tmp_path, GOOD, "--offline", skill_rows=rows) == 1
+    assert "zeta: `path` is for templates.json only" in capsys.readouterr().out

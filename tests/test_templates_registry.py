@@ -51,8 +51,10 @@ def test_registry_exists_and_is_well_formed():
 
 def test_every_entry_is_a_name_and_an_https_github_link():
     for row in raw_templates():
-        assert set(row) <= {"name", "repo", "ref"}, f"{row}: unexpected key"
+        assert set(row) <= {"name", "repo", "ref", "path"}, f"{row}: unexpected key"
         name, repo, ref = row.get("name"), row.get("repo"), row.get("ref")
+        if "path" in row:
+            assert str(row["path"]).split("/")[-1] == name, f"{name}: path {row['path']!r} must end in its name"
         assert NAME_RE.match(str(name)), f"{name!r} is not a valid template id"
         assert HTTPS_GITHUB_RE.match(str(repo)), f"{name}: repo {repo!r} must be https://github.com/<owner>/<repo>"
         assert not str(repo).endswith(".git"), f"{name}: record the plain repo URL, not {repo!r}"

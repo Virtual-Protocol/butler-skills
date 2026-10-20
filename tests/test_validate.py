@@ -474,6 +474,53 @@ def test_clone_registry_templates_fails_loudly_on_a_ref_that_does_not_resolve(tm
     assert "no-such-ref" in str(e.value)
 
 
+def _make_repo_with_template_folder(root: Path, tid: str) -> str:
+    """A repo whose root is something else (here a skill) with the template in
+    templates/<tid>/, the shape a templates.json `path` points into."""
+    (root / "SKILL.md").parent.mkdir(parents=True, exist_ok=True)
+    (root / "SKILL.md").write_text("---\nname: not-the-template\n---\n")
+    _write_minimal_template(root / "templates" / tid, tid, triggers=[])
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com",
+        "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.com",
+    }
+    for cmd in (["init", "-q", "-b", "main"], ["add", "-A"], ["commit", "-q", "-m", "init"]):
+        subprocess.run(["git", *cmd], cwd=str(root), check=True, capture_output=True, env=env)
+    return root.as_uri()
+
+
+def test_all_validates_a_template_listed_with_a_path_as_that_folder(tmp_path, monkeypatch):
+    repo = _make_repo_with_template_folder(tmp_path / "src", "foo")
+    registry = tmp_path / "templates.json"
+    registry.write_text(json.dumps({"templates": [
+        {"name": "bar", "repo": _make_template_repo(tmp_path / "src-bar", "bar"), "ref": "main"},
+        {"name": "foo", "repo": repo, "ref": "main", "path": "templates/foo"},
+    ]}))
+    monkeypatch.setattr(validate, "REGISTRY_PATH", registry)
+    work = tmp_path / "work"
+    work.mkdir()
+    dirs = validate.clone_registry_templates(work)
+    assert [d.name for d in dirs] == ["bar", "foo"]
+    assert dirs[1].as_posix().endswith("/templates/foo")
+    ok, result = validate.validate_template(dirs[1], set(), json_mode=True, standalone=False)
+    assert ok, result["errors"]
+
+
+def test_a_path_that_is_not_in_the_repo_fails_loudly(tmp_path, monkeypatch):
+    repo = _make_repo_with_template_folder(tmp_path / "src", "foo")
+    registry = tmp_path / "templates.json"
+    registry.write_text(json.dumps({"templates": [
+        {"name": "foo", "repo": repo, "ref": "main", "path": "elsewhere/foo"},
+    ]}))
+    monkeypatch.setattr(validate, "REGISTRY_PATH", registry)
+    work = tmp_path / "work"
+    work.mkdir()
+    with pytest.raises(SystemExit) as e:
+        validate.clone_registry_templates(work)
+    assert "elsewhere/foo" in str(e.value)
+
+
 def test_the_local_valid_fixture_passes_in_both_modes(template_checkout):
     reserved = validate.load_reserved()
     ok, result = validate.validate_template(template_checkout, reserved, json_mode=True)
@@ -1366,3 +1413,36 @@ def test_status_state_may_be_a_choice_of_literals(tmp_path):
         "for t in bevo.ticks():\n    bevo.status('a' if t else 'b')\n",
     )
     assert not ok and any('reports "b"' in e for e in errors)
+
+
+def _platform_template(tmp_path: Path, duty: str, readme: str = "# fixture\n") -> Path:
+    template_dir = tmp_path / "foo"
+    _write_minimal_template(template_dir, "foo", triggers=[])
+    (template_dir / "duty.py").write_text("import bevo\n" + duty + "bevo.status('ran')\n")
+    (template_dir / "README.md").write_text(readme)
+    return template_dir
+
+
+def _url_errors(template_dir: Path) -> list[str]:
+    _, result = validate.validate_template(template_dir, set(), json_mode=True, standalone=True)
+    return [e for e in result["errors"] if e.startswith("url-lint")]
+
+
+def test_the_site_a_duty_keeps_a_platforms_row_for_is_allowed(tmp_path):
+    d = _platform_template(tmp_path, 'bevo.platform_balance("https://www.derive.xyz", "Derive", 12.5,\n'
+                                     '                      account="0xabc")\n',
+                           readme="# fixture\n\nThe row for https://www.derive.xyz.\n")
+    assert _url_errors(d) == []
+    d2 = _platform_template(tmp_path / "kw", 'bevo.platform_balance(site="https://stake.com/", name="Stake", usd=1)\n')
+    assert _url_errors(d2) == []
+
+
+def test_only_that_literal_origin_is_allowed(tmp_path):
+    # Another host, the same host with a path, and a site passed through a variable.
+    d = _platform_template(tmp_path, 'bevo.platform_balance("https://www.derive.xyz", "Derive", 1)\n'
+                                     'bevo.log("https://www.derive.xyz.evil.example")\n'
+                                     'bevo.log("https://www.derive.xyz/portfolio")\n')
+    errors = _url_errors(d)
+    assert len(errors) == 2, errors
+    v = _platform_template(tmp_path / "var", 'SITE = "https://stake.com"\nbevo.platform_balance(SITE, "Stake", 1)\n')
+    assert len(_url_errors(v)) == 1

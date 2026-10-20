@@ -32,7 +32,13 @@
             "properties": {
               "repo": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
               "ref": { "type": "string", "pattern": "^[A-Za-z0-9._/-]{1,100}$" },
-              "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" }
+              "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+              "path": {
+                "type": "string",
+                "maxLength": 200,
+                "pattern": "^([A-Za-z0-9_-][A-Za-z0-9._-]*/)*[A-Za-z0-9_-][A-Za-z0-9._-]*$",
+                "description": "The folder the template lives in, when its templates.json entry names one."
+              }
             }
           },
           "files": {

@@ -127,24 +127,31 @@ def load_skills_registry(path: Path | None = None) -> list[dict]:
 
 
 def clone_entry(entry: dict, dest: Path, required_file: str) -> Path:
-    """Shallow-clone one registry entry at its ref into `dest`.
+    """Shallow-clone one registry entry at its ref, and return the directory
+    holding it: `dest` itself, or with a `path`, that folder of a clone kept
+    beside it (under `.repos/`, which no entry name can be).
 
     The ref may be a branch or a tag; `--depth 1 --branch <ref>` resolves
     either. What the build pins afterwards is the commit this produced, not
     the ref, so a branch that moves changes the index on the next build."""
-    repo, ref = entry["repo"], entry.get("ref") or "main"
+    repo, ref, sub = entry["repo"], entry.get("ref") or "main", entry.get("path")
+    checkout = dest.parent / ".repos" / dest.name if sub else dest
     try:
         subprocess.run(
-            ["git", "clone", "--quiet", "--depth", "1", "--branch", ref, repo, str(dest)],
+            ["git", "clone", "--quiet", "--depth", "1", "--branch", ref, repo, str(checkout)],
             capture_output=True, text=True, check=True, timeout=300,
         )
     except subprocess.CalledProcessError as e:
         raise SystemExit(f"cannot clone {repo} at {ref!r}: {e.stderr.strip() or e}")
     except (OSError, subprocess.TimeoutExpired) as e:
         raise SystemExit(f"cannot clone {repo} at {ref!r}: {e}")
-    if not (dest / required_file).exists():
-        raise SystemExit(f"{repo} at {ref!r} has no {required_file} at its root")
-    return dest
+    root = checkout / sub if sub else checkout
+    # The folder keeps the entry's name, so the id check still compares against it.
+    if sub and (root.name != dest.name or not root.resolve().is_relative_to(checkout.resolve())):
+        raise SystemExit(f"{repo}: path {sub!r} must be a folder in the repo named {dest.name!r}")
+    if not (root / required_file).exists():
+        raise SystemExit(f"{repo} at {ref!r} has no {required_file} at {sub or 'its root'}")
+    return root
 
 
 def clone_template(entry: dict, dest: Path) -> Path:
@@ -197,11 +204,14 @@ def source_block(template_dir: Path, entry: dict) -> dict:
     entry, plus the commit that ref resolved to in the checkout this build
     cloned. The ref may be a branch, so the commit is the only part of this
     block that identifies exact bytes."""
-    return {
+    block = {
         "repo": _short_repo(entry["repo"]),
         "ref": entry.get("ref") or "main",
         "commit": resolved_commit(template_dir),
     }
+    if entry.get("path"):
+        block["path"] = entry["path"]
+    return block
 
 
 def sha256_file(path: Path) -> str:

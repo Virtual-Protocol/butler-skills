@@ -1,5 +1,5 @@
 {
-  "comment": "The duty-template half of the registry IS this file. A duty template is an id and a GitHub link; its repo owns its versions. Adding or removing a template is a PR here — updating one is not: every build re-resolves each ref to a commit and republishes. Set `ref` to a branch to follow it, or to a tag to hold a release. The `name` here must equal the `id` in that repo's recipe.json — scripts/validate.py --all enforces it by cloning each entry into a directory named after this file's `name` and checking recipe.json's id against the directory name. Skills (SKILL.md playbooks) are listed in skills.json, not here.",
+  "comment": "The duty-template half of the registry IS this file. A duty template is an id and a GitHub link; its repo owns its versions. Adding or removing a template is a PR here — updating one is not: every build re-resolves each ref to a commit and republishes. Set `ref` to a branch to follow it, or to a tag to hold a release. Add `path` when the template is a folder of a bigger repo (e.g. `templates/<name>` beside the skill that files it); its last segment must equal `name`. The `name` here must equal the `id` in that repo's recipe.json — scripts/validate.py --all enforces it by cloning each entry into a directory named after this file's `name` and checking recipe.json's id against the directory name. Skills (SKILL.md playbooks) are listed in skills.json, not here.",
   "templates": [
     {
       "name": "copytrade",
@@ -12,14 +12,21 @@
       "ref": "main"
     },
     {
+      "name": "derive-account",
+      "repo": "https://github.com/mamamatcha/butler-skill-yield-notes",
+      "ref": "v2.4.0",
+      "path": "templates/derive-account"
+    },
+    {
       "name": "index-rebalance",
       "repo": "https://github.com/mamamatcha/butler-skill-index-rebalance",
       "ref": "main"
     },
     {
       "name": "options-lifecycle",
-      "repo": "https://github.com/mamamatcha/butler-skill-options-lifecycle",
-      "ref": "v5"
+      "repo": "https://github.com/mamamatcha/butler-skill-yield-notes",
+      "ref": "v2.4.0",
+      "path": "templates/options-lifecycle"
     },
     {
       "name": "x-portfolio",
