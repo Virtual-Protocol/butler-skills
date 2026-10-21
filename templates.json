@@ -9,7 +9,7 @@
     {
       "name": "dca",
       "repo": "https://github.com/Virtual-Protocol/butler-skill-dca",
-      "ref": "main"
+      "ref": "v9"
     },
     {
       "name": "derive-account",
