@@ -29,6 +29,12 @@
       "path": "templates/options-lifecycle"
     },
     {
+      "name": "papertrade-farm",
+      "repo": "https://github.com/Virtual-Protocol/butler-skill-papertrade-xyz",
+      "ref": "v1.3.1",
+      "path": "templates/papertrade-farm"
+    },
+    {
       "name": "x-portfolio",
       "repo": "https://github.com/Virtual-Protocol/butler-skill-x-portfolio",
       "ref": "v2"
