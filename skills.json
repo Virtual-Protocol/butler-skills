@@ -20,6 +20,11 @@
       "name": "papertrade-xyz",
       "repo": "https://github.com/Virtual-Protocol/butler-skill-papertrade-xyz",
       "ref": "v1.3.1"
+    },
+    {
+      "name": "pearl-prl",
+      "repo": "https://github.com/mamamatcha/butler-skill-pearl-prl",
+      "ref": "v0.1.1"
     }
   ]
 }

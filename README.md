@@ -48,7 +48,7 @@ unknown `bevo-*` name is refused, `acp` must name a command group the container 
 through, and `bevo-read`, `bevo-sms`, `bevo-wallet`, `bevo-x`, `bevo-automation` and
 `app-checkout` must use one of their real subcommands. Every money command (`acp trade`, `acp card`,
 `acp wallet send-transaction`, `acp options open|buy|close|deposit|withdraw`, `bevo-send`,
-`bevo-wallet fund|withdraw|bridge-prl|bind`, `app-checkout checkpoint`) sits on a shell line
+`bevo-wallet fund|withdraw|bridge-prl|bridge-wprl|bind`, `app-checkout checkpoint`) sits on a shell line
 in a `[FIXED]` step, including one inside `$(…)`, and never in a reference file. The
 command checks read shell lines only (the whole text is still linted for credentials,
 invisible characters, raw addresses and override phrases): what a `python3` script or a

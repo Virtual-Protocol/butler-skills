@@ -135,7 +135,7 @@ duty template, never a skill section.
 - A **money command** — `acp trade`, `acp wallet send-transaction`,
   `acp wallet sign-typed-data`, `acp wallet sign-message`, `acp card`,
   `acp options open|buy|close|deposit|withdraw`,
-  `bevo-send`, `bevo-wallet fund|withdraw|bridge-prl|bind`, `app-checkout checkpoint` — may only appear in a shell block inside a
+  `bevo-send`, `bevo-wallet fund|withdraw|bridge-prl|bridge-wprl|bind`, `app-checkout checkpoint` — may only appear in a shell block inside a
   `[FIXED]` step of `## Procedure`. The step is the numbered line above the block; any
   heading ends it. A money command anywhere else (another section, a later subsection, a
   reference file) is an error.
@@ -162,7 +162,7 @@ are held to what the container accepts, so a skill cannot call one it lacks:
 | --- | --- |
 | `bevo-read` | `get`, `messages`, `channel-messages`, `participants`, `summary`, `search`, `groups`, `user`, `assets`, `me`, `policy`, `token-search`, `token`, `token-balance`, `stock-min`, `token-stats`, `trade-activity`, `trade-executions`, `wallet-transfers`, `request`, `card-budget` |
 | `bevo-sms` | `number`, `status`, `otp` |
-| `bevo-wallet` | `chains`, `list`, `create`, `unbind`, `archive`; `fund`, `withdraw`, `bridge-prl` and `bind` move money |
+| `bevo-wallet` | `chains`, `list`, `create`, `unbind`, `archive`; `fund`, `withdraw`, `bridge-prl`, `bridge-wprl` and `bind` move money |
 | `bevo-automation` | `create`, `validate`, `update`, `enable`, `disable`, `delete`, `list`, `show`, `logs` |
 | `bevo-x` | `search` |
 | `app-checkout` | `start`, `status`, `screen`, `shot`, `tap`, `type`, `key`, `swipe`, `wait`, `install`, `open`, `grant`, `do`, `checkpoint`, `end` |
