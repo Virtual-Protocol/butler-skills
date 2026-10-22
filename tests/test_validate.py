@@ -1020,6 +1020,7 @@ def test_a_money_moving_skill_must_say_do_not_re_run(tmp_path):
     "bevo-wallet fund --wallet <W> --amount 10 --idempotency-key <K>",
     "bevo-wallet withdraw --wallet <W> --all --idempotency-key <K>",
     "bevo-wallet bridge-prl --wallet <W> --amount 10 --idempotency-key <K>",
+    "bevo-wallet bridge-wprl --wallet <W> --all --idempotency-key <K>",
     "bevo-wallet bind --wallet <W> --duty <D> --fund 20",
     "app-checkout checkpoint --app GrabFood --amount 12.40 --currency MYR --wait 0",
 ])

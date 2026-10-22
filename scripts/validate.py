@@ -1039,7 +1039,8 @@ SKILL_SUBCOMMANDS = {
     }),
     "bevo-sms": frozenset({"number", "status", "otp"}),  # sms.mjs COMMANDS
     "bevo-wallet": frozenset({  # wallet.mjs COMMANDS
-        "chains", "list", "create", "fund", "withdraw", "bridge-prl", "bind", "unbind", "archive",
+        "chains", "list", "create", "fund", "withdraw", "bridge-prl", "bridge-wprl", "bind", "unbind",
+        "archive",
     }),
     "bevo-automation": frozenset({  # automation.mjs main()
         "create", "validate", "update", "enable", "disable", "delete", "list", "show", "logs",
@@ -1618,13 +1619,13 @@ def split_simple_commands(line: str) -> list[tuple[str | None, list[str]]]:
 
 WALLET_MONEY_SUBCOMMANDS = frozenset({"send-transaction", "sign-typed-data", "sign-message"})
 # `bind` counts: binding a wallet that holds money, or with --fund, files a card.
-BEVO_WALLET_MONEY_SUBCOMMANDS = frozenset({"fund", "withdraw", "bridge-prl", "bind"})
+BEVO_WALLET_MONEY_SUBCOMMANDS = frozenset({"fund", "withdraw", "bridge-prl", "bridge-wprl", "bind"})
 
 
 def is_money_command(argv: list[str]) -> bool:
     """acp trade, acp wallet send-transaction|sign-typed-data|sign-message, acp card,
     acp options open|buy|close|deposit|withdraw, bevo-send,
-    bevo-wallet fund|withdraw|bridge-prl|bind, app-checkout checkpoint.
+    bevo-wallet fund|withdraw|bridge-prl|bridge-wprl|bind, app-checkout checkpoint.
 
     A signature counts: an EIP-712 Permit, a payment authorization or a venue's
     withdrawal moves funds as surely as a transaction does."""
