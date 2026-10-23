@@ -60,6 +60,7 @@ tells a skill from a template by itself — there is no flag.
 | `repo` | `https://github.com/<owner>/<repo>` — never ssh, another host, a local path, credentials, a query or a fragment |
 | `ref` | a plain branch or tag name (`^[A-Za-z0-9._/-]{1,100}$`) that resolves on the remote (`--offline` skips that one check) |
 | Order | the file is sorted by `name` |
+| Translations | optional: `i18n/descriptions.json` may give the entry's `description` in the app's other languages, `{"<name>": {"ko": "...", "zh": "..."}}` — each one line of at most 200 characters, the file sorted by name, every name listed. The build publishes it as the index row's `descriptionI18n` (display text for the app; the container ignores it). A listed entry with no translation for a language is a warning, not an error — the app shows the English there. The English stays in the entry's own repo, so when a new version rewords `description`, update its translations here |
 
 Listing a skill is **maintainer-only** (see [CONTRIBUTING.md](CONTRIBUTING.md)).
 

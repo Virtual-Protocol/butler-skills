@@ -47,6 +47,12 @@ SKILLS = {
 }
 
 
+TRANSLATIONS = {
+    "skill-alpha": {"ko": "알파 스킬", "zh": "阿尔法技能"},
+    "tmpl-alpha": {"ko": "알파", "zh": "阿尔法"},
+}
+
+
 @pytest.fixture
 def registry(tmp_path, monkeypatch):
     reg, yank = tmp_path / "templates.json", tmp_path / "yanked.json"
@@ -54,9 +60,12 @@ def registry(tmp_path, monkeypatch):
     yank.write_text(json.dumps({"yanked": []}, indent=2) + "\n")
     skills = tmp_path / "skills.json"
     skills.write_text(json.dumps(SKILLS, indent=2) + "\n")
+    i18n = tmp_path / "descriptions.json"
+    i18n.write_text(json.dumps(TRANSLATIONS, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     monkeypatch.setattr(remove_skill, "REGISTRY_PATH", reg)
     monkeypatch.setattr(remove_skill, "SKILLS_REGISTRY_PATH", skills)
     monkeypatch.setattr(remove_skill, "YANKED_PATH", yank)
+    monkeypatch.setattr(remove_skill, "DESCRIPTION_I18N_PATH", i18n)
     return reg, yank
 
 
@@ -90,9 +99,26 @@ def test_yank_is_sorted_and_never_duplicates(registry, monkeypatch):
 
 def test_dry_run_writes_nothing(registry, monkeypatch):
     reg, yank = registry
-    before = (reg.read_text(), yank.read_text())
+    i18n = reg.parent / "descriptions.json"
+    before = (reg.read_text(), yank.read_text(), i18n.read_text())
     assert run(monkeypatch, "tmpl-alpha", "--yank", "--version", "2", "--dry-run") == 0
-    assert (reg.read_text(), yank.read_text()) == before
+    assert (reg.read_text(), yank.read_text(), i18n.read_text()) == before
+
+
+def test_removal_drops_the_entrys_translations(registry, monkeypatch, capsys):
+    """check_registry.py refuses a translation for an unlisted name, so the de-list
+    PR carries both edits — and the file keeps its checked-in shape."""
+    reg, _ = registry
+    i18n = reg.parent / "descriptions.json"
+    assert run(monkeypatch, "tmpl-alpha") == 0
+    assert json.loads(i18n.read_text(encoding="utf-8")) == {"skill-alpha": TRANSLATIONS["skill-alpha"]}
+    assert i18n.read_text(encoding="utf-8").endswith("}\n") and "阿尔法技能" in i18n.read_text(encoding="utf-8")
+    assert "removed its translations from i18n/descriptions.json" in capsys.readouterr().out
+
+    before = i18n.read_text(encoding="utf-8")
+    assert run(monkeypatch, "tmpl-beta") == 0  # untranslated: the file is left alone
+    assert i18n.read_text(encoding="utf-8") == before
+    assert "translations" not in capsys.readouterr().out
 
 
 def test_unlisted_template_fails_loudly(registry, monkeypatch):

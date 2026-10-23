@@ -51,6 +51,7 @@ registry CI.
 | `path` | optional: the folder holding the template when it is not the repo's root, e.g. `templates/derive-account` beside a skill's `SKILL.md`. Plain relative segments (letters, digits, `.`, `_`, `-`, none starting with `.`), at most 200 characters, and the last one must equal `name`, so the folder validated is still named after the entry. The tree rules apply to that folder. Templates only: a skill is always its repo's root |
 | Ref resolves | the ref exists on the remote (`git ls-remote`); `--offline` skips this one check |
 | Order | the file is sorted by `name` |
+| Translations | optional: `i18n/descriptions.json` may give the entry's `description` in the app's other languages, `{"<name>": {"ko": "...", "zh": "..."}}` — each one line of at most 200 characters, the file sorted by name, every name listed. The build publishes it as the index row's `descriptionI18n` (display text for the app; the container ignores it). A listed entry with no translation for a language is a warning, not an error — the app shows the English there. The English stays in the entry's own repo, so when a new version rewords `description`, update its translations here |
 
 A `ref` is a following relationship, not a pin: with a branch, whatever the template repo
 merges reaches the registry on the next build, with no review here. Give a template that

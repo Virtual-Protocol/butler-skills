@@ -39,10 +39,10 @@ def write_registry(tmp_path: Path, skills: list[dict]) -> Path:
     return path
 
 
-def run(monkeypatch, tmp_path, skills, *argv, ref_exists=True, skill_rows=None) -> int:
+def run(monkeypatch, tmp_path, skills, *argv, ref_exists=True, skill_rows=None, i18n=None) -> int:
     """Point the module at a synthetic templates.json (the `skills` argument — the
     rows predate the skill kind) plus skills.json (`skill_rows`, empty by default)
-    and run its main().
+    and i18n/descriptions.json (`i18n`; no file by default) and run its main().
 
     check_registry resolves REGISTRY_PATH at import time from its own
     location, so the file under test is swapped by monkeypatching that
@@ -54,6 +54,12 @@ def run(monkeypatch, tmp_path, skills, *argv, ref_exists=True, skill_rows=None) 
     skills_path.write_text(json.dumps({"skills": skill_rows or []}, indent=2) + "\n")
     monkeypatch.setattr(check_registry, "REGISTRY_PATH", registry)
     monkeypatch.setattr(check_registry, "SKILLS_REGISTRY_PATH", skills_path)
+    i18n_path = tmp_path / "descriptions.json"
+    if i18n is not None:
+        i18n_path.write_text(i18n if isinstance(i18n, str) else json.dumps(i18n, ensure_ascii=False))
+    elif i18n_path.exists():
+        i18n_path.unlink()
+    monkeypatch.setattr(check_registry, "DESCRIPTION_I18N_PATH", i18n_path)
     monkeypatch.setattr(sys, "argv", ["check_registry.py", *argv])
     if isinstance(ref_exists, list):
         calls = ref_exists
@@ -221,3 +227,52 @@ def test_a_skill_is_always_its_repo_root(monkeypatch, tmp_path, capsys):
     rows = [{"name": "zeta", "repo": "https://github.com/someone/zeta", "ref": "main", "path": "skills/zeta"}]
     assert run(monkeypatch, tmp_path, GOOD, "--offline", skill_rows=rows) == 1
     assert "zeta: `path` is for templates.json only" in capsys.readouterr().out
+
+
+# --- i18n/descriptions.json ---------------------------------------------------------------------
+
+
+def test_translations_of_listed_entries_pass_and_a_missing_language_only_warns(monkeypatch, tmp_path, capsys):
+    """A listing PR need not come with Korean and Chinese: the app shows the English."""
+    i18n = {
+        "butler-app-checkout": {"ko": "앱에서 심부름을 해요", "zh": "在 App 里替你跑腿"},
+        "tmpl-alpha": {"ko": "알파", "zh": "阿尔法"},
+        "tmpl-beta": {"ko": "베타"},
+    }
+    assert run(monkeypatch, tmp_path, GOOD, "--offline", skill_rows=SKILLS, i18n=i18n) == 0
+    out = capsys.readouterr().out
+    assert "WARN  tmpl-beta (templates.json): no zh description in i18n/descriptions.json" in out
+    assert "WARN  zeta (skills.json): no ko/zh description" in out
+    assert "tmpl-alpha (" not in out and "butler-app-checkout (" not in out
+    assert "ERROR" not in out
+
+
+def test_no_translations_file_is_warnings_only(monkeypatch, tmp_path, capsys):
+    assert run(monkeypatch, tmp_path, GOOD, "--offline") == 0
+    assert "WARN  tmpl-alpha (templates.json): no ko/zh description" in capsys.readouterr().out
+
+
+def test_a_translation_for_an_unlisted_name_fails(monkeypatch, tmp_path, capsys):
+    """De-listing drops the translations too (remove_skill.py does), so none is left
+    describing an entry no butler or app can see."""
+    i18n = {"tmpl-alpha": {"ko": "알파", "zh": "阿尔法"}, "tmpl-gone": {"ko": "없음", "zh": "没有"}}
+    assert run(monkeypatch, tmp_path, GOOD, "--offline", i18n=i18n) == 1
+    assert "ERROR i18n/descriptions.json: 'tmpl-gone' is not listed in templates.json or skills.json" in capsys.readouterr().out
+
+
+def test_malformed_translations_fail(monkeypatch, tmp_path, capsys):
+    cases = {
+        "not JSON": ("{", "not valid JSON"),
+        "not an object": ([], "must be a JSON object"),
+        "unsorted": ({"tmpl-beta": {"ko": "베타"}, "tmpl-alpha": {"ko": "알파"}}, "is not sorted by name"),
+        "an empty entry": ({"tmpl-alpha": {}}, "tmpl-alpha: must be an object of one or more"),
+        "a language the app does not ship": ({"tmpl-alpha": {"ja": "アルファ"}}, "tmpl-alpha.ja: 'ja' is not a language the app ships (ko, zh)"),
+        "an empty text": ({"tmpl-alpha": {"ko": "  "}}, "tmpl-alpha.ko: must be a non-empty string"),
+        "padding": ({"tmpl-alpha": {"zh": " 阿尔法"}}, "tmpl-alpha.zh: has leading or trailing whitespace"),
+        "too long": ({"tmpl-alpha": {"zh": "长" * 201}}, "tmpl-alpha.zh: must be <= 200 chars, got 201"),
+        "two lines": ({"tmpl-alpha": {"ko": "알파\n베타"}}, "tmpl-alpha.ko: must be one line of text"),
+        "a bidi override": ({"tmpl-alpha": {"ko": "알파\u202e베타"}}, "tmpl-alpha.ko: contains U+202E bidi override"),
+    }
+    for case, (i18n, message) in cases.items():
+        assert run(monkeypatch, tmp_path, GOOD, "--offline", i18n=i18n) == 1, case
+        assert f"ERROR i18n/descriptions.json: {message}" in capsys.readouterr().out, case
