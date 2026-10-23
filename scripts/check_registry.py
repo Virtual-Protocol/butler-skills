@@ -18,6 +18,12 @@ not a pinned tree:
   (f) a template's optional `path`, the folder it lives in when its repo holds
       more than one (a skill and the templates it files), is plain relative
       segments ending in the template's own name
+  (g) i18n/descriptions.json, the entries' descriptions in the app's other
+      languages, is well formed (build_index.description_i18n_errors) and names
+      only listed entries — an ERROR. A listed entry it does not translate into
+      every language is a WARN, not an error: the app shows that entry's English
+      there, and a listing PR (often from a community fork) need not come with
+      Korean and Chinese.
 
 What a container ends up trusting is the RESOLVED commit and per-file sha256
 that build_index.py writes into the index, not these files — the link is how
@@ -31,6 +37,7 @@ Skipped with --offline (no network), which still runs everything but (d).
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import re
 import subprocess
@@ -41,6 +48,7 @@ from urllib.parse import urlsplit
 REPO_ROOT = Path(__file__).resolve().parent.parent
 REGISTRY_PATH = REPO_ROOT / "templates.json"
 SKILLS_REGISTRY_PATH = REPO_ROOT / "skills.json"
+DESCRIPTION_I18N_PATH = REPO_ROOT / "i18n" / "descriptions.json"
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,63}$")
 # Mastra's skill-name rule: lowercase, digits, single hyphens, none leading or trailing.
 SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
@@ -135,6 +143,50 @@ def check_listing(
     return problems
 
 
+def _build_index():
+    """scripts/build_index.py, loaded by path: the build is what reads the
+    translations, so its shape check is the one this runs."""
+    spec = importlib.util.spec_from_file_location(
+        "butler_skills_build_index", Path(__file__).resolve().parent / "build_index.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+def check_description_i18n(path: Path, owners: dict[str, str]) -> int:
+    """Check the translated descriptions against both listings (`owners`: every
+    listed name and the file listing it); returns the number of problems. A missing
+    file is no translations, so every listed entry warns."""
+    build_index = _build_index()
+    label = build_index.DESCRIPTION_I18N_FILE
+    data: dict = {}
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except ValueError as exc:
+            fail(f"{label}: not valid JSON ({exc})")
+            return 1
+    problems = 0
+    for error in build_index.description_i18n_errors(data):
+        fail(f"{label}: {error}"); problems += 1
+    if not isinstance(data, dict):
+        return problems
+    for name in data:
+        if name not in owners:
+            fail(f"{label}: {name!r} is not listed in templates.json or skills.json — "
+                 f"translate a listed entry, and drop an entry's translations when it is de-listed")
+            problems += 1
+    for name, listing in owners.items():
+        texts = data.get(name)
+        missing = [lang for lang in build_index.DESCRIPTION_LANGUAGES
+                   if not (isinstance(texts, dict) and lang in texts)]
+        if missing:
+            print(f"WARN  {name} ({listing}): no {'/'.join(missing)} description in {label} — the app shows the English there")
+    return problems
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Check templates.json and skills.json")
     ap.add_argument("--offline", action="store_true", help="skip the remote ref check")
@@ -145,6 +197,7 @@ def main() -> int:
         REGISTRY_PATH, "templates", "template id", valid_template_name, args.offline, owners, allow_path=True
     )
     problems += check_listing(SKILLS_REGISTRY_PATH, "skills", "skill name", valid_skill_name, args.offline, owners)
+    problems += check_description_i18n(DESCRIPTION_I18N_PATH, owners)
     return 1 if problems else 0
 
 

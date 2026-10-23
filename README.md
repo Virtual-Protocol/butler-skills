@@ -16,7 +16,8 @@ The hub is a link directory, not a store of content: each listing names an entry
 `name`, a public GitHub `repo`, and a `ref`; every build (hourly, and on any push to `main`
 here) clones each entry at its `ref` and republishes **one** `index.json` (plus the files
 themselves) to GitHub Pages. A PR here adds or removes a row — it never edits an entry's
-content, which lives entirely in its own repository. A repository is exactly one kind:
+content, which lives entirely in its own repository (the one exception is its translated
+description, below). A repository is exactly one kind:
 `SKILL.md` makes it a skill, `recipe.json` a template, and the validator tells them apart
 by itself.
 
@@ -454,6 +455,13 @@ a tombstone row (`yanked: true`, no files). A skill row carries `maxSteps` only 
 skill sets one, and `requires.skills` always (`[]` when none); every skill a row requires is
 published in the same index — here `tip-split` builds on `tip-once` — or the build fails.
 
+Any row, template or skill, may also carry `descriptionI18n` right after `description`:
+`{"ko": "...", "zh": "..."}`, its description in the Virtuals app's other languages, from
+`i18n/descriptions.json` in this repo (see [CONTRIBUTING.md](CONTRIBUTING.md#translations)).
+It is display text for the app, which falls back to `description` for a language it lacks;
+a row with no translations has no such key, and a tombstone never has one. The container
+ignores it, so `schemaVersion` stays 3.
+
 ## Local testing, no infrastructure
 
 Everything above runs from a checkout with `python3 -m pytest tests -q`:
@@ -484,15 +492,16 @@ the network; a handful of `--all`/registry-mode tests build a real, throwaway gi
 | `templates.json` | the duty-template listing |
 | `skills.json` | the skill listing (maintainer-only) |
 | `yanked.json` | tombstoned `id@N` (template) and `name@X.Y.Z` (skill) specs — see [SECURITY.md](SECURITY.md) |
+| `i18n/descriptions.json` | each entry's `description` in Korean and Chinese, published as its row's `descriptionI18n` — see [CONTRIBUTING.md](CONTRIBUTING.md#translations) |
 | `SKILL_STANDARD.md` / `TEMPLATE_STANDARD.md` | the enforced shape of each kind |
 | `schema/recipe.schema.json` | the `recipe.json` contract |
 | `schema/index.schema.json` | the published `index.json` contract (schemaVersion 3) |
 | `schema/reserved-names.json` | names a template or skill may never use |
 | `scripts/validate.py` | the validator for both kinds (also published standalone, stdlib-only) |
 | `scripts/build_index.py` | clones every entry, validates every skill (any error fails the build; templates are validated only on a PR here and by their own CI), writes `dist/` |
-| `scripts/check_registry.py` | checks the `templates.json` and `skills.json` listings themselves |
+| `scripts/check_registry.py` | checks the `templates.json` and `skills.json` listings themselves, and `i18n/descriptions.json` against them |
 | `scripts/new_skill.py` | prints the exact commands to start and register a template or skill |
-| `scripts/remove_skill.py` | removes a template or skill from its listing (and tombstones it in `yanked.json` with `--yank`), then prints the commit and PR commands; `--dry-run` writes nothing |
+| `scripts/remove_skill.py` | removes a template or skill from its listing and its translations (and tombstones it in `yanked.json` with `--yank`), then prints the commit and PR commands; `--dry-run` writes nothing |
 | `scripts/publish_tools.py` | lays out `dist/tools/` (the standalone `validate.py`/`replay.py`/`stub_bevo.py` + fixtures) |
 | `tests/replay.py` | the offline replay harness |
 | `tests/stub_bevo.py` | the `bevo` stand-in `replay.py` loads |

@@ -31,10 +31,11 @@ There are two removals.
       - A skill: the tombstone says that exact version is withdrawn, so no
         butler installs it again and one holding it drops it on its next sync.
 
-Writes templates.json or skills.json (and yanked.json with --yank), then
-prints the commit and PR commands. Nothing else in this repo describes an
-entry, so that is the whole edit: the index is rebuilt from the listings on
-the next publish.
+Writes templates.json or skills.json (and yanked.json with --yank), drops the
+entry's translated descriptions from i18n/descriptions.json — the one other
+place this repo describes an entry, which scripts/check_registry.py refuses to
+hold for an unlisted name — then prints the commit and PR commands. The index
+is rebuilt from those files on the next publish.
 
 Python 3.11 stdlib only.
 """
@@ -52,6 +53,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 REGISTRY_PATH = REPO_ROOT / "templates.json"
 SKILLS_REGISTRY_PATH = REPO_ROOT / "skills.json"
 YANKED_PATH = REPO_ROOT / "yanked.json"
+DESCRIPTION_I18N_PATH = REPO_ROOT / "i18n" / "descriptions.json"
 
 REGISTRY_REPO = "Virtual-Protocol/butler-skills"
 INDEX_URL = "https://virtual-protocol.github.io/butler-skills/index.json"
@@ -64,7 +66,7 @@ def read_json(path: Path) -> dict:
 
 
 def write_json(path: Path, data: dict) -> None:
-    """2-space indent + trailing newline — the shape both files are already in."""
+    """2-space indent + trailing newline, non-ASCII kept — the shape the files are already in."""
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
@@ -160,6 +162,12 @@ def main() -> int:
 
     listing[key] = [row for row in listing[key] if row.get("name") != name]
 
+    # Its translations go with it: check_registry.py refuses one for an unlisted name.
+    translations = read_json(DESCRIPTION_I18N_PATH) if DESCRIPTION_I18N_PATH.exists() else None
+    translated = isinstance(translations, dict) and name in translations
+    if translated:
+        del translations[name]
+
     yanked_spec = None
     if args.yank:
         if version is None:
@@ -175,11 +183,15 @@ def main() -> int:
     print(f"{prefix} {name} from {path.name} ({len(listing[key])} {noun}(s) left)")
     if yanked_spec:
         print(f"{prefix.replace('remove', 'tombstone')} {yanked_spec} in yanked.json")
+    if translated:
+        print(f"{prefix} its translations from i18n/descriptions.json")
 
     if not args.dry_run:
         write_json(path, listing)
         if args.yank:
             write_json(YANKED_PATH, yanked)
+        if translated:
+            write_json(DESCRIPTION_I18N_PATH, translations)
 
     if kind == "skill":
         if args.yank:

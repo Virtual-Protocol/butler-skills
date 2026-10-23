@@ -56,6 +56,16 @@ skill a published row requires must be published by the same build (listed,
 and not at a yanked version), and the requirements must not form a cycle —
 the butler installs a required skill first, so anything else fails the build.
 
+Translations: i18n/descriptions.json, `{<name>: {"ko": "...", "zh": "..."}}`,
+is the one thing about an entry this repository stores itself — its
+`description` in the app's other languages, kept here rather than in each
+entry's repo (recipe.json's shape is pinned by the container's installer, and
+the repos have different owners). Every listed template and skill it names
+gets `descriptionI18n` beside its `description`; an entry it does not name has
+no such key, and the app shows the English. The container ignores the field,
+so `schemaVersion` stays 3. A malformed file fails the build (the last deploy
+stays live); whether each name is listed is scripts/check_registry.py's check.
+
 Within one build, an existing dist/<kind>/<name>/<version>/ directory is never
 overwritten with different bytes either. --dry-run performs every check and
 prints what would be written without touching disk; it still clones, because
@@ -97,6 +107,13 @@ SKILL_YANKED_SPEC_RE = re.compile(r"^([a-z0-9]+(?:-[a-z0-9]+)*)@(\d+\.\d+\.\d+)$
 TOMBSTONE_DESCRIPTION = "Withdrawn by its maintainers (yanked) and removed from the registry; not installable."
 
 SCHEMA_VERSION = 3
+
+# The translated descriptions, relative to REPO_ROOT (resolved per call, so a test's
+# REPO_ROOT has its own), the languages the app ships besides English, and the same
+# bound as the English `description` each one stands in for.
+DESCRIPTION_I18N_FILE = "i18n/descriptions.json"
+DESCRIPTION_LANGUAGES = ("ko", "zh")
+MAX_TRANSLATED_DESCRIPTION = 200
 
 LIVE_INDEX_URL = "https://virtual-protocol.github.io/butler-skills/index.json"
 LIVE_INDEX_ENV = "BUTLER_SKILLS_LIVE_INDEX_URL"
@@ -500,6 +517,80 @@ def write_skill_dist_files(skill_dir: Path, row: dict, dist_root: Path, dry_run:
         shutil.copy2(skill_dir / rel, dst)
 
 
+# --- translations ---------------------------------------------------------------------------
+
+
+def description_i18n_errors(data) -> list[str]:
+    """What is wrong with the shape of i18n/descriptions.json: an object of
+    `{<name>: {<language>: <description>}}`, sorted by name, each language one the
+    app ships besides English, each text one trimmed line of at most 200 characters
+    with no invisible character (the validator's list — a bidi override would
+    reorder what the owner reads). Whether each name is listed is
+    scripts/check_registry.py's question; a build just never finds an entry for it."""
+    if not isinstance(data, dict):
+        return ['must be a JSON object: {"<entry name>": {"<language>": "<description>"}}']
+    errors: list[str] = []
+    if list(data) != sorted(data):
+        errors.append("is not sorted by name")
+    invisible = validator().INVISIBLE_CHARS
+    for name, texts in data.items():
+        if not isinstance(texts, dict) or not texts:
+            errors.append(f'{name}: must be an object of one or more {{"<language>": "<description>"}}')
+            continue
+        for lang, text in texts.items():
+            where = f"{name}.{lang}"
+            if lang not in DESCRIPTION_LANGUAGES:
+                errors.append(f"{where}: {lang!r} is not a language the app ships ({', '.join(DESCRIPTION_LANGUAGES)})")
+            elif not isinstance(text, str) or not text.strip():
+                errors.append(f"{where}: must be a non-empty string")
+            elif text != text.strip():
+                errors.append(f"{where}: has leading or trailing whitespace")
+            elif len(text) > MAX_TRANSLATED_DESCRIPTION:
+                errors.append(f"{where}: must be <= {MAX_TRANSLATED_DESCRIPTION} chars, got {len(text)}")
+            elif re.search(r"[\x00-\x1f\x7f]", text):
+                errors.append(f"{where}: must be one line of text — no control characters")
+            else:
+                hidden = [what for ch, what in invisible.items() if ch in text]
+                if hidden:
+                    errors.append(f"{where}: contains {', '.join(hidden)}")
+    return errors
+
+
+def load_description_i18n(path: Path | None = None) -> dict[str, dict[str, str]]:
+    """i18n/descriptions.json, checked. No file is no translations — every entry
+    shows its English; a malformed one fails the build, like a typo in yanked.json,
+    so a bad translation never reaches every app at once."""
+    path = REPO_ROOT / DESCRIPTION_I18N_FILE if path is None else path
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError as exc:
+        raise SystemExit(f"{DESCRIPTION_I18N_FILE}: not valid JSON ({exc})")
+    errors = description_i18n_errors(data)
+    if errors:
+        raise SystemExit(
+            "\n".join(f"{DESCRIPTION_I18N_FILE}: ERROR {e}" for e in errors)
+            + "\nrefusing to publish: fix the translations — the last deploy stays live until then"
+        )
+    return data
+
+
+def with_description_i18n(row: dict, translations: dict[str, dict[str, str]]) -> dict:
+    """`row` with `descriptionI18n` right after its `description` when the
+    translations name it; the row unchanged when they do not (the key is left out,
+    never empty)."""
+    texts = translations.get(row["name"])
+    if not texts:
+        return row
+    out: dict = {}
+    for key, value in row.items():
+        out[key] = value
+        if key == "description":
+            out["descriptionI18n"] = {lang: texts[lang] for lang in DESCRIPTION_LANGUAGES if lang in texts}
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build dist/index.json")
     parser.add_argument("--dry-run", action="store_true")
@@ -513,6 +604,7 @@ def main() -> int:
     template_yanked, skill_yanked = split_yanked(yanked)
     registry = load_registry()
     skill_registry = load_skills_registry()
+    translations = load_description_i18n()
 
     seen_refs: dict[str, dict] = {}
 
@@ -527,7 +619,7 @@ def main() -> int:
             if ref in seen_refs:
                 raise SystemExit(f"two templates resolve to the same {ref} — {entry['repo']} and {seen_refs[ref]['repo']}")
             seen_refs[ref] = entry
-            entries.append(collected)
+            entries.append(with_description_i18n(collected, translations))
 
         tombstones = tombstone_entries(template_yanked, entries)
         aliases = build_aliases(cloned)
@@ -547,7 +639,7 @@ def main() -> int:
             if ref in skill_yanked:
                 print(f"WARN  {ref} is listed in skills.json but yanked in yanked.json — publishing only its tombstone")
                 continue
-            skill_rows.append((row, d))
+            skill_rows.append((with_description_i18n(row, translations), d))
         check_skill_dependencies([row for row, _ in skill_rows], {e["name"] for e in skill_registry})
         skill_tombstones = skill_tombstone_entries(skill_yanked)
         if skill_rows:
@@ -587,6 +679,8 @@ def main() -> int:
     if skill_tombstones:
         skill_summary += f", plus {len(skill_tombstones)} yanked tombstone(s)"
     print(skill_summary)
+    translated = sum("descriptionI18n" in row for row in index["templates"] + index["skills"])
+    print(f"{translated} description(s) translated ({DESCRIPTION_I18N_FILE})")
     return 0
 
 

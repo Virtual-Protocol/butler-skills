@@ -288,9 +288,11 @@ def _skill_repo(root: Path, fixture: str = "valid") -> str:
 
 
 def _build(tmp_path: Path, monkeypatch, *, skills: list[dict], templates: list[dict] | None = None,
-           yanked: list[str] | None = None, live: dict | None = None, dry_run: bool = False) -> dict:
+           yanked: list[str] | None = None, live: dict | None = None, dry_run: bool = False,
+           translations: dict | None = None) -> dict:
     """Run main() in a tmp REPO_ROOT against synthetic listings; return the index it
-    wrote (or would have written). `live` is served as the live index via file://."""
+    wrote (or would have written). `live` is served as the live index via file://;
+    `translations` is written as the root's i18n/descriptions.json (none by default)."""
     root = tmp_path / "repo"
     root.mkdir(parents=True, exist_ok=True)
     if templates is None:
@@ -298,6 +300,9 @@ def _build(tmp_path: Path, monkeypatch, *, skills: list[dict], templates: list[d
     (root / "templates.json").write_text(json.dumps({"templates": templates}))
     (root / "skills.json").write_text(json.dumps({"skills": skills}))
     (root / "yanked.json").write_text(json.dumps({"yanked": yanked or []}))
+    if translations is not None:
+        (root / "i18n").mkdir(exist_ok=True)
+        (root / "i18n" / "descriptions.json").write_text(json.dumps(translations, ensure_ascii=False))
     live_path = tmp_path / "live-index.json"
     if live is not None:
         live_path.write_text(json.dumps(live))
@@ -471,3 +476,54 @@ def test_yanked_json_splits_by_kind_and_still_refuses_typos():
     with pytest.raises(SystemExit) as e:
         build_index.tombstone_entries({"typo"}, [])
     assert "yanked.json" in str(e.value)
+
+
+# === translated descriptions =================================================================
+
+
+def test_translated_descriptions_ride_beside_the_english(tmp_path, monkeypatch, capsys):
+    """i18n/descriptions.json lands on each row it names as `descriptionI18n`, right
+    after `description`, for templates and skills alike; a row it does not name has no
+    such key, a tombstone never does, and schemaVersion stays 3 (the container ignores
+    the field)."""
+    listing = [
+        {"name": "requires-skill", "repo": _skill_repo(tmp_path / "dependent", "requires-skill"), "ref": "main"},
+        {"name": "valid", "repo": _skill_repo(tmp_path / "base"), "ref": "main"},
+    ]
+    translations = {
+        "dca": {"ko": "정해진 일정에 따라 일정 금액씩 매수해요.", "zh": "按计划用固定金额买入。"},
+        "gone": {"zh": "已下架。"},  # yanked, unlisted: its tombstone stays English-only
+        "valid": {"zh": "一个最小的合规技能示例。"},
+    }
+    index = _build(tmp_path, monkeypatch, skills=listing, translations=translations, yanked=["gone@1.0.0"])
+    assert index["schemaVersion"] == 3
+
+    [dca] = index["templates"]
+    assert list(dca)[:3] == ["name", "version", "description"] and list(dca)[3] == "descriptionI18n"
+    assert dca["descriptionI18n"] == translations["dca"]
+    assert dca["description"] == "Buy a fixed dollar amount of one token on a schedule."  # the English is untouched
+
+    rows = {(r["name"], r.get("yanked", False)): r for r in index["skills"]}
+    assert rows[("valid", False)]["descriptionI18n"] == {"zh": "一个最小的合规技能示例。"}  # only the languages given
+    assert "descriptionI18n" not in rows[("requires-skill", False)]
+    assert "descriptionI18n" not in rows[("gone", True)]
+    assert "2 description(s) translated (i18n/descriptions.json)" in capsys.readouterr().out
+
+    schema = json.loads((REPO_ROOT / "schema" / "index.schema.json").read_text())
+    i18n_schema = schema["definitions"]["descriptionI18n"]
+    assert set(schema["properties"]["templates"]["items"]["properties"]) >= set(dca)
+    assert set(schema["definitions"]["skill"]["properties"]) >= set(rows[("valid", False)])
+    assert set(i18n_schema["properties"]) == set(build_index.DESCRIPTION_LANGUAGES)
+    for row in (dca, rows[("valid", False)]):
+        assert set(row["descriptionI18n"]) <= set(i18n_schema["properties"])
+
+
+def test_malformed_translations_fail_the_build(tmp_path, monkeypatch):
+    """Like a typo in yanked.json: nothing is published, and the last deploy stays live."""
+    listing = [{"name": "valid", "repo": _skill_repo(tmp_path / "skill-src"), "ref": "main"}]
+    with pytest.raises(SystemExit) as e:
+        _build(tmp_path, monkeypatch, skills=listing, translations={"valid": {"ja": "有効"}})
+    assert "i18n/descriptions.json: ERROR valid.ja: 'ja' is not a language the app ships" in str(e.value)
+    assert "the last deploy stays live" in str(e.value)
+    assert not (tmp_path / "repo" / "dist").exists()
+
