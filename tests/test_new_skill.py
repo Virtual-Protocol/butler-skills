@@ -30,6 +30,7 @@ def test_prints_create_validate_and_registry_entry_steps():
     assert '{"name": "my-dca", "repo": "https://github.com/alice/butler-skill-my-dca", "ref": "main"}' in out
     assert "gh pr create --repo Virtual-Protocol/butler-skills --base main" in out
     assert "submodule" not in out
+    assert '{"my-dca": {"ko": "...", "zh": "..."}}' in out  # its translations ride along, optionally
     assert "with no review in the registry" in out
     # A status line is required at validate (2026-10-20): the checklist says so.
     assert "`status`" in out and "TEMPLATE_STANDARD.md § Status line" in out

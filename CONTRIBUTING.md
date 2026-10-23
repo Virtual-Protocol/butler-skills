@@ -24,12 +24,14 @@ drifted (please file a PR fixing the doc).
 | A skill's files (`SKILL.md`, `README.md`, `CHANGELOG.md`, `references/`) | the skill's own repo, at its root |
 | Team templates and skills | `Virtual-Protocol/butler-skill-<name>` |
 | Community templates | the author's own GitHub repo |
-| The registry entry | this repo: one `{"name", "repo", "ref"}` row in `templates.json` or `skills.json` — the whole of what the registry stores about it |
+| The registry entry | this repo: one `{"name", "repo", "ref"}` row in `templates.json` or `skills.json` — the whole of what the registry stores about it, besides its translated description |
+| Translated descriptions | this repo: `i18n/descriptions.json`, `{"<name>": {"ko": "...", "zh": "..."}}` — the entry's `description` in the app's other languages, published as the index row's `descriptionI18n`. Kept here, not in the entry's repo: `recipe.json`'s shape is pinned by the container's installer, and the repos have different owners |
 | The published index | GitHub Pages, built by `scripts/build_index.py`, which clones each entry at its `ref` into a temp directory and indexes that throwaway checkout |
 | The standalone tools (`validate.py`, `replay.py`, `stub_bevo.py`, fixtures) | GitHub Pages `tools/`, laid out by `scripts/publish_tools.py`; a template repo's own CI is the composite action `.github/actions/validate` |
 
 No template or skill content lives in this repo, so there is nothing here to edit for a
-change to one.
+change to one — except its translated description, when a new version rewords the English
+(see [Translations](#translations)).
 
 ## Listing a skill
 
@@ -73,13 +75,13 @@ consequence is that on a branch `ref` your repo's maintainers are the only peopl
 a merge and every Butler. A template that should move only under review is listed with a
 tag `ref`, and moving that `ref` to the next release IS a PR here.
 
-A PR to this repo adds a template or removes one. Nothing else.
+A PR to this repo adds a template or removes one, or translates a description. Nothing else.
 
 ## Rules
 
 - **One template per PR.** A registry PR adds exactly one `templates.json` entry (or
-  removes one); do not bundle script, schema or doc changes with it. Keep the list sorted
-  by name — `scripts/check_registry.py` fails otherwise.
+  removes one); do not bundle script, schema or doc changes with it (its translations, below,
+  may ride along). Keep the list sorted by name — `scripts/check_registry.py` fails otherwise.
 - **The `ref` rule.** `ref` is a branch or a tag in your repo, and it is re-resolved on
   every build, not frozen. A branch follows whatever you merge, with no review here; a tag
   holds a release, and moving to the next release is a PR here changing the `ref` (a moved
@@ -102,6 +104,27 @@ A PR to this repo adds a template or removes one. Nothing else.
   there is no soak channel to land on first. Note what those reviews do and do not cover:
   they gate the template's admission, and its later versions only if it is listed at a
   tag `ref`.
+
+## Translations
+
+The Virtuals app shows each entry's `description` (the use-case pills over the Butler
+composer, the Skills page) in the owner's language. The English comes from the entry's own
+repo; Korean and Chinese live in this repo, in `i18n/descriptions.json`:
+
+```json
+{ "<name>": { "ko": "...", "zh": "..." } }
+```
+
+`scripts/build_index.py` publishes each as the index row's `descriptionI18n`, and the app
+falls back to the English for a language with none. `scripts/check_registry.py` holds the
+file to: sorted by name, every name listed in `templates.json` or `skills.json` (an
+unlisted one is an ERROR — `scripts/remove_skill.py` drops an entry's translations with its
+listing), only `ko`/`zh`, each one line of at most 200 characters. A listed entry missing a
+language is only a WARN, so a listing PR need not come with translations. Keep each faithful
+to the English and its first clause short — the app's pill is the text before the first
+`:`/`,`/`.`/`(`/` - `/` — ` (or `：`/`，`/`。`/`（`/`；`). Nothing ties a translation to the English it
+translates, so when a new version rewords `description`, update the translations in a PR
+here.
 
 ## Before you open a PR
 

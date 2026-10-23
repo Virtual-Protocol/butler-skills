@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://raw.githubusercontent.com/Virtual-Protocol/butler-skills/main/schema/index.schema.json",
   "title": "Butler skill hub index",
-  "description": "Schema for dist/index.json produced by scripts/build_index.py: duty templates (`templates`, `aliases`) and skills (`skills`). schemaVersion stays 3 — `skills` is additive, and the container ignores top-level keys it does not read.",
+  "description": "Schema for dist/index.json produced by scripts/build_index.py: duty templates (`templates`, `aliases`) and skills (`skills`). schemaVersion stays 3 — `skills` and each entry's optional `descriptionI18n` are additive, and the container ignores keys it does not read.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "generatedAt", "templates"],
@@ -19,6 +19,7 @@
           "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,63}$" },
           "version": { "type": "integer", "minimum": 1 },
           "description": { "type": "string", "maxLength": 200 },
+          "descriptionI18n": { "$ref": "#/definitions/descriptionI18n" },
           "keywords": { "type": "array", "items": { "type": "string" } },
           "triggers": {
             "type": "array",
@@ -83,6 +84,16 @@
   "definitions": {
     "skillName": { "type": "string", "maxLength": 64, "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
     "semver": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "descriptionI18n": {
+      "description": "`description` in the app's other languages, keyed by language code, from i18n/descriptions.json in this repo. Present only when that file translates the entry (never empty); a language it leaves out falls back to `description`. Display text for the app: the container ignores it, so schemaVersion stays 3.",
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "ko": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "zh": { "type": "string", "minLength": 1, "maxLength": 200 }
+      }
+    },
     "skill": {
       "type": "object",
       "additionalProperties": false,
@@ -91,6 +102,7 @@
         "name": { "$ref": "#/definitions/skillName" },
         "version": { "$ref": "#/definitions/semver" },
         "description": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "descriptionI18n": { "$ref": "#/definitions/descriptionI18n" },
         "keywords": { "type": "array", "items": { "type": "string", "minLength": 1 } },
         "moneyMoving": { "type": "boolean" },
         "maxSteps": {

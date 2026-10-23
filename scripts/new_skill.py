@@ -76,6 +76,9 @@ python3 replay.py --standalone . --fixture trade-activity-page
 # 3. Open a PR to {REGISTRY_REPO} adding one entry to templates.json:
 #    in a fork/checkout of {REGISTRY_REPO}, add to the "templates" list (keep it sorted by name):
 #      {{"name": "{name}", "repo": "https://github.com/{owner}/{repo}", "ref": "main"}}
+#    Optionally, its description in Korean and Chinese in i18n/descriptions.json
+#    ({{"{name}": {{"ko": "...", "zh": "..."}}}}, sorted by name); without one the app
+#    shows the English.
 #    `ref` is what the registry follows. A branch means every commit you merge
 #    reaches butlers on the next build (hourly) with no review in the registry;
 #    tag your releases and set `ref` to the tag (e.g. "v1") if you want it to
@@ -115,6 +118,9 @@ python3 validate.py --standalone .
 
 # 3. A maintainer lists it: one entry in skills.json (keep it sorted by name):
 #      {{"name": "{name}", "repo": "https://github.com/{owner}/{repo}", "ref": "main"}}
+#    Optionally, its description in Korean and Chinese in i18n/descriptions.json
+#    ({{"{name}": {{"ko": "...", "zh": "..."}}}}, sorted by name); without one the app
+#    shows the English.
 git commit -m "skills: add {name}"
 gh pr create --repo {REGISTRY_REPO} --base main --title "skills: add {name}"
 #    Listing a skill is maintainer-only, and a moneyMoving skill needs two maintainer
