@@ -181,7 +181,10 @@ RETIRED_BEVO_CALLS = {
 # Only these two-word acp command groups move the owner's money.
 SHELL_CALL_ATTRS = {"run", "check_output", "Popen", "call", "check_call"}
 MONEY_BIN = "acp"
-MONEY_SUBCOMMANDS = {"trade", "wallet", "card", "options"}
+MONEY_SUBCOMMANDS = {"trade", "wallet", "card", "options", "site"}
+# `acp site list` and `acp site status <key>` are reads; every `acp site <name> <action>`
+# counts as money, since the validator cannot tell a site's reads from its money actions.
+SITE_READ_SUBCOMMANDS = frozenset({"list", "status"})
 IDEMPOTENCY_FLAG = "--idempotency-key"
 
 # Every os.environ key a duty may read besides its own declared params.
@@ -913,6 +916,8 @@ def _check_shell_money_call(node: ast.Call, issues: Issues) -> None:
 
     if len(literal) < 2 or literal[0] != MONEY_BIN or literal[1] not in MONEY_SUBCOMMANDS:
         return  # not a recognized acp money command
+    if literal[1] == "site" and (len(literal) < 3 or literal[2] in SITE_READ_SUBCOMMANDS):
+        return  # `acp site list` / `acp site status <key>` read
 
     literal_strs = [s for s in literal if s is not None]
     if IDEMPOTENCY_FLAG in literal_strs:
@@ -1058,7 +1063,7 @@ SKILL_SUBCOMMANDS = {
 # The group is the first non-option argument, as the wrapper reads it.
 ACP_GROUPS = frozenset({
     "agent", "browse", "card", "chain", "email", "events", "job", "message", "offering",
-    "options", "policy", "provider", "resource", "skill", "subscription", "trade", "wallet",
+    "options", "policy", "provider", "resource", "site", "skill", "subscription", "trade", "wallet",
 })
 ACP_REFUSED_GROUPS = frozenset({"client", "compute", "configure"})
 # `acp options` (Derive yield notes): these file an approval card and move money;
@@ -1624,7 +1629,7 @@ BEVO_WALLET_MONEY_SUBCOMMANDS = frozenset({"fund", "withdraw", "bridge-prl", "br
 
 def is_money_command(argv: list[str]) -> bool:
     """acp trade, acp wallet send-transaction|sign-typed-data|sign-message, acp card,
-    acp options open|buy|close|deposit|withdraw, bevo-send,
+    acp options open|buy|close|deposit|withdraw, acp site <name> <action>, bevo-send,
     bevo-wallet fund|withdraw|bridge-prl|bridge-wprl|bind, app-checkout checkpoint.
 
     A signature counts: an EIP-712 Permit, a payment authorization or a venue's
@@ -1644,6 +1649,7 @@ def is_money_command(argv: list[str]) -> bool:
             group in ("trade", "card")
             or (group == "wallet" and sub in WALLET_MONEY_SUBCOMMANDS)
             or (group == "options" and sub in OPTIONS_MONEY_SUBCOMMANDS)
+            or (group == "site" and sub is not None and sub not in SITE_READ_SUBCOMMANDS)
         )
     return False
 

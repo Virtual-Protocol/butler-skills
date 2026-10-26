@@ -1016,6 +1016,7 @@ def test_a_money_moving_skill_must_say_do_not_re_run(tmp_path):
     "acp options close --instrument <I> --size <N> --min-proceeds <P> --idempotency-key <K>",
     "acp options deposit --amount <N> --idempotency-key <K>",
     "acp options withdraw --amount <N> --idempotency-key <K>",
+    "acp site shop buy --item <I> --usd 3 --idempotency-key <K>",
     "bevo-send --to @someone --amount 1 --token usdc",
     "bevo-wallet fund --wallet <W> --amount 10 --idempotency-key <K>",
     "bevo-wallet withdraw --wallet <W> --all --idempotency-key <K>",
@@ -1052,7 +1053,8 @@ def test_reads_are_not_money_and_need_no_fixed_step(tmp_path):
     fm = {"metadata": '{"butler":{"moneyMoving":false,"keywords":["x"],"requires":{"bins":["acp","bevo-read"]}}}'}
     steps = (
         "1. [ADAPT] Look:\n\n   ```sh\n   acp wallet balance --ticker ETH --json\n"
-        "   acp options account --json\n   bevo-read assets\n   ```\n"
+        "   acp options account --json\n   acp site list\n   acp site status <K>\n"
+        "   bevo-read assets\n   ```\n"
     )
     ok, result = check_skill(write_skill(tmp_path, fm=fm, body=procedure_body(steps, moneyish=False)))
     assert ok, result["errors"]
@@ -1468,3 +1470,17 @@ def test_only_that_literal_origin_is_allowed(tmp_path):
     assert len(errors) == 2, errors
     v = _platform_template(tmp_path / "var", 'SITE = "https://stake.com"\nbevo.platform_balance(SITE, "Stake", 1)\n')
     assert len(_url_errors(v)) == 1
+
+
+@pytest.mark.parametrize("argv, refused", [
+    ('["acp", "site", "shop", "buy", "--usd", "3"]', True),
+    ('["acp", "site", "shop", "buy", "--usd", "3", "--idempotency-key", "k1"]', False),
+    ('["acp", "site", "list"]', False),
+    ('["acp", "site", "status", "k1"]', False),
+])
+def test_duty_acp_site_action_needs_an_idempotency_key(argv, refused):
+    import ast
+    call = ast.parse(f"subprocess.run({argv})").body[0].value
+    issues = validate.Issues()
+    validate._check_shell_money_call(call, issues)
+    assert bool(issues.errors) == refused, issues.errors
