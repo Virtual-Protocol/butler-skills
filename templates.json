@@ -19,14 +19,20 @@
     {
       "name": "options-account",
       "repo": "https://github.com/mamamatcha/butler-skill-yield-notes",
-      "ref": "v2.7.2",
+      "ref": "v2.8.0",
       "path": "templates/options-account"
     },
     {
       "name": "options-lifecycle",
       "repo": "https://github.com/mamamatcha/butler-skill-yield-notes",
-      "ref": "v2.7.2",
+      "ref": "v2.8.0",
       "path": "templates/options-lifecycle"
+    },
+    {
+      "name": "options-put-delivery",
+      "repo": "https://github.com/mamamatcha/butler-skill-yield-notes",
+      "ref": "v2.8.0",
+      "path": "templates/options-put-delivery"
     },
     {
       "name": "papertrade-farm",
