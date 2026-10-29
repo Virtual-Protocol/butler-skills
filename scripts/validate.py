@@ -1054,11 +1054,14 @@ SKILL_SUBCOMMANDS = {
 
 # The acp command groups the container's wrapper lets through (wrapper.ts): the groups
 # acp-cli runs on its access token alone, plus trade/wallet/card/options, which the butler
-# rail forwards to bevo-server's signer. `client`, `compute` and `configure` are refused there.
-# The group is the first non-option argument, as the wrapper reads it.
+# rail forwards to bevo-server's signer, and site, which it forwards to bevo-server's site
+# rail (`acp site <name> <action>`, virtuals-agent #272). `client`, `compute` and
+# `configure` are refused there. The group is the first non-option argument, as the
+# wrapper reads it.
 ACP_GROUPS = frozenset({
     "agent", "browse", "card", "chain", "email", "events", "job", "message", "offering",
-    "options", "policy", "provider", "resource", "skill", "subscription", "trade", "wallet",
+    "options", "policy", "provider", "resource", "site", "skill", "subscription", "trade",
+    "wallet",
 })
 ACP_REFUSED_GROUPS = frozenset({"client", "compute", "configure"})
 # `acp options` (Derive yield notes): these file an approval card and move money;

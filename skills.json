@@ -25,6 +25,11 @@
       "name": "pearl-prl",
       "repo": "https://github.com/mamamatcha/butler-skill-pearl-prl",
       "ref": "v0.1.1"
+    },
+    {
+      "name": "variational",
+      "repo": "https://github.com/Virtual-Protocol/butler-skill-variational",
+      "ref": "v2.0.9"
     }
   ]
 }
