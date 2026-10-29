@@ -1077,6 +1077,7 @@ def _commands(tmp_path, lines: str, bins: str = '["acp","app-checkout","bevo-aut
 
 @pytest.mark.parametrize("line", [
     "acp email inbox --json", "acp agent whoami", "acp job list", "acp wallet balance --ticker ETH",
+    "acp site list", "acp site variational account --idempotency-key k1",
     "bevo-sms otp --since 2026-09-09T07:20:00Z", "bevo-x search virtuals", "app-checkout screen",
     "bevo-automation create @duty.json", "bevo-read token-search VIRTUAL",
     "bevo-wallet list", "bevo-wallet create --chain pearl --label Pearl",
