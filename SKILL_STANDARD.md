@@ -29,10 +29,15 @@ CHANGELOG.md      required — one entry per version; never published
 references/       optional — more Markdown the playbook points at
 ```
 
-**Published to butlers: `SKILL.md` and `references/**/*.md`, nothing else.** A reference
-path is letters, digits, `.`, `_` and `-` segments that do not start with `.`; another
-file under `references/` is a warning (not published), a `.md` path outside that shape
-is an error. `scripts/` and `assets/` are warned about (not published). A `duty.py` is an
+**Published to butlers: `SKILL.md`, `references/**/*.md` and `scripts/**/*.py`, nothing
+else.** A published path is letters, digits, `.`, `_` and `-` segments that do not start
+with `.`; another file under `references/` or `scripts/` is a warning (not published), a
+`.md` or `.py` path outside that shape is an error. `assets/` is warned about (not
+published). A script is for code a skill would otherwise have the model retype: the
+butler writes it as a plain file and `SKILL.md` runs it in place, as
+`python3 "$HOME/skills/<name>/scripts/<file>.py"`. Name every script in `SKILL.md` or a
+reference: an install from a GitHub link fetches only the files the text names, and a
+script named nowhere is a warning. A `duty.py` is an
 error — a program that runs unattended is a duty template. A repository holding both
 `SKILL.md` and `recipe.json` is refused: a repo is one kind.
 

@@ -1140,9 +1140,20 @@ RETIRED_REQUIRES_KEYS = {
     "gates": "the server applies the owner's gates",
 }
 
-# Only SKILL.md and these are published; the path shape keeps them plain URL paths.
+# Only SKILL.md and these two are published; the path shape keeps them plain URL paths.
 SKILL_REFERENCE_RE = re.compile(
     r"^references/(?:[A-Za-z0-9_-][A-Za-z0-9._-]*/)*[A-Za-z0-9_-][A-Za-z0-9._-]*\.md$"
+)
+# A butler writes a script as a plain file, never executable, and runs it with python3
+# where it is installed: a helper the model would otherwise retype into /tmp each use.
+SKILL_SCRIPT_RE = re.compile(
+    r"^scripts/(?:[A-Za-z0-9_-][A-Za-z0-9._-]*/)*[A-Za-z0-9_-][A-Za-z0-9._-]*\.py$"
+)
+# How the agent reads a bundled path off the text for a link install (url-install.ts
+# BUNDLED_RE): as prose spells it, or from the workspace (`skills/<name>/`, `~/`, `$HOME/`).
+SKILL_NAMED_PATH_RE = re.compile(
+    r"(?<![\w./~$-])(?:(?:~|\$HOME)/skills/[a-z0-9-]+/|skills/[a-z0-9-]+/)?"
+    r"((?:references|scripts)/[\w./-]+\.(?:md|py))\b"
 )
 
 
@@ -1462,23 +1473,24 @@ def check_skill_name(name: str, skill_dir: Path, standalone: bool, reserved: set
 
 
 def skill_published_files(skill_dir: Path) -> list[str]:
-    """What a skill publishes: SKILL.md, then every references/**/*.md whose path is
-    a plain URL path, sorted. Everything else in the repo stays in the repo."""
-    files = ["SKILL.md"]
-    ref_root = skill_dir / "references"
-    if ref_root.is_dir() and not ref_root.is_symlink():
-        found: list[str] = []
-        for root, dirs, names in os.walk(ref_root, followlinks=False):
+    """What a skill publishes: SKILL.md, then every references/**/*.md and
+    scripts/**/*.py whose path is a plain URL path, sorted. Everything else in the
+    repo stays in the repo."""
+    found: list[str] = []
+    for sub, shape in (("references", SKILL_REFERENCE_RE), ("scripts", SKILL_SCRIPT_RE)):
+        top = skill_dir / sub
+        if not top.is_dir() or top.is_symlink():
+            continue
+        for root, dirs, names in os.walk(top, followlinks=False):
             dirs[:] = [d for d in dirs if not (Path(root) / d).is_symlink()]
             for n in names:
                 p = Path(root) / n
                 if p.is_symlink() or not p.is_file():
                     continue
                 rel = p.relative_to(skill_dir).as_posix()
-                if SKILL_REFERENCE_RE.match(rel):
+                if shape.match(rel):
                     found.append(rel)
-        files.extend(sorted(found))
-    return files
+    return ["SKILL.md", *sorted(found)]
 
 
 def check_skill_layout(skill_dir: Path, issues: Issues) -> None:
@@ -1502,13 +1514,16 @@ def check_skill_layout(skill_dir: Path, issues: Issues) -> None:
         if p.is_file():
             count += 1
             total += p.stat().st_size
-            if rel.startswith("references/"):
-                if not rel.endswith(".md"):
-                    issues.warn("layout", f"{rel} is not published — only references/**/*.md reach the butler")
-                elif not SKILL_REFERENCE_RE.match(rel):
+            for sub, ext, shape, kind in (("references", ".md", SKILL_REFERENCE_RE, "reference"),
+                                          ("scripts", ".py", SKILL_SCRIPT_RE, "script")):
+                if not rel.startswith(sub + "/"):
+                    continue
+                if not rel.endswith(ext):
+                    issues.warn("layout", f"{rel} is not published — only {sub}/**/*{ext} reach the butler")
+                elif not shape.match(rel):
                     issues.error(
                         "layout",
-                        f"{rel}: a published reference path is letters, digits, '.', '_' and '-' "
+                        f"{rel}: a published {kind} path is letters, digits, '.', '_' and '-' "
                         "segments that do not start with '.'",
                     )
     if count > MAX_TREE_FILES:
@@ -1521,9 +1536,11 @@ def check_skill_layout(skill_dir: Path, issues: Issues) -> None:
             "duty.py in a skill is never published or run — a standing program is a duty "
             "template (recipe.json + duty.py) listed in templates.json",
         )
-    for sub in ("scripts", "assets"):
-        if (skill_dir / sub).is_dir():
-            issues.warn("layout", f"{sub}/ is not published — only SKILL.md and references/**/*.md reach the butler")
+    if (skill_dir / "assets").is_dir():
+        issues.warn(
+            "layout",
+            "assets/ is not published — only SKILL.md, references/**/*.md and scripts/**/*.py reach the butler",
+        )
     for tool in TOOLING_FILES:
         if (skill_dir / tool).is_file():
             issues.warn("layout", f"{tool} looks like downloaded hub tooling — keep it out of the commit")
@@ -1981,10 +1998,22 @@ def validate_skill(
     if keywords:
         lint_skill_prose("\n".join(keywords), issues, lambda idx: "metadata.butler.keywords")
 
-    for rel in skill_published_files(skill_dir)[1:]:
+    published = skill_published_files(skill_dir)
+    named = set(SKILL_NAMED_PATH_RE.findall(text))
+    for rel in published[1:]:
+        if not rel.endswith(".md"):
+            continue
         ref_text = (skill_dir / rel).read_text(encoding="utf-8", errors="replace")
         lint_skill_text(rel, ref_text, issues)
         used |= check_reference_commands(rel, ref_text, issues)
+        named |= set(SKILL_NAMED_PATH_RE.findall(ref_text))
+    for rel in published[1:]:
+        if rel.startswith("scripts/") and rel not in named:
+            issues.warn(
+                "layout",
+                f"{rel} is named in neither SKILL.md nor a reference — a butler installing "
+                "from a link never fetches it, and the model has no way to know it is there",
+            )
 
     if money and money_moving is False:
         lineno, line = money[0]

@@ -30,8 +30,9 @@ template listed at a branch `ref` ships whatever its repo merges between those c
 ## What a skill is
 
 A skill is its own repository with `SKILL.md`, `README.md` and `CHANGELOG.md` at the root
-(plus optional `references/*.md`). Only `SKILL.md` and `references/**/*.md` reach a butler,
-which puts them in `<workspace>/skills/<name>/`; Mastra lists the skill among the agent's
+(plus optional `references/*.md` and `scripts/*.py`). Only `SKILL.md`, `references/**/*.md`
+and `scripts/**/*.py` reach a butler, which puts them in `<workspace>/skills/<name>/`;
+Mastra lists the skill among the agent's
 skills and the model reads it when a request fits. The frontmatter is four one-line keys —
 `name`, `description`, `version` (semver) and a one-line JSON `metadata` block:
 
