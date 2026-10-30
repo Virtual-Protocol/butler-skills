@@ -404,6 +404,7 @@ Everything lands in one folder:
     open-1.clicks.json          every click: role + name
     open-1.sockets.json         every websocket message the page sent
     open-1.meta.json            action, run, amount, start time
+    aliases.json                the real values behind 0xOWNER / 0xACCOUNT1 (try-calls uses it)
   profile/                      the browser profile: the login is kept between runs
   test-wallet.key               the TEST key (made on the first record; a few dollars only)
   site.json                     origin, repo, actions, chain: later commands need only <site>
@@ -431,8 +432,13 @@ what the venue file needs.
 
 ```
 raw HAR  ──┐
-trace    ──┼──► merge by time ──► drop images, fonts, analytics, other origins
-wallet   ──┘                  ──► scrub cookies, tokens, ids; my address → 0xOWNER
+trace    ──┼──► merge by time ──► drop images, fonts, prefetches, analytics, other sites
+                                   (same-site API hosts like gamma-api.<site> are kept;
+                                   other hosts the page wrote to are listed in
+                                   recording.json "otherOrigins" — add one with
+                                   `site.py scrub <site> --api-origin <url>`)
+wallet   ──┘                  ──► scrub cookies, tokens, ids; my address → 0xOWNER,
+                                   the site's own address / id for me → 0xACCOUNT1 / <account-id-1>
                               ──► recording.json   (usually under 200 KB)
 ```
 
@@ -968,6 +974,9 @@ keepLogin: true                   # one saved login per Butler
 # ---------------------------------------------------------------- the allow-list
 allow:
   apiPrefix: /api/                # requests outside it are not this file's business
+  apiOrigins: [https://api.acme.example]   # every OTHER host the API uses (S3); an entry
+                                  # on one names it: { ..., origin: https://api.acme.example }
+                                  # (Polymarket: gamma-api / data-api, seen in the recording)
 
   calls:                          # every request that is not a GET, sent by the page or by a step
     - { id: session,  method: POST, path: /api/auth/refresh,  kind: free }

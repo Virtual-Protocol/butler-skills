@@ -177,6 +177,18 @@ def _check_allow(allow: dict, doc: dict, c: _Ctx) -> dict[str, set[str]]:
     origins = allow.get("apiOrigins", [])
     if not isinstance(origins, list) or not all(_is_https_origin(o) for o in origins):
         c.err("allow.apiOrigins", "must be a list of https origins (S3: every origin the API uses)")
+        origins = []
+    allowed_origins = {str(o).rstrip("/") for o in origins}
+
+    def check_origin(where: str, i: str, entry: dict) -> bool:
+        """An entry on another API host names it (`origin`), and that host is in
+        apiOrigins. True when the entry is on the venue's own origin."""
+        o = entry.get("origin")
+        if o is None:
+            return True
+        if not isinstance(o, str) or o.rstrip("/") not in allowed_origins:
+            c.err(where, f"{i}: origin {o!r} is not in allow.apiOrigins")
+        return False
 
     for n, call in enumerate(_list(allow, "calls", c)):
         where = f"allow.calls[{n}]"
@@ -186,8 +198,9 @@ def _check_allow(allow: dict, doc: dict, c: _Ctx) -> dict[str, set[str]]:
         if call.get("method") not in CALL_METHODS:
             c.err(where, f"{i}: method must be one of {', '.join(CALL_METHODS)} (a GET goes in allow.reads)")
         path = call.get("path")
-        if not isinstance(path, str) or not path.startswith(prefix):
-            c.err(where, f"{i}: path must start with apiPrefix {prefix!r}")
+        own = check_origin(where, i, call)
+        if not isinstance(path, str) or not path.startswith(prefix if own else "/"):
+            c.err(where, f"{i}: path must start with " + (f"apiPrefix {prefix!r}" if own else "'/'"))
         kind = call.get("kind")
         if kind not in CALL_KINDS:
             c.err(where, f"{i}: kind must be free or money")
@@ -203,6 +216,7 @@ def _check_allow(allow: dict, doc: dict, c: _Ctx) -> dict[str, set[str]]:
             continue
         if not isinstance(read.get("path"), str) or not read["path"].startswith("/"):
             c.err(where, f"{i}: path must start with '/'")
+        check_origin(where, i, read)
         ids["reads"].add(i)
 
     sources = allow.get("sources", {})

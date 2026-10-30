@@ -257,3 +257,15 @@ def test_a_read_only_canary_step_has_nothing_to_stop_at():
     def change(d):
         d["canary"].insert(1, {"action": "positions", "stopAt": ["order"]})
     assert has(errors_after(change), "canary[1]", "moves no money")
+
+
+def test_an_entry_on_another_api_host_names_a_listed_origin():
+    """Polymarket's API lives on gamma-api / data-api, not polymarket.com (seen live)."""
+    def listed(d):
+        d["allow"]["apiOrigins"] = ["https://data-api.acme.example"]
+        d["allow"]["reads"].append({"id": "positions-api", "origin": "https://data-api.acme.example", "path": "/v2/positions"})
+    assert errors_after(listed) == []
+
+    def unlisted(d):
+        d["allow"]["calls"].append({"id": "login-api", "method": "POST", "origin": "https://gamma-api.acme.example", "path": "/v1/login", "kind": "free"})
+    assert has(errors_after(unlisted), "login-api", "not in allow.apiOrigins")

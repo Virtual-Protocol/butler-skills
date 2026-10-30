@@ -72,31 +72,83 @@ LONG_SECRET_RE = re.compile(r"\b(?:sk-|brt_|ghp_|xox[bp]-)[A-Za-z0-9_-]{8,}|\b[0
 SIG_RE = re.compile(r"^0x[0-9a-fA-F]{130,}$")
 EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 MAX_STRING = 200
+MAX_WALLET_MESSAGE = 1200  # a sign-in message is read whole: domain, URI, chain
 MAX_LIST = 3
+# Same-site analytics the page posts to itself (seen live on polymarket.com: /_a/batch,
+# /api/_e/v1/track) and Cloudflare's bot check (/cdn-cgi/): never part of an action.
+ANALYTICS_PATH_RE = re.compile(r"/_[ae]/|/(track|identify|collect|telemetry|analytics|beacon)(/|$)|^/cdn-cgi/", re.I)
 SCRUBBED = "<scrubbed>"
+ADDRESS_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
+# Keys whose value is the test account's own address or id on the site (seen live on
+# polymarket.com's /v1/users/me: proxy_wallet, walletAddress, payout_address, userID).
+ACCOUNT_KEY_RE = re.compile(r"wallet|address|proxy|safe|deposit|funder|maker|owner|account|payout|user_?id", re.I)
+ACCOUNT_ID_KEY_RE = re.compile(r"^(user_?id|account_?id|userID|accountID)$", re.I)
 
 
-def scrub(value, owner: str | None):
+def aliases(owner: str | None, accounts=()) -> list[tuple[str, str]]:
+    """What scrub replaces: the test wallet → 0xOWNER (and its bare hex, inside calldata),
+    each account address the site gave it → 0xACCOUNT1…, each account id → <account-id-1>…"""
+    out: list[tuple[str, str]] = []
+    if owner:
+        out += [(owner.lower(), "0xOWNER"), (owner.lower()[2:], "OWNER")]
+    n_addr = n_id = 0
+    for value in accounts:
+        v = str(value).lower()
+        if owner and v == owner.lower():
+            continue
+        if ADDRESS_RE.match(v):
+            n_addr += 1
+            out += [(v, f"0xACCOUNT{n_addr}"), (v[2:], f"ACCOUNT{n_addr}")]
+        else:
+            n_id += 1
+            out.append((v, f"<account-id-{n_id}>"))
+    return sorted(out, key=lambda kv: -len(kv[0]))
+
+
+def account_values(node, contracts: set[str], found: dict) -> None:
+    """Collects the test account's own addresses and ids from a site answer: an address
+    under an account-ish key (never a contract the wallet signed for), and a user id."""
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if isinstance(v, str) and ADDRESS_RE.match(v) and ACCOUNT_KEY_RE.search(str(k)) and v.lower() not in contracts:
+                found.setdefault(v.lower(), None)
+            elif isinstance(v, (str, int)) and not isinstance(v, bool) and ACCOUNT_ID_KEY_RE.match(str(k)) and len(str(v)) >= 6:
+                found.setdefault(str(v).lower(), None)
+            else:
+                account_values(v, contracts, found)
+    elif isinstance(node, list):
+        for v in node:
+            account_values(v, contracts, found)
+
+
+def scrub(value, owner, max_string: int = MAX_STRING):
     """A copy of value safe to show Claude: secret-named keys and token-like strings
-    replaced, the test wallet's address → 0xOWNER, long lists and strings cut."""
+    replaced, the test wallet → 0xOWNER and the account's own addresses and ids → an
+    alias, long lists and strings cut. `owner` is an address, or aliases() output."""
+    if isinstance(owner, str):
+        owner = aliases(owner)
     if isinstance(value, dict):
-        return {k: (SCRUBBED if SECRET_KEY_RE.search(str(k)) else scrub(v, owner)) for k, v in value.items()}
+        return {k: (SCRUBBED if SECRET_KEY_RE.search(str(k)) else scrub(v, owner, max_string)) for k, v in value.items()}
     if isinstance(value, list):
-        out = [scrub(v, owner) for v in value[:MAX_LIST]]
+        out = [scrub(v, owner, max_string) for v in value[:MAX_LIST]]
         if len(value) > MAX_LIST:
             out.append(f"<{len(value) - MAX_LIST} more>")
         return out
     if isinstance(value, str):
         s = value
-        if owner:
-            s = re.sub(re.escape(owner), "0xOWNER", s, flags=re.I)
-            s = re.sub(re.escape(owner[2:]), "OWNER", s, flags=re.I)  # inside calldata
+        for old, new in owner or ():
+            if old in s.lower():
+                s = re.sub(re.escape(old), new, s, flags=re.I)
         if SIG_RE.match(s):
             return "0x<signature>"
         s = JWT_RE.sub(SCRUBBED, s)
         s = LONG_SECRET_RE.sub(SCRUBBED, s)
         s = EMAIL_RE.sub("<email>", s)
-        return s if len(s) <= MAX_STRING else s[:MAX_STRING] + "…"
+        return s if len(s) <= max_string else s[:max_string] + "…"
+    if isinstance(value, int) and not isinstance(value, bool):
+        for old, new in owner or ():
+            if old == str(value):
+                return new  # an account id sent as a number
     return value
 
 
@@ -124,22 +176,62 @@ def _parse_time(stamp: str) -> float:
     return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
 
 
-def har_events(har: dict, origins: set[str], started: float, owner: str | None) -> list[dict]:
-    """The HAR's requests to the site's own origins as timeline events: no headers at
-    all, no images/fonts/scripts, bodies scrubbed. `t` is seconds after `started`."""
+def site_of(host: str) -> str:
+    """The site a host belongs to: its last two labels (app.acme.example → acme.example).
+    Naive on purpose; a two-part suffix like co.uk needs --api-origin."""
+    return ".".join(host.split(".")[-2:])
+
+
+def same_site(origin: str, site_origin: str) -> bool:
+    """https://gamma-api.polymarket.com is the same site as https://polymarket.com."""
+    u, s = urlsplit(origin), urlsplit(site_origin)
+    return u.scheme in ("https", "wss") and bool(u.hostname) and site_of(u.hostname) == site_of(s.hostname or "")
+
+
+def _is_prefetch(req: dict) -> bool:
+    """A page prefetch (Next.js `RSC: 1` + `Next-Router-Prefetch`, `Purpose: prefetch`):
+    the router warming a link, never a step."""
+    h = {x.get("name", "").lower(): str(x.get("value", "")).lower() for x in req.get("headers", [])}
+    return h.get("next-router-prefetch") == "1" or "prefetch" in (h.get("purpose", "") + h.get("sec-purpose", "")) \
+        or "_rsc=" in req.get("url", "")
+
+
+def other_origins(har: dict, origins: set[str], site_origin: str) -> dict[str, dict]:
+    """Origins the page talked to that the recording leaves out: {origin: {requests, writes}}."""
+    out: dict[str, dict] = {}
+    for e in har.get("log", {}).get("entries", []):
+        if e.get("_resourceType") in DROP_RESOURCE_TYPES or e.get("_resourceType") == "script":
+            continue
+        u = urlsplit(e.get("request", {}).get("url", ""))
+        o = f"{u.scheme}://{u.netloc}"
+        if o in origins or same_site(o, site_origin) or u.scheme not in ("https", "http"):
+            continue
+        row = out.setdefault(o, {"requests": 0, "writes": 0})
+        row["requests"] += 1
+        row["writes"] += e["request"].get("method", "GET") not in ("GET", "HEAD")
+    return out
+
+
+def har_events(har: dict, origins: set[str], started: float, owner: str | None, site_origin: str | None = None) -> list[dict]:
+    """The HAR's requests to the site's own origins (and its same-site API hosts) as
+    timeline events: no headers at all, no images/fonts/scripts, no prefetches or
+    analytics, bodies scrubbed. `t` is seconds after `started`."""
     events = []
     for e in har.get("log", {}).get("entries", []):
         req, res = e.get("request", {}), e.get("response", {})
         url = req.get("url", "")
         u = urlsplit(url)
-        if f"{u.scheme}://{u.netloc}" not in origins:
+        o = f"{u.scheme}://{u.netloc}"
+        if o not in origins and not (site_origin and same_site(o, site_origin)):
             continue
-        if e.get("_resourceType") in DROP_RESOURCE_TYPES:
+        if e.get("_resourceType") in DROP_RESOURCE_TYPES or _is_prefetch(req) or ANALYTICS_PATH_RE.search(u.path):
             continue
         mime = (res.get("content") or {}).get("mimeType") or ""
         if DROP_MIME_RE.search(mime):
             continue
         request = {"method": req.get("method", "GET"), "path": _scrub_path(url, owner)}
+        if site_origin and o != site_origin:
+            request["origin"] = o  # a same-site API host or an --api-origin
         body = _json_or_text((req.get("postData") or {}).get("text"))
         if body is not None:
             request["body"] = scrub(body, owner)
@@ -162,7 +254,7 @@ def wallet_event(entry: dict, started: float, owner: str | None) -> dict:
         if isinstance(typed, dict):
             w["verifyingContract"] = (typed.get("domain") or {}).get("verifyingContract")
             w["primaryType"] = typed.get("primaryType")
-            w["message"] = scrub(typed.get("message"), owner)
+            w["message"] = scrub(typed.get("message"), owner, MAX_WALLET_MESSAGE)
     elif method == "eth_sendTransaction" and params and isinstance(params[0], dict):
         tx = params[0]
         w.update({"to": tx.get("to"), "value": tx.get("value"), "selector": (tx.get("data") or "")[:10] or None})
@@ -173,8 +265,8 @@ def wallet_event(entry: dict, started: float, owner: str | None) -> dict:
                 msg = bytes.fromhex(msg[2:]).decode("utf-8")
             except ValueError:
                 pass
-        w["message"] = scrub(msg, owner)
-    event = {"t": round(entry.get("t", started) - started, 1), "wallet": scrub(w, owner)}
+        w["message"] = scrub(msg, owner, MAX_WALLET_MESSAGE)
+    event = {"t": round(entry.get("t", started) - started, 1), "wallet": scrub(w, owner, MAX_WALLET_MESSAGE)}
     if "error" in entry:
         event["answer"] = {"error": scrub(entry["error"], owner)}
     else:
@@ -182,11 +274,11 @@ def wallet_event(entry: dict, started: float, owner: str | None) -> dict:
     return event
 
 
-def merge_run(run: dict, origins: set[str], owner: str | None) -> dict:
+def merge_run(run: dict, origins: set[str], owner: str | None, site_origin: str | None = None) -> dict:
     """One action run → its recording.json entry: requests, wallet calls, clicks and
     socket sends, in time order."""
     started = run["started"]
-    timeline = har_events(run.get("har") or {}, origins, started, owner)
+    timeline = har_events(run.get("har") or {}, origins, started, owner, site_origin)
     timeline += [wallet_event(w, started, owner) for w in run.get("wallet", [])]
     timeline += [
         {"t": round(c["t"] - started, 1), "click": scrub({k: v for k, v in c.items() if k != "t"}, owner)}
@@ -205,13 +297,42 @@ def merge_run(run: dict, origins: set[str], owner: str | None) -> dict:
 
 
 def build_recording(site: str, origin: str, runs: list[dict], owner: str | None, extra_origins=()) -> dict:
+    """recording.json from every run on disk."""
     origins = {origin.rstrip("/"), *(o.rstrip("/") for o in extra_origins)}
+    # First pass: what the site says about the test account (its own wallet on the site,
+    # its user id), so every later mention of it is hidden too, not just the test key's.
+    contracts = set()
+    for r in runs:
+        for w in r.get("wallet", []):
+            for prm in w.get("params") or []:
+                typed = prm if isinstance(prm, dict) else (_json_or_text(prm) if isinstance(prm, str) and prm.startswith("{") else None)
+                if isinstance(typed, dict):
+                    for c in (typed.get("to"), (typed.get("domain") or {}).get("verifyingContract")):
+                        if isinstance(c, str):
+                            contracts.add(c.lower())
+    found: dict = {}
+    for r in runs:
+        for e in (r.get("har") or {}).get("log", {}).get("entries", []):
+            account_values(_json_or_text((e.get("response", {}).get("content") or {}).get("text")), contracts, found)
+    owner = aliases(owner, list(found))
+    others: dict[str, dict] = {}
+    for r in runs:
+        for o, row in other_origins(r.get("har") or {}, origins, origin).items():
+            agg = others.setdefault(o, {"requests": 0, "writes": 0})
+            agg["requests"] += row["requests"]
+            agg["writes"] += row["writes"]
     return {
         "site": site,
         "origin": origin,
         "recorded": date.today().isoformat(),
         "note": "Scrubbed. Never commit the raw/ files this came from.",
-        "actions": [merge_run(r, origins, owner) for r in sorted(runs, key=lambda r: (r["action"], r["run"]))],
+        # Left out: other sites' hosts (wallet SDKs, RPCs, analytics). One the site's API
+        # really uses goes in with `scrub <site> --api-origin <origin>`.
+        "otherOrigins": dict(sorted(others.items(), key=lambda kv: -kv[1]["requests"])),
+        "actions": [merge_run(r, origins, owner, origin) for r in sorted(runs, key=lambda r: (r["action"], r["run"]))],
+        # Popped by write_recording into raw/aliases.json (never committed): try-calls
+        # puts the real values back to call the site.
+        "_aliases": owner,
     }
 
 
@@ -264,10 +385,15 @@ def runs_on_disk(work: Path) -> list[dict]:
 def write_recording(work: Path, conf: dict) -> Path:
     owner = conf.get("address")
     rec = build_recording(conf["site"], conf["origin"], runs_on_disk(work), owner, conf.get("apiOrigins", []))
+    (work / "raw" / "aliases.json").write_text(json.dumps(rec.pop("_aliases"), indent=1) + "\n")
     out = work / "recording.json"
     out.write_text(json.dumps(rec, indent=1, ensure_ascii=False) + "\n")
     size = out.stat().st_size
     print(f"wrote {out} ({size // 1024} KB, {len(rec['actions'])} run(s))")
+    writers = [o for o, row in rec["otherOrigins"].items() if row["writes"]]
+    if writers:
+        print(f"  left out, but the page wrote to: {', '.join(writers[:6])}")
+        print("  if one is the site's own API, add it: site.py scrub <site> --api-origin <origin>")
     if size > 200 * 1024:
         print("  note: over 200 KB — record fewer runs, or check for a big answer worth dropping")
     return out
@@ -294,7 +420,7 @@ WALLET_JS = r"""
   };
   window.ethereum = provider;
   const info = { uuid: 'b0a1e7c2-5e1f-4c1d-9a3b-7e57b0717e57', name: 'Butler Test Wallet',
-                 icon: 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22/%3E', rdns: 'gg.virtuals.butler-test' };
+                 icon: 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#2f5bea"/><text x="16" y="22" font-family="Arial" font-size="17" font-weight="700" fill="#fff" text-anchor="middle">B</text></svg>'), rdns: 'gg.virtuals.butler-test' };
   const announce = () => window.dispatchEvent(new CustomEvent('eip6963:announceProvider', { detail: Object.freeze({ info, provider }) }));
   window.addEventListener('eip6963:requestProvider', announce);
   announce();
@@ -406,6 +532,11 @@ def load_key(work: Path, create: bool) -> str:
     return p.read_text().strip()
 
 
+def browser_channel() -> str | None:
+    """SITE_BROWSER_CHANNEL=chrome runs your installed Chrome instead of Playwright's Chromium."""
+    return os.environ.get("SITE_BROWSER_CHANNEL") or None
+
+
 def run_browser(work: Path, conf: dict, action: str, run_no: int, usd, body, headless: bool = False) -> None:
     """One action run in a headed Chromium with the HAR, trace, wallet, click and socket
     logs on; `body(page)` does the action. Writes raw/<action>-<run>.*"""
@@ -422,7 +553,7 @@ def run_browser(work: Path, conf: dict, action: str, run_no: int, usd, body, hea
         ctx = p.chromium.launch_persistent_context(
             str(work / "profile"),
             headless=headless,
-            channel=os.environ.get("SITE_BROWSER_CHANNEL") or None,
+            channel=browser_channel(),
             base_url=conf["origin"],
             record_har_path=str(raw / f"{stem}.har"),
             record_har_content="embed",
@@ -536,12 +667,22 @@ def cmd_replay(args) -> int:
     return 1 if failed else 0
 
 
+def unalias(text: str, pairs) -> str:
+    """The real values back into a scrubbed path: 0xOWNER → the test wallet, and so on.
+    Longest alias first, so 0xACCOUNT12 is never read as 0xACCOUNT1 + "2"."""
+    for real, alias in sorted(pairs, key=lambda kv: -len(kv[1])):
+        text = text.replace(alias, real)
+    return text
+
+
 def cmd_try_calls(args) -> int:
     from playwright.sync_api import sync_playwright
 
     work = work_dir(args)
     conf = load_site(work)
     rec = json.loads((work / "recording.json").read_text())
+    aliases_file = work / "raw" / "aliases.json"
+    back = json.loads(aliases_file.read_text()) if aliases_file.is_file() else []
     writes = set(args.write or [])
     seen, todo = set(), []
     for run in rec["actions"]:
@@ -549,36 +690,46 @@ def cmd_try_calls(args) -> int:
             req = ev.get("request")
             if not req:
                 continue
-            key = (req["method"], req["path"])
+            key = (req["method"], req.get("origin", ""), req["path"])
             if key in seen:
                 continue
             seen.add(key)
+            if req.get("origin", "").startswith("wss://"):
+                continue  # a websocket opening, not a call
             if req["method"] == "GET" or req["path"].split("?")[0] in writes:
                 todo.append((run["action"], req, ev.get("answer") or {}))
-    if any(SCRUBBED in r["path"] or "0xOWNER" in r["path"] for _, r, _ in todo):
+    if any(SCRUBBED in r["path"] for _, r, _ in todo):
         print("note: some paths hold scrubbed values; those calls will differ from the recording")
     results = []
     with sync_playwright() as p:
-        ctx = p.chromium.launch_persistent_context(str(work / "profile"), headless=True, base_url=conf["origin"])
+        ctx = p.chromium.launch_persistent_context(str(work / "profile"), headless=True, channel=browser_channel(), base_url=conf["origin"])
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         page.goto("/")
         for action, req, answer in todo:
-            path = req["path"].replace("0xOWNER", conf.get("address") or "0xOWNER")
+            # A same-site API host's request carries its origin; the page's own has none.
+            path = req.get("origin", "") + unalias(req["path"], back)
             body = None if req["method"] == "GET" else json.dumps(req.get("body"))
-            called = page.evaluate(
-                """async ([path, method, body]) => {
-                    const r = await fetch(path, { method, body, credentials: 'include',
-                        headers: body ? { 'Content-Type': 'application/json' } : {} });
-                    const text = await r.text();
-                    let parsed = text; try { parsed = JSON.parse(text); } catch (e) {}
-                    return { status: r.status, body: parsed };
-                }""",
-                [path, req["method"], body],
-            )
+            try:
+                called = page.evaluate(
+                    """async ([path, method, body]) => {
+                        const go = (credentials) => fetch(path, { method, body, credentials,
+                            headers: body ? { 'Content-Type': 'application/json' } : {} });
+                        // With cookies first (the page's own API); a host that refuses
+                        // cookies from this page (CORS) is tried without them.
+                        let r; try { r = await go('include'); } catch (e) { r = await go('omit'); }
+                        const text = await r.text();
+                        let parsed = text; try { parsed = JSON.parse(text); } catch (e) {}
+                        return { status: r.status, body: parsed };
+                    }""",
+                    [path, req["method"], body],
+                )
+            except Exception as e:  # CORS, a network error: the call does not work from the page
+                called = {"status": None, "body": str(e).splitlines()[0][:200]}
             verdict = compare_answers(answer, called)
-            results.append({"action": action, "method": req["method"], "path": req["path"], "recordedStatus": answer.get("status"),
+            results.append({"action": action, "method": req["method"], "origin": req.get("origin", conf["origin"]),
+                            "path": req["path"], "recordedStatus": answer.get("status"),
                             "callStatus": called["status"], **verdict})
-            print(f"  {'call ok ' if verdict['callWorks'] else 'click   '} {req['method']} {req['path']}")
+            print(f"  {'call ok ' if verdict['callWorks'] else 'differs '} {req['method']} {req.get('origin', '')}{req['path'][:90]}")
         ctx.close()
     out = work / "call-vs-click.json"
     out.write_text(json.dumps(results, indent=1) + "\n")
@@ -588,7 +739,11 @@ def cmd_try_calls(args) -> int:
 
 def cmd_scrub(args) -> int:
     work = work_dir(args)
-    write_recording(work, load_site(work))
+    conf = load_site(work)
+    if args.api_origin:
+        conf["apiOrigins"] = sorted(set(conf.get("apiOrigins", [])) | {o.rstrip("/") for o in args.api_origin})
+        save_site(work, conf)
+    write_recording(work, conf)
     return 0
 
 
@@ -632,6 +787,7 @@ def main(argv: list[str] | None = None) -> int:
 
     s = sub.add_parser("scrub", help="rebuild recording.json from raw/")
     common(s)
+    s.add_argument("--api-origin", action="append", help="also keep this origin's requests (saved for later runs)")
     s.set_defaults(fn=cmd_scrub)
 
     args = parser.parse_args(argv)

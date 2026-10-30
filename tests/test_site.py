@@ -131,3 +131,34 @@ def test_the_recording_wallet_signs_and_logs_and_never_sends_without_rpc():
     assert [e["method"] for e in w.log] == ["eth_requestAccounts", "personal_sign", "eth_sendTransaction", "eth_sign"]
     json.loads(w.handle(json.dumps({"method": "wallet_switchEthereumChain", "params": [{"chainId": "0x89"}]})))
     assert w.chain_id == 137
+
+
+def test_a_sign_in_message_is_kept_whole():
+    msg = "polymarket.com wants you to sign in with your Ethereum account:\n" + OWNER + "\n\n" + "URI: https://polymarket.com\nVersion: 1\nChain ID: 137\nNonce: abc\nIssued At: 2026-10-30T04:00:00Z" + "\n" * 1 + "x" * 150
+    ev = site.wallet_event({"t": T0, "method": "personal_sign", "params": ["0x" + msg.encode().hex(), OWNER], "chainId": 137, "result": "0x" + "ab" * 65}, T0, OWNER)
+    assert ev["wallet"]["message"].endswith("x" * 150) and "0xOWNER" in ev["wallet"]["message"]
+
+
+def test_prefetches_analytics_and_other_sites_are_left_out_but_listed():
+    har = {"log": {"entries": [
+        entry(f"{ORIGIN}/event/x?_rsc=abc"),
+        entry(f"{ORIGIN}/_a/batch", "POST", body={"e": 1}),
+        entry(f"{ORIGIN}/api/_e/v1/track", "POST", body={"e": 1}),
+        entry("https://gamma-api.acme.example/v1/login", "POST", body={"ok": 1}, answer={"ok": True}),
+        entry("https://rpc.other.example/", "POST", body={"jsonrpc": "2.0"}),
+    ]}}
+    events = site.har_events(har, {ORIGIN}, 0.0, OWNER, ORIGIN)
+    assert [(e["request"].get("origin"), e["request"]["path"]) for e in events] == [("https://gamma-api.acme.example", "/v1/login")]
+    assert site.other_origins(har, {ORIGIN}, ORIGIN) == {"https://rpc.other.example": {"requests": 1, "writes": 1}}
+
+
+def test_the_accounts_own_site_addresses_and_ids_are_hidden_but_contracts_are_not():
+    proxy = "0x" + "b2" * 20
+    usdc = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+    found: dict = {}
+    site.account_values({"proxy_wallet": proxy, "userID": 10082923, "token": {"address": usdc}}, {usdc.lower()}, found)
+    assert list(found) == [proxy, "10082923"]
+    names = site.aliases(OWNER, list(found))
+    out = site.scrub({"path": f"/v2/positions?user={proxy}", "userID": 10082923, "spender": usdc, "maker": OWNER}, names)
+    assert out == {"path": "/v2/positions?user=0xACCOUNT1", "userID": "<account-id-1>", "spender": usdc, "maker": "0xOWNER"}
+    assert site.unalias("/v2/positions?user=0xACCOUNT1&by=0xOWNER", [[proxy, "0xACCOUNT1"], [OWNER, "0xOWNER"]]) == f"/v2/positions?user={proxy}&by={OWNER}"
