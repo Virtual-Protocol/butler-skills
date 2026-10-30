@@ -111,7 +111,13 @@ RESERVED_NAMES_BUILTIN = frozenset({
 
 # Tooling a template author downloads next to recipe.json to validate locally;
 # it must never be committed into the template — warn when seen.
-TOOLING_FILES = ("validate.py", "replay.py", "stub_bevo.py")
+TOOLING_FILES = ("validate.py", "venue.py", "replay.py", "stub_bevo.py")
+# What site.py writes to the scratchpad and never into a skill repo (docs/site-skills,
+# guide Part 5, Step 1): the raw HAR, trace and wallet log, the test key, the screens,
+# and recording.json (scrubbed, but it still holds whole answers).
+RAW_RECORDING_RE = re.compile(
+    r"(^|/)(raw/|screens/)|\.har$|(^|/)trace\.zip$|(^|/)wallet\.json$|\.key$|(^|/)recording\.json$"
+)
 
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,63}$")
 SUPERSEDES_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,63}@\d+$")
@@ -1481,6 +1487,13 @@ def skill_published_files(skill_dir: Path) -> list[str]:
     return files
 
 
+def skill_venue_files(skill_dir: Path) -> list[str]:
+    """A site skill's venue.yaml and venue.test.yaml, those present. The hub publishes
+    them under the row's `venue`, for the server; they are not in `files`, so a butler
+    never installs them."""
+    return [n for n in ("venue.yaml", "venue.test.yaml") if (skill_dir / n).is_file() and not (skill_dir / n).is_symlink()]
+
+
 def check_skill_layout(skill_dir: Path, issues: Issues) -> None:
     """SKILL.md, README.md and CHANGELOG.md at the root; the same tree rules as a
     template (no symlinks, no nested repos, 50 files / 1 MB)."""
@@ -1524,6 +1537,13 @@ def check_skill_layout(skill_dir: Path, issues: Issues) -> None:
     for sub in ("scripts", "assets"):
         if (skill_dir / sub).is_dir():
             issues.warn("layout", f"{sub}/ is not published — only SKILL.md and references/**/*.md reach the butler")
+    for p, rel in iter_tree(skill_dir):
+        if p.is_file() and not p.is_symlink() and RAW_RECORDING_RE.search(rel):
+            issues.error(
+                "layout",
+                f"{rel} is a raw recording file — it can hold cookies, tokens or the test key; "
+                "keep it in your scratchpad, never in the repo (security-rules.md S8)",
+            )
     for tool in TOOLING_FILES:
         if (skill_dir / tool).is_file():
             issues.warn("layout", f"{tool} looks like downloaded hub tooling — keep it out of the commit")
@@ -2001,6 +2021,7 @@ def validate_skill(
             )
 
     check_skill_changelog(skill_dir, version if isinstance(version, str) else None, issues)
+    check_venue(skill_dir, issues)
 
     skill_name = name if isinstance(name, str) and name else skill_dir.name
     cost = prompt_cost(skill_name, description if isinstance(description, str) else "", f"skills/{skill_name}/SKILL.md")
@@ -2014,6 +2035,65 @@ def validate_skill(
         "warnings": issues.warnings,
         "promptCost": cost,
     }
+
+
+# --- venue file (site skills) -------------------------------------------------------------
+
+
+_VENUE = None
+
+
+def venue_module():
+    """scripts/venue.py, loaded by path (the hub tooling runs from $RUNNER_TEMP, not an
+    installed package)."""
+    global _VENUE
+    if _VENUE is None:
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("butler_skills_venue", Path(__file__).resolve().parent / "venue.py")
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+        _VENUE = module
+    return _VENUE
+
+
+def check_venue(skill_dir: Path, issues: Issues) -> None:
+    """A site skill's venue.yaml (docs/site-skills/butler-site-skill-guide.md, Part 7):
+    the allow-list, the actions and the daily check, against venue.py's rules; and
+    both venue files against the credential lint (S8). A skill with no venue file
+    is untouched."""
+    venue = skill_dir / "venue.yaml"
+    test = skill_dir / "venue.test.yaml"
+    if not venue.is_file():
+        if test.is_file():
+            issues.error("venue.test.yaml", "there is no venue.yaml for it to test")
+        return
+    # Only now: a skill repo's own CI may run this file alone, with no venue.py beside it.
+    try:
+        v = venue_module()
+    except FileNotFoundError:
+        issues.error("venue.yaml", "scripts/venue.py checks a venue file: fetch it beside validate.py")
+        return
+    for f in (venue, test):
+        if f.is_file():
+            text = f.read_text(encoding="utf-8", errors="replace")
+            for pat in SECRET_PATTERNS:
+                m = pat.search(text)
+                if m:
+                    issues.error(f.name, f"looks like a credential: {m.group(0)[:12]}... (S8)")
+    try:
+        doc = v.load_venue(venue)
+    except ImportError:
+        issues.error(v.VENUE_FILE, "PyYAML is needed to check a venue file: pip install pyyaml")
+        return
+    except ValueError as exc:
+        issues.error(v.VENUE_FILE, str(exc))
+        return
+    for e in v.venue_errors(doc):
+        issues.error(v.VENUE_FILE, e)
+    if not test.is_file():
+        issues.warn(v.VENUE_FILE, f"no {v.VENUE_TEST_FILE}: the recorded walkthrough is the venue's test (guide Step 2)")
 
 
 # --- orchestration -----------------------------------------------------------------------

@@ -527,3 +527,29 @@ def test_malformed_translations_fail_the_build(tmp_path, monkeypatch):
     assert "the last deploy stays live" in str(e.value)
     assert not (tmp_path / "repo" / "dist").exists()
 
+
+
+def test_a_site_skill_publishes_its_venue_files_for_the_server_only(tmp_path, monkeypatch):
+    """venue.yaml and venue.test.yaml are pinned like every file, but under `venue`,
+    not `files`: a butler installs `files`, and the venue file is the server's."""
+    pytest.importorskip("yaml")
+    src = tmp_path / "site-src"
+    listing = [{"name": "site-venue", "repo": _skill_repo(src, "site-venue"), "ref": "main"}]
+    index = _build(tmp_path / "one", monkeypatch, skills=listing)
+    [row] = index["skills"]
+    assert [f["path"] for f in row["files"]] == ["SKILL.md", "references/sizing.md"]
+    assert [f["path"] for f in row["venue"]["files"]] == ["venue.yaml", "venue.test.yaml"]
+    dist = tmp_path / "one" / "repo" / "dist" / "skills" / "site-venue" / "1.0.0"
+    for f in row["venue"]["files"]:
+        blob = (dist / f["path"]).read_bytes()
+        assert blob == (src / f["path"]).read_bytes()
+        assert f["sha256"] == hashlib.sha256(blob).hexdigest() and f["bytes"] == len(blob)
+    schema = json.loads((REPO_ROOT / "schema" / "index.schema.json").read_text())
+    assert set(row) <= set(schema["definitions"]["skill"]["properties"])
+
+    # a changed venue file under the same version is refused, like a changed SKILL.md
+    (src / "venue.yaml").write_text((src / "venue.yaml").read_text().replace("max: 1000, required: true }\n    card:\n      title: \"Open", "max: 900, required: true }\n    card:\n      title: \"Open"))
+    git("commit", "-qam", "widen", cwd=src)
+    with pytest.raises(SystemExit) as e:
+        _build(tmp_path / "two", monkeypatch, skills=listing, live=index)
+    assert "refusing to republish site-venue@1.0.0 with different bytes" in str(e.value) and "venue.yaml" in str(e.value)

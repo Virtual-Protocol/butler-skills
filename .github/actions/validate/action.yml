@@ -69,6 +69,14 @@ runs:
       with:
         python-version: "3.11"
 
+    # A site skill's venue.yaml is YAML: the one check that needs a package outside
+    # the standard library (scripts/venue.py).
+    - name: Install PyYAML (venue files)
+      shell: bash
+      run: |
+        set -eu
+        if [ -f "${{ inputs.path }}/venue.yaml" ]; then pip install --quiet pyyaml; fi
+
     # validate.py reads the kind off the repo: SKILL.md (and no recipe.json) is a skill,
     # recipe.json is a duty template, both is refused.
     - name: Validate the skill or template

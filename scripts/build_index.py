@@ -16,6 +16,7 @@ cross-references yanked.json, and writes:
     dist/index.json
     dist/templates/<name>/<version>/{recipe.json,duty.py,README.md}
     dist/skills/<name>/<X.Y.Z>/{SKILL.md,references/**/*.md}
+    dist/skills/<name>/<X.Y.Z>/{venue.yaml,venue.test.yaml}   (site skills; the row's `venue`)
 Nothing about a template's or skill's content is stored in this repository;
 the clones are deleted when the build ends. The index is the only published
 description of either — there is no checked-in mirror of it to drift.
@@ -404,6 +405,14 @@ def collect_skill(skill_dir: Path, entry: dict) -> dict:
     }
     row["source"] = source_block(skill_dir, entry)
     row["files"] = files
+    venue = [
+        {"path": rel, "sha256": sha256_file(skill_dir / rel), "bytes": (skill_dir / rel).stat().st_size}
+        for rel in v.skill_venue_files(skill_dir)
+    ]
+    if venue:
+        # A site skill's venue file, for the server only (docs/site-skills, Part 9): kept
+        # out of `files`, so a butler never installs it. Pinned like every other file.
+        row["venue"] = {"files": venue}
     return row
 
 
@@ -488,7 +497,8 @@ def check_skill_immutability(rows: list[dict], live: dict | None) -> None:
             raise SystemExit(
                 f"refusing to republish {ref}: the live index has it yanked — publish a new version instead"
             )
-        before, after = _file_set(old.get("files")), _file_set(row["files"])
+        before = _file_set(old.get("files")) | _file_set((old.get("venue") or {}).get("files"))
+        after = _file_set(row["files"]) | _file_set(row.get("venue", {}).get("files"))
         if before != after:
             changed = sorted({p for p, _, _ in before ^ after if p})
             raise SystemExit(
@@ -499,7 +509,7 @@ def check_skill_immutability(rows: list[dict], live: dict | None) -> None:
 
 def write_skill_dist_files(skill_dir: Path, row: dict, dist_root: Path, dry_run: bool) -> None:
     version_dir = dist_root / "skills" / row["name"] / row["version"]
-    paths = [f["path"] for f in row["files"]]
+    paths = [f["path"] for f in row["files"] + row.get("venue", {}).get("files", [])]
     if version_dir.exists():
         for rel in paths:
             dst = version_dir / rel

@@ -1,0 +1,100 @@
+# The guide's Acme Perps example (docs/site-skills/butler-site-skill-guide.md, Part 7),
+# with a real-shaped vault address: a venue file that passes every check.
+venue: acme-perps
+origin: https://app.acme.example
+chains: [8453]
+moneyBy: session
+login: wallet
+keepLogin: true
+
+allow:
+  apiPrefix: /api/
+  calls:
+    - { id: session,  method: POST, path: /api/auth/refresh,  kind: free }
+    - { id: quote,    method: POST, path: /api/quotes,        kind: free, record: true }
+    - { id: order,    method: POST, path: /api/orders,        kind: money }
+    - { id: withdraw, method: POST, path: /api/withdrawals,   kind: money }
+  reads:
+    - { id: markets,   path: /api/markets }
+    - { id: order-by-id, path: "/api/orders/{id}" }
+    - { id: balance,   path: /api/account/balance }
+  signatures:
+    - id: login
+      kind: sign-in
+    - id: deposit-permit
+      kind: eip712
+      primaryType: Permit
+      domain: { name: "USD Coin", chainId: 8453, verifyingContract: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" }
+      fields:
+        owner:    { equals: "{wallet}" }
+        spender:  { equals: "0x1111111111111111111111111111111111111111" }
+        value:    { card: usd, rule: at-most }
+        deadline: { rule: within-seconds, value: 600 }
+  sources:
+    "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913": https://developers.circle.com/stablecoins/usdc-contract-addresses
+    "0x1111111111111111111111111111111111111111": https://docs.acme.example/contracts
+
+actions:
+  login:
+    signatures: [login]
+    steps:
+      - goto: "/"
+      - click: "Connect"
+    returns: [address]
+
+  positions:
+    steps:
+      - call: { read: balance, as: bal }
+    returns: [equity, positions]
+
+  open:
+    description: Open a market position
+    args:
+      market: { type: enum, from: markets.symbol, required: true }
+      side:   { type: enum, values: [long, short], required: true }
+      usd:    { type: usd, min: 1, max: 1000, required: true }
+    card:
+      title: "Open a ${usd} {side} on {market} on Acme Perps"
+      facts:
+        - [Size, "${usd}"]
+    money:
+      order:
+        once: true
+        body:
+          market: { equals: "{market}" }
+          side:   { equals: "{side}" }
+          usd:    { card: usd, rule: at-most }
+          quoteId: { recorded: quote }
+    steps:
+      - call:      { read: markets, as: markets }
+      - pick:      { from: markets, where: { symbol: "{market}" }, as: m, else: stop }
+      - call:      { id: quote, body: { market: "{m.id}", usd: "{usd}" }, as: q }
+      - check:     { that: "q.slippage <= 0.01", else: stop }
+      - send-once: { id: order, body: { market: "{m.id}", side: "{side}", usd: "{usd}", quoteId: "{q.id}" }, as: o }
+      - confirm:   { read: order-by-id, with: { id: "{o.id}" }, until: "status == 'filled'", timeoutSec: 60 }
+    returns: [orderId, status]
+
+  withdraw:
+    args:
+      usd: { type: usd, min: 3, max: 1000, required: true }
+    card:
+      title: "Withdraw ${usd} from Acme Perps to your Butler wallet"
+    money:
+      withdraw:
+        once: true
+        body:
+          usd: { card: usd, rule: at-most }
+    steps:
+      - send-once: { id: withdraw, body: { usd: "{usd}" }, as: w }
+      - confirm:   { read: balance, until: "cash dropped", timeoutSec: 90 }
+    returns: [status]
+
+canary:
+  - { action: login }
+  - action: open
+    args:
+      market: { pick: markets, where: { symbol: ETH }, field: symbol }
+      side: long
+      usd: 1
+    stopAt: [order]
+  - { action: withdraw, args: { usd: 3 }, stopAt: [withdraw] }

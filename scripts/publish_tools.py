@@ -8,6 +8,8 @@ publish.yml runs this after building the index, so the Pages site serves, next t
 templates/:
 
     tools/validate.py            <- scripts/validate.py        (single-file validator)
+    tools/venue.py               <- scripts/venue.py           (venue.yaml checks; a site skill
+                                                               fetches it beside validate.py)
     tools/replay.py              <- tests/replay.py            (offline replay harness)
     tools/stub_bevo.py           <- tests/stub_bevo.py         (the `bevo` stand-in replay.py loads)
     tools/fixtures/<file>        <- every regular file directly under tests/fixtures/
@@ -33,6 +35,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 TOOL_FILES: list[tuple[str, str]] = [
     ("scripts/validate.py", "validate.py"),
+    ("scripts/venue.py", "venue.py"),
     ("tests/replay.py", "replay.py"),
     ("tests/stub_bevo.py", "stub_bevo.py"),
 ]

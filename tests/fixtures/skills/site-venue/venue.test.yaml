@@ -1,0 +1,11 @@
+recorded: 2026-11-01
+actions:
+  open:
+    - request: { method: GET, path: /api/markets }
+      answer: { status: 200, body: [{ id: m-eth, symbol: ETH }] }
+    - request: { method: POST, path: /api/quotes, body: { market: m-eth, usd: "5" } }
+      answer: { status: 200, body: { id: q-1, price: "3412.1", slippage: 0.002 } }
+    - request: { method: POST, path: /api/orders, body: { market: m-eth, side: long, usd: "5", quoteId: q-1 } }
+      answer: { status: 200, body: { id: o-1, status: pending } }
+    - request: { method: GET, path: /api/orders/o-1 }
+      answer: { status: 200, body: { id: o-1, status: filled } }

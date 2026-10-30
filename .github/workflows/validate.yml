@@ -23,8 +23,8 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install pytest
-        run: pip install --quiet pytest
+      - name: Install pytest and PyYAML (venue files)
+        run: pip install --quiet pytest pyyaml
 
       - name: Registry listing
         # templates.json and skills.json ARE the registry: a name and a GitHub link
