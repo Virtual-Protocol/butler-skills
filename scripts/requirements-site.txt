@@ -1,0 +1,5 @@
+# scripts/site.py only (the site recorder, developer laptops). Every other script in
+# this repo stays standard-library only; venue checks need PyYAML (validate.py).
+playwright>=1.48
+eth-account>=0.13
+pyyaml>=6

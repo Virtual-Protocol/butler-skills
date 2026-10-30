@@ -14,6 +14,13 @@ mistake, or a stolen account). Each rule below closes one way they could move mo
 "Already exists" was checked against `bevo-server` `dev`, `butler-skills` `main` and the
 GitHub settings on 2026-10-27.
 
+**Update 2026-10-30.** `butler-skills` now lints venue files (`scripts/venue.py`, run by
+`validate.py` and by every hub build). It refuses a file that breaks S2, S4, S6, S7 or S9,
+and S8's raw files, before review. That is the file-level half only: the server must still
+enforce each rule at run time, because the engine checks every held request and signature
+itself. Where a rule below says "false for venue files", read it as "linted, not yet
+enforced by the server".
+
 ### S1. A moved tag skips the review
 
 **Problem (risk):** `skills.json` points at a tag name, such as `v1.3.0`. Anyone with write
@@ -137,8 +144,10 @@ can carry cookies, API keys, account ids or emails that the scrub missed.
 - Screenshots and raw HAR / trace files are never committed.
 
 **Already exists: partly.** `validate.py` has a credential lint (`check_secrets_and_urls`),
-but only on published files (`SKILL.md`, `references/`). `venue.test.yaml` and `record/` are
-not checked.
+on published files (`SKILL.md`, `references/`), and since 2026-10-30 on `venue.yaml` and
+`venue.test.yaml` too; `validate.py` also refuses raw HAR / trace / key / `screens/` /
+`recording.json` files in the repo. `record/*.py` is not checked yet, and there is no
+gitleaks run.
 
 ### S9. Duties that move money with no card per run
 

@@ -362,8 +362,8 @@ the site's skill repo:
 ```sh
 # once per laptop
 cd ~/bevo/butler-skills
-pip install -r scripts/requirements-site.txt     # playwright; the other scripts stay stdlib-only
-playwright install chromium
+pip install -r scripts/requirements-site.txt     # playwright, eth-account, pyyaml
+playwright install chromium                      # or SITE_BROWSER_CHANNEL=chrome for your own Chrome
 ```
 
 Then, from the `butler-skills` folder:
@@ -371,31 +371,54 @@ Then, from the `butler-skills` folder:
 ```sh
 # 1a. Record: opens Chromium + the Playwright Inspector, one recording per action.
 #     --repo is the skill repo folder; it is created if missing, and record/ goes there.
-python3 scripts/site.py record acme-perps --repo ../butler-skill-acme-perps \
-    --actions login,deposit,open,close,withdraw,logout
+python3 scripts/site.py record acme-perps --origin https://app.acme.example \
+    --repo ../butler-skill-acme-perps --actions login,deposit,open,close,withdraw,logout
+#     Options: --chain-id 8453 (the wallet's first chain), --rpc <url> (without it the
+#     wallet refuses every transaction: nothing is sent), --api-origin <url> (repeatable).
 
-# 1b. Replay the money actions with other small amounts
+# 1b. Replay the money actions with other small amounts (--headless: no window)
 python3 scripts/site.py replay acme-perps --actions deposit,open,withdraw --usd 2,3
 
-# 1c. For each step, try the same request as a call; write call-vs-click.json
+# 1c. Send each recorded GET again as a call from inside the page; write
+#     call-vs-click.json. A write is sent only when you name it (--write /api/x):
+#     it can move money.
 python3 scripts/site.py try-calls acme-perps
+
+# Rebuild recording.json from raw/ (record and replay already do)
+python3 scripts/site.py scrub acme-perps
 ```
+
+During 1a, `record` opens the browser on the site and pauses. Press **Record** in the
+Playwright Inspector, do the action once, then copy the Inspector's lines into
+`record/<action>.py` (the recorder writes a stub with a `run(page, usd)` function) and
+press **Resume**. The next action opens next.
 
 Everything lands in one folder:
 
 ```
-<scratchpad>/acme-perps/
+~/.cache/butler-site/acme-perps/     (or --work <dir>; never inside a repo)
   raw/                          NEVER committed, deleted after Step 4
-    acme-perps.har              every request + answer (cookies and tokens included)
-    trace.zip                   Playwright trace: actions, network, DOM, screenshots
-    wallet.json                 every wallet call, unscrubbed
-  record/                       copied into the skill repo
-    open.py                     one Playwright script per action
-    withdraw.py
+    open-1.har                  every request + answer (cookies and tokens included)
+    open-1.trace.zip            Playwright trace: actions, network, DOM, screenshots
+    open-1.wallet.json          every wallet call, unscrubbed
+    open-1.clicks.json          every click: role + name
+    open-1.sockets.json         every websocket message the page sent
+    open-1.meta.json            action, run, amount, start time
+  profile/                      the browser profile: the login is kept between runs
+  test-wallet.key               the TEST key (made on the first record; a few dollars only)
+  site.json                     origin, repo, actions, chain: later commands need only <site>
   recording.json                the scrubbed timeline Claude reads (below)
-  call-vs-click.json            per step: call passed? click passed? in how many replays
-  screens/                      one screenshot per step, from the trace
+  call-vs-click.json            per recorded GET: does the call answer like the click did?
+
+../butler-skill-acme-perps/record/   in the skill repo, committed
+  open.py                       one Playwright script per action: run(page, usd)
+  withdraw.py
 ```
+
+One file set per run: `open-1` is the recording, `open-2`, `open-3` the replays.
+There is no `screens/` folder: open the trace (trace.playwright.dev) to see the page at
+each step. `validate.py` refuses a skill repo holding any raw file, a key, `screens/`
+or `recording.json` (security-rules.md S8).
 
 #### How the Playwright data reaches Claude
 
@@ -450,23 +473,6 @@ the raw HAR           never, unless you ask for one request by path
 
 The reviewer in Step 4 can open the same `trace.zip` at trace.playwright.dev and check each
 allow-list line against what really happened.
-
-**If `scripts/site.py` is not built yet**, paste this into Claude Code once, to have it
-write the recorder in your scratchpad:
-
-```
-Write the recorder from Part 5, Step 1 of ~/bevo/butler-skills/docs/site-skills/butler-site-skill-guide.md as a
-Python Playwright script in my scratchpad (later: butler-skills/scripts/site.py).
-It must:
-  - launch headed Chromium with a fresh persistent profile
-  - add the recording wallet: an init script with an EIP-1193 wallet backed by the
-    TEST key in <scratchpad>/<site>/test-wallet.key, logging every request
-  - record a HAR of the site's origin, tracing with screenshots and DOM snapshots,
-    and every websocket frame the page sends
-  - call page.pause() so I can record each action in the Playwright Inspector
-  - support the replay and try-calls commands as described
-  - end by writing the folder layout and the scrubbed recording.json shown in the guide
-```
 
 **The recording wallet.** Replays must not wait for a person to approve a popup. So the
 recording uses a small wallet of our own, added by an init script, backed by a **test key
@@ -1313,23 +1319,31 @@ actions:
       answer: { status: 200, body: { id: o-1, status: filled } }
 ```
 
-### What the registry needs to change
+### What the registry checks and publishes (built)
 
 ```
-validate.py          check venue.yaml against schema/venue.schema.json, plus the
-                     allow-list linter (no unlimited approve, every money field tied
-                     to the card, ...). Today extra root files are not checked.
-                     The `canary` block (Step 7) too: every money action in it has a
-                     `stopAt`; each `stopAt` is an allow.calls id of kind money or an
-                     allow.signatures id; each `action` exists in the file; each `pick`
-                     reads an allow.reads id.
-build_index.py       publish venue.yaml and venue.test.yaml beside SKILL.md (today only
-                     SKILL.md and references/**/*.md are published), with their sha256
-                     like every other file.
+scripts/venue.py     the venue file's rules (PyYAML; only a skill with venue.yaml needs it):
+                     top keys; the allow-list (ids unique, calls under apiPrefix, every
+                     contract in sources, no unlimited approve, no setApprovalForAll,
+                     a key-granting signature forces moneyBy: session); the actions
+                     (typed args only, never an address, every send-once tied to the
+                     card, a card for every money action, card text from args only,
+                     goto stays on the origin, confirm reads the API, duty: false);
+                     and the canary block (every money step has a stopAt naming a
+                     money call or signature; actions and picks exist; login first)
+validate.py          runs venue.py when a skill has venue.yaml; credential-lints both
+                     venue files; refuses raw recording files in the repo (S8)
+build_index.py       publishes venue.yaml and venue.test.yaml under the skill row's
+                     `venue`: {files: [{path, sha256, bytes}]}. Not in `files`, so a
+                     butler never installs them. Immutable per version, like SKILL.md.
+publish_tools.py     ships venue.py beside the standalone validate.py
 ```
 
-Code and JSON only. None of `butler-skills`' own `.md` files change: this guide lives in
-`docs/site-skills/`, beside them.
+The fixture `tests/fixtures/skills/site-venue/` is this guide's Acme Perps example, and
+passes. `tests/test_venue.py` breaks one rule per test.
+
+None of `butler-skills`' own `.md` files change: this guide lives in `docs/site-skills/`,
+beside them.
 
 ---
 
@@ -1567,9 +1581,10 @@ NOT BUILT YET
                         already exist in SitePage)
   3. allow-list check   one generic check from the file, instead of a hand-written
                         requestCheck / signatureCheck per action
-  4. hub changes        butler-skills: build_index.py publishes venue.yaml +
-                        venue.test.yaml; validate.py gets the venue schema and the
-                        allow-list linter. Code only, no .md change
+  4. hub changes        BUILT in butler-skills (scripts/venue.py): validate.py checks
+                        venue.yaml (allow-list linter + canary checks) when a skill
+                        has one; build_index.py publishes venue.yaml +
+                        venue.test.yaml under the row's `venue`, for the server only
   5. card from file     title + facts from the file + args, with i18n
   6. socket hold        hold websocket messages the page sends (today not seen)
   7. transactions       let the page send eth_sendTransaction when the allow-list
@@ -1579,11 +1594,10 @@ NOT BUILT YET
                         message, every session-key signature; one card per
                         signature, with the decoded call + a simulation
  10. saved steps        explore → repeat → repair, shared per site
- 11. recorder           butler-skills/scripts/site.py, Python + Playwright
-                        (developer laptop only): record, replay, try-calls;
-                        HAR + trace + socket sends + wallet calls, then the
-                        merge + scrub into recording.json.
-                        Needs no engine: it can be built first, by itself.
+ 11. recorder           BUILT in butler-skills: scripts/site.py, Python + Playwright
+                        (developer laptop only): record, replay, try-calls, scrub;
+                        HAR + trace + socket sends + clicks + wallet calls, then
+                        the merge + scrub into recording.json
  12. dry-run mode       "log, then refuse" for the money hold and the signing check
                         (with 1, 2 and 3, this unlocks Part 5, Step 3)
  13. branch testing     virtuals-agent: add the installed skill's source (repo +
