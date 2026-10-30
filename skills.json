@@ -12,6 +12,11 @@
       "ref": "v1.0.2"
     },
     {
+      "name": "butler-polymarket-web",
+      "repo": "https://github.com/Virtual-Protocol/butler-skill-polymarket-web",
+      "ref": "v0.2.22"
+    },
+    {
       "name": "options-trading",
       "repo": "https://github.com/mamamatcha/butler-skill-yield-notes",
       "ref": "v2.9.0"

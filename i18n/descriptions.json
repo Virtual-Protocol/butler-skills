@@ -7,6 +7,10 @@
     "ko": "Grab 앱의 GrabFood에서 음식이나 음료를 주문해요: 가게를 찾고, 배달 가능한 지점을 고르고, 장바구니를 채운 뒤 결제는 butler-app-checkout에 넘겨요.",
     "zh": "在 Grab App 的 GrabFood 上点餐或点饮品：找到店铺，选一家正在配送的分店，把商品加入购物车，再交给 butler-app-checkout 结账。"
   },
+  "butler-polymarket-web": {
+    "ko": "주인을 위해 Polymarket에서 베팅해요: 인기 마켓과 확률, 내 Polymarket 계정, 베팅·매도·수령·입금·출금을 서버가 명령 하나로 처리해요.",
+    "zh": "替你在 Polymarket 下注：热门市场和赔率、你自己的 Polymarket 账户，下注、卖出、领取、充值和提现，都由服务器用一条命令完成。"
+  },
   "copytrade": {
     "ko": "다른 트레이더의 매매를 따라 해요. 규모는 내가 정해요.",
     "zh": "跟随另一位交易者的操作，按你自己的仓位大小下单。"
