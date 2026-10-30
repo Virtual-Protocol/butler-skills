@@ -1232,13 +1232,13 @@ def test_references_are_published_linted_and_checked(tmp_path):
     (d / "references" / "b.md").write_text("Fine.\n")
     (d / "references" / "deep" / "a.md").write_text("Fine too.\n")
     (d / "references" / "notes.txt").write_text("not published\n")
-    (d / "scripts").mkdir()
-    (d / "scripts" / "x.sh").write_text("echo\n")
+    (d / "assets").mkdir()
+    (d / "assets" / "logo.png").write_text("x")
     assert validate.skill_published_files(d) == ["SKILL.md", "references/b.md", "references/deep/a.md"]
     ok, result = check_skill(d)
     assert ok, result["errors"]
     assert any("references/notes.txt is not published" in w for w in result["warnings"])
-    assert any("scripts/ is not published" in w for w in result["warnings"])
+    assert any("assets/ is not published" in w for w in result["warnings"])
 
     (d / "references" / "b.md").write_text("```sh\nbevo-frob x\nacp trade --token-in usdc\n```\nSee AGENTS.md.\n")
     (d / "references" / ".hidden.md").write_text("x\n")
@@ -1249,6 +1249,43 @@ def test_references_are_published_linted_and_checked(tmp_path):
     assert any(e.startswith("retired-runtime-lint: references/b.md line 5") for e in errors)
     assert any("references/.hidden.md: a published reference path" in e for e in errors)
 
+
+
+def test_scripts_are_published_and_named(tmp_path):
+    d = write_skill(tmp_path)
+    (d / "references").mkdir()
+    (d / "references" / "venue.md").write_text("Fields of `scripts/venue/quote.py`.\n")
+    (d / "scripts" / "venue").mkdir(parents=True)
+    (d / "scripts" / "aave.py").write_text("print(1)\n")
+    (d / "scripts" / "venue" / "quote.py").write_text("print(2)\n")
+    (d / "scripts" / "orphan.py").write_text("print(3)\n")
+    (d / "scripts" / "run.sh").write_text("echo\n")
+    skill_md = d / "SKILL.md"
+    skill_md.write_text(skill_md.read_text() + '\nRun `python3 "$HOME/skills/foo/scripts/aave.py"`.\n')
+    assert validate.skill_published_files(d) == [
+        "SKILL.md", "references/venue.md", "scripts/aave.py", "scripts/orphan.py", "scripts/venue/quote.py",
+    ]
+    ok, result = check_skill(d)
+    assert ok, result["errors"]
+    warnings = result["warnings"]
+    assert any("scripts/run.sh is not published" in w for w in warnings)
+    assert any("scripts/orphan.py is named in neither SKILL.md nor a reference" in w for w in warnings)
+    assert not any("scripts/aave.py is named" in w or "scripts/venue/quote.py is named" in w for w in warnings)
+    assert not any("scripts/ is not published" in w for w in warnings)
+
+    (d / "scripts" / ".hidden.py").write_text("x\n")
+    ok, result = check_skill(d)
+    assert any("scripts/.hidden.py: a published script path" in e for e in result["errors"])
+
+
+def test_a_named_path_reads_as_the_agent_reads_it():
+    text = (
+        "scripts/a.py, skills/foo/scripts/b.py, ~/skills/foo/scripts/c.py, "
+        '"$HOME/skills/foo/scripts/d.py", /tmp/scripts/e.py, references/<venue>.md, references/f.md'
+    )
+    assert sorted(validate.SKILL_NAMED_PATH_RE.findall(text)) == [
+        "references/f.md", "scripts/a.py", "scripts/b.py", "scripts/c.py", "scripts/d.py",
+    ]
 
 # --- registry mode: skills.json ------------------------------------------------------------------
 
