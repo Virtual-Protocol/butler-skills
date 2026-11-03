@@ -32,6 +32,11 @@
       "ref": "v0.1.1"
     },
     {
+      "name": "stable-earn",
+      "repo": "https://github.com/mamamatcha/butler-skill-stable-earn",
+      "ref": "v0.3.0"
+    },
+    {
       "name": "variational",
       "repo": "https://github.com/Virtual-Protocol/butler-skill-variational",
       "ref": "v2.0.9"
