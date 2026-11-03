@@ -976,16 +976,25 @@ def status(next, last=None, next_at=None, **values) -> None:
     STATUS_REPORTS.append({"state": str(next), "values": dict(values)})
 
 
-def notify(text, quiet=False, push=None) -> dict:
+def _note_values(values) -> dict:
+    """Values as the real SDK sends them to a note template: numbers and None
+    as they are, anything else as text."""
+    return {str(k): v if isinstance(v, (int, float, bool)) or v is None else str(v) for k, v in values.items()}
+
+
+def notify(text, quiet=False, push=None, **values) -> dict:
     """Records instead of sending. `push` is the lock-screen line; like the real
     SDK it is stripped, and it is "" when not given (it does nothing under
-    quiet=True live, but the call is still recorded as made)."""
+    quiet=True live, but the call is still recorded as made). With values,
+    `text` names a note in recipe.json `notes`, recorded with its values."""
     action = {
         "call": "notify",
         "text": str(text)[:500],
         "quiet": bool(quiet),
         "push": str(push).strip() if push is not None else "",
     }
+    if values:
+        action["values"] = _note_values(values)
     RECORDED_ACTIONS.append(action)
     return {"ok": True}
 
@@ -1004,13 +1013,16 @@ def fail(reason) -> None:
 _DONE_SUMMARY_MAX = 1000
 
 
-def done(summary=None):
+def done(summary=None, **values):
     """This duty's job is finished. Recorded, then SystemExit(0) like the real
-    SDK; replay.py catches the exit around the duty so actions still print."""
+    SDK; replay.py catches the exit around the duty so actions still print.
+    With values, `summary` names a note in recipe.json `notes`."""
     action = {"call": "done"}
     text = "" if summary is None else str(summary).strip()
     if text:
         action["summary"] = text[:_DONE_SUMMARY_MAX]
+    if values:
+        action["values"] = _note_values(values)
     RECORDED_ACTIONS.append(action)
     raise SystemExit(0)
 

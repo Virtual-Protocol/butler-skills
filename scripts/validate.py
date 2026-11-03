@@ -790,6 +790,112 @@ def check_status(template_dir: Path, recipe: dict, standalone: bool, issues: Iss
                                    "on the state shown most, or name a state it never runs after done/finished/paused/...")
 
 
+# bevo.notify("bought", n=3) — and recipe.json `notes` words each note, the
+# status line's twin for what the duty tells its owner, so a note can be put in
+# the owner's language without touching the code. The container holds the same
+# rules (virtuals-agent note-template.mjs `noteTemplateErrors`); keep the two alike.
+
+NOTES_MAX = 16
+NOTES_MAX_TEXT = 500
+#: A lock-screen line; the server sends no more of it.
+NOTES_MAX_PUSH = 80
+#: bevo-server's /notify takes these from a duty; none of them moves money.
+NOTE_KINDS = {"progress"}
+#: Values every note may use. Not {next}: a note is read later, when "in 8 min" is wrong.
+NOTE_BUILTINS = {"ran", "day", "runs_today"}
+
+
+def _note_calls(tree: ast.AST) -> list[tuple[int, str, list[str] | None, set[str]]]:
+    """Every bevo.notify(...) and bevo.done(...) call: (line, call, the literal
+    names its text can be or None, value names)."""
+    calls = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not (isinstance(func, ast.Attribute) and func.attr in ("notify", "done")
+                and isinstance(func.value, ast.Name) and func.value.id == "bevo"):
+            continue
+        first = node.args[0] if node.args else next(
+            (kw.value for kw in node.keywords if kw.arg in ("text", "summary")), None)
+        names = _literal_states(first) if first is not None else None
+        skip = {"quiet", "push", "text"} if func.attr == "notify" else {"summary"}
+        values = {kw.arg for kw in node.keywords if kw.arg and kw.arg not in skip}
+        calls.append((node.lineno, func.attr, names, values))
+    return calls
+
+
+def check_notes(template_dir: Path, recipe: dict, issues: Issues) -> None:
+    """recipe.json `notes` against the bevo.notify() / bevo.done() calls in duty.py.
+
+    Optional: a note written out in the code is still sent as written. But a
+    call that passes values names a note, and that note must be worded here.
+    """
+    duty = template_dir / "duty.py"
+    try:
+        tree = ast.parse(duty.read_text(encoding="utf-8")) if duty.is_file() else None
+    except SyntaxError:
+        return  # check_duty_py reports it
+    calls = _note_calls(tree) if tree is not None else []
+    notes = recipe.get("notes")
+    if notes is not None and (not isinstance(notes, dict) or not notes):
+        issues.error("notes", "must be an object of note name -> text")
+        return
+    worded = notes or {}
+
+    named: set[str] = set()
+    for line, call, names, values in calls:
+        if not values:
+            named.update(n for n in names or [] if n in worded)
+            continue
+        if names is None:
+            issues.error("duty.py", f"line {line}: bevo.{call}() with values names its note as a literal string "
+                                    f"(bevo.{call}(\"bought\", n=n)); the words belong in recipe.json `notes`")
+            continue
+        for name in names:
+            if name in worded:
+                named.add(name)
+            else:
+                issues.error("notes", f"duty.py line {line} sends note \"{name}\", which `notes` does not word")
+    if notes is None:
+        return
+    if len(notes) > NOTES_MAX:
+        issues.error("notes", f"has {len(notes)} notes; keep it to {NOTES_MAX}")
+
+    params = recipe.get("params") if isinstance(recipe.get("params"), dict) else {}
+    available = NOTE_BUILTINS | set((params.get("properties") or {}).keys())
+    for _, _, _, values in calls:
+        available |= values
+
+    for name, entry in notes.items():
+        where = f"notes.{name}"
+        if not STATUS_STATE_RE.match(name):
+            issues.error(where, "note names are lowercase letters, digits and _")
+        if isinstance(entry, str):
+            lines = {"text": entry}
+        elif isinstance(entry, dict) and set(entry) <= {"text", "push", "kind"}:
+            lines = {k: entry[k] for k in ("text", "push") if k in entry}
+            if "kind" in entry and entry["kind"] not in NOTE_KINDS:
+                issues.error(where, f"kind is {entry['kind']!r}; the one kind is \"progress\"")
+        else:
+            issues.error(where, "must be a text, or {\"text\", \"push\", \"kind\"}")
+            continue
+        if not all(isinstance(t, str) and t.strip() for t in lines.values()) or "text" not in lines:
+            issues.error(where, "needs its text, and no empty line")
+            continue
+        if len(lines["text"]) > NOTES_MAX_TEXT:
+            issues.error(where, f"is {len(lines['text'])} characters; keep it to {NOTES_MAX_TEXT}")
+        if len(lines.get("push", "")) > NOTES_MAX_PUSH:
+            issues.error(where, f"push is {len(lines['push'])} characters; keep it to {NOTES_MAX_PUSH}")
+        for placeholder in STATUS_PLACEHOLDER_RE.findall(" ".join(lines.values())):
+            if placeholder == "next":
+                issues.error(where, "uses {next}: a note is read later, so say the time with a value of your own")
+            elif placeholder not in available:
+                issues.error(where, f"uses {{{placeholder}}}, which neither the code nor a setting supplies")
+        if name not in named:
+            issues.warn(where, "duty.py never sends this note")
+
+
 def check_duty_py(template_dir: Path, recipe: dict, issues: Issues) -> None:
     duty_path = template_dir / "duty.py"
     if not duty_path.is_file():
@@ -2096,6 +2202,7 @@ def validate_template(
     check_readme(template_dir, issues)
     check_duty_py(template_dir, recipe, issues)
     check_status(template_dir, recipe, standalone, issues)
+    check_notes(template_dir, recipe, issues)
 
     full_text = ""
     for name in REQUIRED_FILES:

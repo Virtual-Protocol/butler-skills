@@ -1475,6 +1475,56 @@ def test_status_state_may_be_a_choice_of_literals(tmp_path):
     assert not ok and any('reports "b"' in e for e in errors)
 
 
+# --- notes -------------------------------------------------------------------
+
+
+def _notes_issues(tmp_path: Path, notes, code: str):
+    template_dir = tmp_path / "foo"
+    _write_minimal_template(template_dir, "foo")
+    recipe = json.loads((template_dir / "recipe.json").read_text())
+    recipe["params"]["properties"] = {"SIZE_USD": {"type": "number"}}
+    if notes is not None:
+        recipe["notes"] = notes
+    (template_dir / "recipe.json").write_text(json.dumps(recipe))
+    (template_dir / "duty.py").write_text("import bevo\nbevo.status('ran')\n" + code)
+    ok, result = validate.validate_template(template_dir, set(), json_mode=True, standalone=True)
+    return ok, result["errors"], result["warnings"]
+
+
+def test_notes_that_read_right_pass(tmp_path):
+    ok, errors, warnings = _notes_issues(
+        tmp_path,
+        {"placed": {"text": "Buy {token} — placed · ${SIZE_USD}", "kind": "progress"}, "finished": {"text": "{n} done", "push": "Done"}},
+        "bevo.notify('placed', token='VIRTUAL', quiet=True)\nbevo.done('finished', n=2)\n",
+    )
+    assert ok, errors
+    assert not any(w.startswith("notes.") for w in warnings)
+
+
+def test_a_note_sent_with_values_must_be_worded_and_named_literally(tmp_path):
+    ok, errors, _ = _notes_issues(tmp_path, None, "bevo.notify('placed', token='VIRTUAL')\n")
+    assert not ok and any('sends note "placed"' in e for e in errors)
+    ok, errors, _ = _notes_issues(tmp_path, {"placed": "Buy {token}"}, "k = 'placed'\nbevo.notify(k, token='VIRTUAL')\n")
+    assert not ok and any("literal string" in e for e in errors)
+
+
+def test_notes_refuse_next_an_unknown_value_and_a_money_kind(tmp_path):
+    ok, errors, _ = _notes_issues(
+        tmp_path,
+        {"a": "next buy {next}", "b": "Bought {usd}", "c": {"text": "Bought", "kind": "trade"}},
+        "bevo.notify('a', x=1)\nbevo.notify('b', x=1)\nbevo.notify('c', x=1)\n",
+    )
+    assert not ok
+    assert any("notes.a" in e and "{next}" in e for e in errors)
+    assert any("notes.b" in e and "{usd}" in e for e in errors)
+    assert any("notes.c" in e and "kind" in e for e in errors)
+
+
+def test_a_written_out_note_needs_no_notes(tmp_path):
+    ok, errors, _ = _notes_issues(tmp_path, None, "bevo.notify('All filed', quiet=True)\nbevo.done('Finished')\n")
+    assert ok, errors
+
+
 def _platform_template(tmp_path: Path, duty: str, readme: str = "# fixture\n") -> Path:
     template_dir = tmp_path / "foo"
     _write_minimal_template(template_dir, "foo", triggers=[])

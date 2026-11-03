@@ -133,6 +133,19 @@ def test_notify_records_push():
     stub_bevo.RECORDED_ACTIONS.clear()
 
 
+def test_a_named_note_is_recorded_with_its_values():
+    stub_bevo.RECORDED_ACTIONS.clear()
+    stub_bevo.notify("placed", quiet=True, token="VIRTUAL", n=2, skipped=None)
+    with pytest.raises(SystemExit):
+        stub_bevo.done("finished", bought=3)
+    assert stub_bevo.RECORDED_ACTIONS == [
+        {"call": "notify", "text": "placed", "quiet": True, "push": "",
+         "values": {"token": "VIRTUAL", "n": 2, "skipped": None}},
+        {"call": "done", "summary": "finished", "values": {"bought": 3}},
+    ]
+    stub_bevo.RECORDED_ACTIONS.clear()
+
+
 def test_state_refuses_non_json_values(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     import datetime
