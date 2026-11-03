@@ -255,6 +255,18 @@ def main() -> int:
             print(f"ERROR: bevo.status({report['state']!r}) is not a state recipe.json `status` words")
             ok = False
 
+    # A note sent with values is named, and recipe.json `notes` must word it.
+    try:
+        notes = json.loads((duty_path.parent / "recipe.json").read_text()).get("notes") or {}
+    except (OSError, ValueError):
+        notes = {}
+    for action in actions:
+        if action.get("call") in ("notify", "done") and "values" in action:
+            name = action.get("text") if action["call"] == "notify" else action.get("summary")
+            if name not in notes:
+                print(f"ERROR: bevo.{action['call']}({name!r}, ...) is not a note recipe.json `notes` words")
+                ok = False
+
     print("# ACTIONS_JSON_START")
     print(json.dumps(actions, indent=2, default=str))
     print("# ACTIONS_JSON_END")

@@ -126,6 +126,48 @@
           }
         ]
       }
+    },
+    "notes": {
+      "type": "object",
+      "description": "What the duty tells its owner, by note: the code calls bevo.notify(\"<note>\", name=value) or bevo.done(\"<note>\", ...) and this words it. A note is its text, or {\"text\", \"push\", \"kind\"}: push is the lock-screen line, kind \"progress\" marks a step of the job. {name} is a value the code passes or a setting; {next} is never there.",
+      "minProperties": 1,
+      "maxProperties": 16,
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_]{0,23}$"
+      },
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "text"
+            ],
+            "properties": {
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              },
+              "push": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "kind": {
+                "enum": [
+                  "progress"
+                ]
+              }
+            }
+          }
+        ]
+      }
     }
   }
 }

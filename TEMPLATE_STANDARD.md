@@ -227,6 +227,36 @@ with a warning, until it adds one.
 Keep it to what the owner wants at a glance: the latest result or progress, and what comes next.
 Never repeat the title (its token, city or schedule) — it sits right above the line.
 
+## Notes
+
+What the duty tells its owner works the same way. `duty.py` names the note and passes its
+values; `recipe.json` `notes` words it. The container puts that wording in the owner's
+language (English, Korean, Chinese) once, and never touches the code. A sentence written out
+in the code is sent as written, in English, for every owner.
+
+```python
+bevo.notify("placed", token=LABEL, quiet=True)
+bevo.done("finished", bought=3, total=BUYS, skipped=skipped or None)
+```
+
+```json
+"notes": {
+  "placed": { "text": "Buy {token} — placed, executing", "kind": "progress" },
+  "finished": { "text": "{bought} of {total} buys went through · {skipped} declined", "push": "DCA done" }
+}
+```
+
+- A note is its text, or `{"text", "push", "kind"}`. `push` is the lock-screen line.
+  `"kind": "progress"` marks a step of the job (an order placed or executed), so the duty's
+  Activity shows it as a step, not as news.
+- Values fill the way a status line's do: a `" · "` part whose value is missing (`None`) is
+  dropped. `{ran}`, `{day}`, `{runs_today}` and each setting are there too. `{next}` never is:
+  a note is read later, when "in 8 min" is already wrong.
+
+`validate.py` refuses a call with values whose note `notes` does not word, a note name that
+is not a literal string, a placeholder nothing supplies, `{next}`, and any kind but
+`progress`. It warns on a note the code never sends. `notes` is optional.
+
 ## `README.md`
 
 **Written for the model, not for a human.** The container's `recipe_show` tool returns
