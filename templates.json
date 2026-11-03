@@ -12,6 +12,12 @@
       "ref": "v10"
     },
     {
+      "name": "earn-account",
+      "repo": "https://github.com/mamamatcha/butler-skill-stable-earn",
+      "ref": "v0.3.0",
+      "path": "templates/earn-account"
+    },
+    {
       "name": "index-rebalance",
       "repo": "https://github.com/mamamatcha/butler-skill-index-rebalance",
       "ref": "main"
