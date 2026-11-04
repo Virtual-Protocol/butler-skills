@@ -9,7 +9,7 @@
     {
       "name": "butler-grabfood",
       "repo": "https://github.com/Virtual-Protocol/butler-skill-grabfood",
-      "ref": "v1.0.2"
+      "ref": "v1.0.3"
     },
     {
       "name": "butler-polymarket-web",
