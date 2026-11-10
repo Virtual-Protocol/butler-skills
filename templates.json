@@ -4,12 +4,12 @@
     {
       "name": "copytrade",
       "repo": "https://github.com/Virtual-Protocol/butler-skill-copytrade",
-      "ref": "main"
+      "ref": "v13"
     },
     {
       "name": "dca",
       "repo": "https://github.com/Virtual-Protocol/butler-skill-dca",
-      "ref": "v11"
+      "ref": "v12"
     },
     {
       "name": "earn-account",
@@ -49,7 +49,7 @@
     {
       "name": "x-portfolio",
       "repo": "https://github.com/Virtual-Protocol/butler-skill-x-portfolio",
-      "ref": "v2"
+      "ref": "v4"
     }
   ]
 }
