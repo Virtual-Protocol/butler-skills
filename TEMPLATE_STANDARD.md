@@ -74,7 +74,7 @@ should move only on release a tag `ref`.
     "required": ["TOKEN", "SIZE_USD"],
     "properties": {
       "TOKEN": { "type": "string", "description": "Symbol or address to buy." },
-      "SIZE_USD": { "type": "number", "minimum": 1, "maximum": 1000 }
+      "SIZE_USD": { "type": "number", "minimum": 1 }
     }
   }
 }
@@ -110,6 +110,12 @@ There is no `pattern`, no `oneOf`/`anyOf`, no `$ref` — write the constraint yo
 with what is supported, or check it in `duty.py` itself. `allOf` is allowed in exactly
 one shape, only at the root of `params` — see "Conditional required settings" below;
 anywhere else it is refused like any other unsupported keyword.
+
+A dollar setting (`SIZE_USD`, `CAPITAL_USD`, a budget) states its floor, not a `maximum` copied
+from a platform limit. The owner approves every funding card and pocket, and bevo-server
+checks the amount there; a figure copied into a template goes stale the day the platform
+changes it, and every template then needs a version bump. Keep a real floor: a venue minimum,
+or one the strategy needs (x-portfolio's $100).
 
 ### Conditional required settings
 
