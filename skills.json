@@ -39,7 +39,7 @@
     {
       "name": "variational",
       "repo": "https://github.com/Virtual-Protocol/butler-skill-variational",
-      "ref": "v2.0.9"
+      "ref": "v2.1.1"
     }
   ]
 }
