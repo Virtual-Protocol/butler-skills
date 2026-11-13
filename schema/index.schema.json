@@ -66,7 +66,14 @@
         "required": ["ref", "supersededBy"],
         "properties": {
           "ref": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,63}@\\d+$" },
-          "supersededBy": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,63}@\\d+$" }
+          "supersededBy": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,63}@\\d+$" },
+          "force": {
+            "description": "Set from templates.json `forceUpdate`: the butler moves a duty on `ref` onto `supersededBy` by itself, titled `title`.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["title"],
+            "properties": { "title": { "type": "string", "minLength": 1 } }
+          }
         }
       }
     },

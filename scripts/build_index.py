@@ -5,7 +5,8 @@ ONE channel. The registry publishes a single index, the way npm serves one
 registry: `dist/templates/<name>/<version>/` and `dist/skills/<name>/<version>/`
 are the immutable store, and `dist/index.json` is the moving pointer at the
 current version of each template and skill. A duty pins the template version
-it was created from (`env.RECIPE`); nothing here auto-updates an existing duty.
+it was created from (`env.RECIPE`); nothing here auto-updates an existing duty,
+except where a templates.json entry sets `forceUpdate` (below).
 
 Usage:
     scripts/build_index.py [--dry-run] [--live-index <url>]
@@ -38,6 +39,14 @@ serving stale bytes. A yanked version of a template that is still listed (at
 any version) gets no tombstone: the live entry is what supersedes it.
 `aliases` flattens every template's `recipe.json["supersedes"]` into
 `{ref, supersededBy}` rows.
+
+`forceUpdate: {"title": "..."}` on a templates.json entry adds `force: {title}`
+to each of that template's alias rows: the butler then moves every filed duty on
+a superseded ref onto the current version on its own (code, settings, status
+wording, name and title, the title being this one), rather than waiting for the
+owner to re-file it. Only a template with no money keys (`recipe.json["keys"]`
+empty: it watches an account, it never spends) may set it; anything else fails
+the build.
 
 Skills: every listed skill is run through scripts/validate.py (maintainer
 mode) and ANY error fails the whole build. That is deliberate — a failed
@@ -299,6 +308,24 @@ def collect_template(template_dir: Path, entry: dict) -> dict:
     }
 
 
+def force_update_of(entry: dict, recipe: dict) -> dict | None:
+    """The entry's `forceUpdate` as the alias rows carry it, or None. Refused on a
+    template that spends: a forced update rewrites a duty without its owner, which
+    is only safe for one that watches an account."""
+    force = entry.get("forceUpdate")
+    if force is None:
+        return None
+    title = force.get("title") if isinstance(force, dict) else None
+    if not isinstance(title, str) or not title.strip():
+        raise SystemExit(f"{entry.get('name')}: forceUpdate must be {{\"title\": \"...\"}}, got {force!r}")
+    if recipe.get("keys"):
+        raise SystemExit(
+            f"{entry.get('name')}: forceUpdate is only for templates that never spend, "
+            f"and recipe.json declares money keys {recipe['keys']!r}"
+        )
+    return {"title": title.strip()}
+
+
 def build_aliases(templates: list[dict]) -> list[dict]:
     """Flatten every template's recipe.json `supersedes` list into
     {ref, supersededBy} rows. A duty whose env.RECIPE names an older ref can
@@ -308,8 +335,12 @@ def build_aliases(templates: list[dict]) -> list[dict]:
         recipe = json.loads((template_dir / "recipe.json").read_text())
         supersedes = recipe.get("supersedes") or []
         current_ref = f"{recipe['id']}@{recipe['version']}"
+        force = force_update_of(entry, recipe)
         for old_ref in supersedes:
-            aliases.append({"ref": old_ref, "supersededBy": current_ref})
+            alias = {"ref": old_ref, "supersededBy": current_ref}
+            if force is not None:
+                alias["force"] = force
+            aliases.append(alias)
     aliases.sort(key=lambda a: a["ref"])
     return aliases
 

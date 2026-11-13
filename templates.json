@@ -26,7 +26,8 @@
       "name": "options-account",
       "repo": "https://github.com/mamamatcha/butler-skill-yield-notes",
       "ref": "v2.13.2",
-      "path": "templates/options-account"
+      "path": "templates/options-account",
+      "forceUpdate": { "title": "Options accounts" }
     },
     {
       "name": "options-lifecycle",
