@@ -40,11 +40,12 @@ any version) gets no tombstone: the live entry is what supersedes it.
 `aliases` flattens every template's `recipe.json["supersedes"]` into
 `{ref, supersededBy}` rows.
 
-`forceUpdate: {"title": "..."}` on a templates.json entry adds `force: {title}`
-to each of that template's alias rows: the butler then moves every filed duty on
-a superseded ref onto the current version on its own (code, settings, status
-wording, name and title, the title being this one), rather than waiting for the
-owner to re-file it. Only a template with no money keys (`recipe.json["keys"]`
+`forceUpdate: true` on a templates.json entry adds `force: {title}` to each of
+that template's alias rows: the butler then moves every filed duty on a
+superseded ref onto the current version on its own (code, settings, status
+wording, name and title), rather than waiting for the owner to re-file it. A
+recipe has no title, so the title is the template's name in words
+("options-account" → "Options account"). Only a template with no money keys (`recipe.json["keys"]`
 empty: it watches an account, it never spends) may set it; anything else fails
 the build.
 
@@ -315,15 +316,15 @@ def force_update_of(entry: dict, recipe: dict) -> dict | None:
     force = entry.get("forceUpdate")
     if force is None:
         return None
-    title = force.get("title") if isinstance(force, dict) else None
-    if not isinstance(title, str) or not title.strip():
-        raise SystemExit(f"{entry.get('name')}: forceUpdate must be {{\"title\": \"...\"}}, got {force!r}")
+    if force is not True:
+        raise SystemExit(f"{entry.get('name')}: forceUpdate must be true, got {force!r}")
     if recipe.get("keys"):
         raise SystemExit(
             f"{entry.get('name')}: forceUpdate is only for templates that never spend, "
             f"and recipe.json declares money keys {recipe['keys']!r}"
         )
-    return {"title": title.strip()}
+    words = recipe["id"].replace("-", " ")
+    return {"title": words[:1].upper() + words[1:]}
 
 
 def build_aliases(templates: list[dict]) -> list[dict]:

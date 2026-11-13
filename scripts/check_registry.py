@@ -137,11 +137,8 @@ def check_listing(
         force = row.get("forceUpdate")
         if force is not None and not allow_path:
             fail(f"{name}: `forceUpdate` is for templates.json only"); problems += 1; continue
-        if force is not None and not (
-            isinstance(force, dict) and set(force) == {"title"}
-            and isinstance(force["title"], str) and force["title"].strip()
-        ):
-            fail(f"{name}: forceUpdate must be {{\"title\": \"...\"}}, got {force!r}"); problems += 1; continue
+        if force is not None and force is not True:
+            fail(f"{name}: forceUpdate must be true, got {force!r}"); problems += 1; continue
         if not offline and not ref_exists(repo, ref):
             fail(f"{name}: {repo} has no ref {ref!r}"); problems += 1; continue
         print(f"OK    {name} = {repo} @ {ref}" + (f" : {sub}" if sub is not None else ""))

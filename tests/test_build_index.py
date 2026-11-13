@@ -170,16 +170,16 @@ def test_build_aliases_flattens_supersedes(tmp_path):
 def test_build_aliases_carries_force_update_for_a_template_that_never_spends(tmp_path):
     watcher = json.dumps({**json.loads(RECIPE_JSON), "keys": []})
     d = make_checkout(tmp_path, recipe_json=watcher)
-    entry = {**ENTRY, "forceUpdate": {"title": "DCA"}}
+    entry = {**ENTRY, "forceUpdate": True}
     assert build_index.build_aliases([(entry, d)]) == [
-        {"ref": "dca@1", "supersededBy": "dca@2", "force": {"title": "DCA"}}
+        {"ref": "dca@1", "supersededBy": "dca@2", "force": {"title": "Dca"}}
     ]
 
 
 def test_build_aliases_refuses_force_update_on_a_template_that_spends(tmp_path):
     d = make_checkout(tmp_path)
     with pytest.raises(SystemExit, match="never spend"):
-        build_index.build_aliases([({**ENTRY, "forceUpdate": {"title": "DCA"}}, d)])
+        build_index.build_aliases([({**ENTRY, "forceUpdate": True}, d)])
 
 
 def test_build_aliases_is_empty_with_no_supersedes(tmp_path):
