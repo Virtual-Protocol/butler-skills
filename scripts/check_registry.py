@@ -134,6 +134,11 @@ def check_listing(
         if sub is not None and not valid_template_path(sub, name):
             fail(f"{name}: path must be a folder in the repo ending in {name!r} (templates/{name}), got {sub!r}")
             problems += 1; continue
+        force = row.get("forceUpdate")
+        if force is not None and not allow_path:
+            fail(f"{name}: `forceUpdate` is for templates.json only"); problems += 1; continue
+        if force is not None and force is not True:
+            fail(f"{name}: forceUpdate must be true, got {force!r}"); problems += 1; continue
         if not offline and not ref_exists(repo, ref):
             fail(f"{name}: {repo} has no ref {ref!r}"); problems += 1; continue
         print(f"OK    {name} = {repo} @ {ref}" + (f" : {sub}" if sub is not None else ""))
