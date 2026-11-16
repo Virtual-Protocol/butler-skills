@@ -75,6 +75,19 @@ def ref_exists(repo: str, ref: str) -> bool:
     return bool(out.stdout.strip())
 
 
+def is_branch(repo: str, ref: str) -> bool:
+    """Whether `ref` names a branch on the remote. A failed lookup is not a branch:
+    `ref_exists` has already failed that entry."""
+    try:
+        out = subprocess.run(
+            ["git", "ls-remote", "--heads", repo, f"refs/heads/{ref}"],
+            capture_output=True, text=True, check=True, timeout=60,
+        )
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return False
+    return bool(out.stdout.strip())
+
+
 def valid_template_name(name) -> bool:
     return bool(NAME_RE.match(str(name or "")))
 
@@ -93,11 +106,14 @@ def valid_skill_name(name) -> bool:
 
 def check_listing(
     path: Path, key: str, noun: str, name_ok, offline: bool, owners: dict[str, str],
-    allow_path: bool = False,
+    allow_path: bool = False, tags_only: bool = False,
 ) -> int:
     """Check one listing file; returns the number of problems. `owners` maps every
     name seen so far to the file that listed it, across both files. `allow_path` lets
-    a row name the folder its template lives in (templates.json only)."""
+    a row name the folder its template lives in (templates.json only). `tags_only`
+    refuses a ref that is a branch (skills.json): butlers update an installed skill to
+    whatever the registry publishes, so every new version must arrive through a
+    reviewed bump here, never a merge in the skill's own repo."""
     if not path.exists():
         fail(f"{path.name} not found")
         return 1
@@ -141,6 +157,8 @@ def check_listing(
             fail(f"{name}: forceUpdate must be true, got {force!r}"); problems += 1; continue
         if not offline and not ref_exists(repo, ref):
             fail(f"{name}: {repo} has no ref {ref!r}"); problems += 1; continue
+        if tags_only and not offline and is_branch(repo, ref):
+            fail(f"{name}: ref {ref!r} is a branch — a skill follows a tag"); problems += 1; continue
         print(f"OK    {name} = {repo} @ {ref}" + (f" : {sub}" if sub is not None else ""))
 
     if sorted(seen) != [r.get("name") for r in rows]:
@@ -201,7 +219,9 @@ def main() -> int:
     problems = check_listing(
         REGISTRY_PATH, "templates", "template id", valid_template_name, args.offline, owners, allow_path=True
     )
-    problems += check_listing(SKILLS_REGISTRY_PATH, "skills", "skill name", valid_skill_name, args.offline, owners)
+    problems += check_listing(
+        SKILLS_REGISTRY_PATH, "skills", "skill name", valid_skill_name, args.offline, owners, tags_only=True
+    )
     problems += check_description_i18n(DESCRIPTION_I18N_PATH, owners)
     return 1 if problems else 0
 

@@ -39,7 +39,7 @@ def write_registry(tmp_path: Path, skills: list[dict]) -> Path:
     return path
 
 
-def run(monkeypatch, tmp_path, skills, *argv, ref_exists=True, skill_rows=None, i18n=None) -> int:
+def run(monkeypatch, tmp_path, skills, *argv, ref_exists=True, skill_rows=None, i18n=None, branches=()) -> int:
     """Point the module at a synthetic templates.json (the `skills` argument — the
     rows predate the skill kind) plus skills.json (`skill_rows`, empty by default)
     and i18n/descriptions.json (`i18n`; no file by default) and run its main().
@@ -66,6 +66,7 @@ def run(monkeypatch, tmp_path, skills, *argv, ref_exists=True, skill_rows=None, 
         monkeypatch.setattr(check_registry, "ref_exists", lambda repo, ref: calls.append((repo, ref)) or True)
     else:
         monkeypatch.setattr(check_registry, "ref_exists", lambda repo, ref: ref_exists)
+    monkeypatch.setattr(check_registry, "is_branch", lambda repo, ref: ref in branches)
     return check_registry.main()
 
 
@@ -206,6 +207,13 @@ def test_online_checks_skill_refs_too(monkeypatch, tmp_path):
     calls: list[tuple[str, str]] = []
     assert run(monkeypatch, tmp_path, GOOD, ref_exists=calls, skill_rows=SKILLS) == 0
     assert calls == [(s["repo"], s["ref"]) for s in GOOD + SKILLS]
+
+
+def test_a_skill_on_a_branch_fails_and_a_template_may_follow_one(monkeypatch, tmp_path, capsys):
+    skill = {"name": "skill-alpha", "repo": "https://github.com/someone/butler-skill-a", "ref": "main"}
+    assert run(monkeypatch, tmp_path, GOOD, skill_rows=[skill], branches={"main"}) == 1
+    assert "skill-alpha: ref 'main' is a branch" in capsys.readouterr().out
+    assert run(monkeypatch, tmp_path, GOOD, skill_rows=[{**skill, "ref": "v1.0.0"}], branches={"main"}) == 0
 
 
 def test_a_template_may_live_in_a_folder_named_after_it(monkeypatch, tmp_path, capsys):
