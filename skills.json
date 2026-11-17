@@ -35,6 +35,11 @@
       "name": "variational",
       "repo": "https://github.com/Virtual-Protocol/butler-skill-variational",
       "ref": "v2.0.9"
+    },
+    {
+      "name": "prediction-market",
+      "repo": "https://github.com/Virtual-Protocol/butler-skill-prediction-market",
+      "ref": "feat/prediction-market"
     }
   ]
 }
