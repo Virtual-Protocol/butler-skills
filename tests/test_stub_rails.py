@@ -94,6 +94,14 @@ def test_exec_status_finds_a_recorded_key():
     stub_bevo.RECORDED_ACTIONS.clear()
 
 
+def test_settled_maps_the_stub_ledger_to_a_verdict():
+    stub_bevo.RECORDED_ACTIONS.clear()
+    subprocess.run(["acp", "trade", "--idempotency-key", "abc"], capture_output=True, text=True, check=False)
+    assert stub_bevo.settled("abc") == "executed"
+    assert stub_bevo.settled("no-such-key") == "unknown"
+    stub_bevo.RECORDED_ACTIONS.clear()
+
+
 # --- key() / fail() / done() / notify(push=) / state ------------------------------------
 
 

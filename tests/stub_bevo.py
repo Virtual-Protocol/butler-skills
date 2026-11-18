@@ -1176,6 +1176,25 @@ def exec_status(key, route="trade"):
     return {"state": "not_found", "route": route, "idempotencyKey": key}
 
 
+def settled(key, route=None, wait=0):
+    """What became of a placed action, from the stub's own ledger: `executed` for a
+    key sent in this run, `unknown` for one never sent (the ledger's not_found).
+    The live SDK's verdict strings; it never sleeps, so `wait` is ignored."""
+    row = exec_status(key, route or "trade")
+    state, card = row.get("state"), row.get("approvalStatus")
+    if state == "executed" or (state == "manual" and card == "confirmed"):
+        return "executed"
+    if state == "refused" or (
+        state == "manual" and card in ("rejected", "superseded", "expired", "failed")
+    ):
+        return "dropped"
+    if state == "manual" and card == "pending":
+        return "approval"
+    if state in ("unknown", "not_found"):
+        return "unknown"
+    return "waiting"
+
+
 _KEY_REFUSED = re.compile(r"[^A-Za-z0-9:_.\-]")
 _KEY_MAX = 128
 _KEY_DIGEST = 16

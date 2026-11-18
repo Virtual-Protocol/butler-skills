@@ -286,6 +286,9 @@ outright.
   anything: `{"state": …}` is `executed`/`manual`/`claimed`/`in_flight` (the server has
   it), `refused`, `not_found` (never filed) or `unknown` (may have landed). It never
   replaces the same-key resend above.
+- `bevo.settled(key, route=None, wait=0)` — `executed` / `approval` / `waiting` / `dropped` /
+  `unknown` for a placed key; in the offline stub a sent key is `executed`, a never-sent one
+  `unknown`, and `wait` is ignored.
 
 The container's SDK has more than the offline stub `replay.py` runs against
 (`tests/stub_bevo.py`): `bevo.done(summary)` finishes the duty (pauses it, tells the owner
