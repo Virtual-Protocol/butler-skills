@@ -4,7 +4,7 @@
     {
       "name": "copytrade",
       "repo": "https://github.com/Virtual-Protocol/butler-skill-copytrade",
-      "ref": "v13"
+      "ref": "v14"
     },
     {
       "name": "dca",
