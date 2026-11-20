@@ -1278,6 +1278,32 @@ def test_scripts_are_published_and_named(tmp_path):
     assert any("scripts/.hidden.py: a published script path" in e for e in result["errors"])
 
 
+def test_node_scripts_and_root_manifests_are_published(tmp_path):
+    d = write_skill(tmp_path)
+    (d / "scripts" / "lib").mkdir(parents=True)
+    (d / "scripts" / "bet.mjs").write_text("import './lib/common.mjs';\n")
+    (d / "scripts" / "lib" / "common.mjs").write_text("export {};\n")
+    (d / "package.json").write_text('{"private": true}\n')
+    (d / "package-lock.json").write_text('{"lockfileVersion": 3}\n')
+    (d / "scripts" / "package.json").write_text("{}\n")
+    for sub in ("node_modules/viem", "scripts/node_modules/x"):
+        (d / sub).mkdir(parents=True)
+    for i in range(60):
+        (d / "node_modules" / "viem" / f"f{i}.mjs").write_text("x\n")
+    (d / "scripts" / "node_modules" / "x" / "index.mjs").write_text("x\n")
+    skill_md = d / "SKILL.md"
+    skill_md.write_text(skill_md.read_text() + "\nRun `node scripts/bet.mjs` (uses `scripts/lib/common.mjs`).\n")
+    assert validate.skill_published_files(d) == [
+        "SKILL.md", "package-lock.json", "package.json", "scripts/bet.mjs", "scripts/lib/common.mjs",
+    ]
+    ok, result = check_skill(d)
+    assert ok, result["errors"]
+    warnings = result["warnings"]
+    assert any("scripts/package.json is not published" in w for w in warnings)
+    assert not any("node_modules" in w for w in warnings)
+    assert not any("scripts/bet.mjs is named" in w for w in warnings)
+
+
 def test_a_named_path_reads_as_the_agent_reads_it():
     text = (
         "scripts/a.py, skills/foo/scripts/b.py, ~/skills/foo/scripts/c.py, "

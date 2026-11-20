@@ -1250,16 +1250,22 @@ RETIRED_REQUIRES_KEYS = {
 SKILL_REFERENCE_RE = re.compile(
     r"^references/(?:[A-Za-z0-9_-][A-Za-z0-9._-]*/)*[A-Za-z0-9_-][A-Za-z0-9._-]*\.md$"
 )
-# A butler writes a script as a plain file, never executable, and runs it with python3
-# where it is installed: a helper the model would otherwise retype into /tmp each use.
+# A butler writes a script as a plain file, never executable, and runs it with python3 or
+# node where it is installed: a helper the model would otherwise retype into /tmp each use.
+# Mirrors virtuals-agent src/integrations/hub/store.ts `isSafeSkillPath`.
 SKILL_SCRIPT_RE = re.compile(
-    r"^scripts/(?:[A-Za-z0-9_-][A-Za-z0-9._-]*/)*[A-Za-z0-9_-][A-Za-z0-9._-]*\.py$"
+    r"^scripts/(?:(?!node_modules/)[A-Za-z0-9_-][A-Za-z0-9._-]*/)*[A-Za-z0-9_-][A-Za-z0-9._-]*\.(?:py|mjs)$"
 )
+SKILL_SCRIPT_EXTS = (".py", ".mjs")
+# A skill with Node scripts carries its npm manifest pair at the ROOT (never under scripts/,
+# which Mastra scans every turn); the butler runs `npm ci` beside it and Node resolves the
+# scripts' imports upward. node_modules itself is never published.
+SKILL_ROOT_MANIFESTS = ("package.json", "package-lock.json")
 # How the agent reads a bundled path off the text for a link install (url-install.ts
 # BUNDLED_RE): as prose spells it, or from the workspace (`skills/<name>/`, `~/`, `$HOME/`).
 SKILL_NAMED_PATH_RE = re.compile(
     r"(?<![\w./~$-])(?:(?:~|\$HOME)/skills/[a-z0-9-]+/|skills/[a-z0-9-]+/)?"
-    r"((?:references|scripts)/[\w./-]+\.(?:md|py))\b"
+    r"((?:references|scripts)/[\w./-]+\.(?:md|py|mjs))\b"
 )
 
 
@@ -1579,16 +1585,21 @@ def check_skill_name(name: str, skill_dir: Path, standalone: bool, reserved: set
 
 
 def skill_published_files(skill_dir: Path) -> list[str]:
-    """What a skill publishes: SKILL.md, then every references/**/*.md and
-    scripts/**/*.py whose path is a plain URL path, sorted. Everything else in the
-    repo stays in the repo."""
-    found: list[str] = []
+    """What a skill publishes: SKILL.md, then the root package.json / package-lock.json
+    and every references/**/*.md and scripts/**/*.{py,mjs} whose path is a plain URL
+    path, sorted. Everything else in the repo stays in the repo."""
+    found: list[str] = [
+        m for m in SKILL_ROOT_MANIFESTS
+        if (skill_dir / m).is_file() and not (skill_dir / m).is_symlink()
+    ]
     for sub, shape in (("references", SKILL_REFERENCE_RE), ("scripts", SKILL_SCRIPT_RE)):
         top = skill_dir / sub
         if not top.is_dir() or top.is_symlink():
             continue
         for root, dirs, names in os.walk(top, followlinks=False):
-            dirs[:] = [d for d in dirs if not (Path(root) / d).is_symlink()]
+            dirs[:] = [
+                d for d in dirs if d != "node_modules" and not (Path(root) / d).is_symlink()
+            ]
             for n in names:
                 p = Path(root) / n
                 if p.is_symlink() or not p.is_file():
@@ -1608,6 +1619,8 @@ def check_skill_layout(skill_dir: Path, issues: Issues) -> None:
     count = 0
     total = 0
     for p, rel in iter_tree(skill_dir):
+        if "node_modules" in rel.split("/"):
+            continue  # what a local `npm ci` installed; gitignored, never published
         if p.is_symlink():
             issues.error("layout", f"symlink not allowed: {rel}")
             continue
@@ -1620,12 +1633,13 @@ def check_skill_layout(skill_dir: Path, issues: Issues) -> None:
         if p.is_file():
             count += 1
             total += p.stat().st_size
-            for sub, ext, shape, kind in (("references", ".md", SKILL_REFERENCE_RE, "reference"),
-                                          ("scripts", ".py", SKILL_SCRIPT_RE, "script")):
+            for sub, exts, shape, kind in (("references", (".md",), SKILL_REFERENCE_RE, "reference"),
+                                           ("scripts", SKILL_SCRIPT_EXTS, SKILL_SCRIPT_RE, "script")):
                 if not rel.startswith(sub + "/"):
                     continue
-                if not rel.endswith(ext):
-                    issues.warn("layout", f"{rel} is not published — only {sub}/**/*{ext} reach the butler")
+                if not rel.endswith(exts):
+                    shown = ", ".join(f"{sub}/**/*{e}" for e in exts)
+                    issues.warn("layout", f"{rel} is not published — only {shown} reach the butler")
                 elif not shape.match(rel):
                     issues.error(
                         "layout",
@@ -1645,7 +1659,8 @@ def check_skill_layout(skill_dir: Path, issues: Issues) -> None:
     if (skill_dir / "assets").is_dir():
         issues.warn(
             "layout",
-            "assets/ is not published — only SKILL.md, references/**/*.md and scripts/**/*.py reach the butler",
+            "assets/ is not published — only SKILL.md, references/**/*.md, scripts/**/*.{py,mjs} "
+            "and a root package.json / package-lock.json reach the butler",
         )
     for tool in TOOLING_FILES:
         if (skill_dir / tool).is_file():
