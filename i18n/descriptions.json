@@ -55,6 +55,10 @@
     "ko": "Pearl 안팎으로 돈을 옮겨요 - 이더리움의 WPRL과 PearlBridge를 거쳐 USDC로 네이티브 PRL을 매수하거나, PRL을 WPRL로 다시 브릿지해 Base에서 USDC로 매도해요.",
     "zh": "把资金转入或转出 Pearl：用 USDC 经由以太坊上的 WPRL 和 PearlBridge 买入原生 PRL，或把 PRL 跨链回 WPRL，再在 Base 上卖出换回 USDC。"
   },
+  "prediction-market": {
+    "ko": "Outcome.xyz 예측 시장(Hyperliquid HIP-4)에서 베팅해요: 시장 찾기, Hyperliquid 입금·출금, 거래 키 설정, 지정가 주문 넣기·취소, 포지션 확인.",
+    "zh": "在 Outcome.xyz 预测市场（Hyperliquid HIP-4）下注：查找市场、Hyperliquid 充值或提现、设置交易密钥、挂出或撤销限价单、查看持仓。"
+  },
   "stable-earn": {
     "ko": "놀고 있는 스테이블코인으로 이자를 받아요 - Base의 Aave에 USDC로 빌려주고, 얼마 버는지 확인하고, 일부는 남겨두고 빌려주거나, 언제든 일부 또는 전부를 빼요.",
     "zh": "让闲置的稳定币赚取利息：以 USDC 出借到 Base 上的 Aave，查看收益，留出一部分再出借，随时取出部分或全部。"

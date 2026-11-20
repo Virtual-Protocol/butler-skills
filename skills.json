@@ -32,6 +32,11 @@
       "ref": "v0.1.1"
     },
     {
+      "name": "prediction-market",
+      "repo": "https://github.com/Virtual-Protocol/butler-skill-prediction-market",
+      "ref": "main"
+    },
+    {
       "name": "stable-earn",
       "repo": "https://github.com/mamamatcha/butler-skill-stable-earn",
       "ref": "v0.4.0"

@@ -1278,6 +1278,32 @@ def test_scripts_are_published_and_named(tmp_path):
     assert any("scripts/.hidden.py: a published script path" in e for e in result["errors"])
 
 
+def test_node_scripts_and_root_manifests_are_published(tmp_path):
+    d = write_skill(tmp_path)
+    (d / "scripts" / "lib").mkdir(parents=True)
+    (d / "scripts" / "bet.mjs").write_text("import './lib/common.mjs';\n")
+    (d / "scripts" / "lib" / "common.mjs").write_text("export {};\n")
+    (d / "package.json").write_text('{"private": true}\n')
+    (d / "package-lock.json").write_text('{"lockfileVersion": 3}\n')
+    (d / "scripts" / "package.json").write_text("{}\n")
+    for sub in ("node_modules/viem", "scripts/node_modules/x"):
+        (d / sub).mkdir(parents=True)
+    for i in range(60):
+        (d / "node_modules" / "viem" / f"f{i}.mjs").write_text("x\n")
+    (d / "scripts" / "node_modules" / "x" / "index.mjs").write_text("x\n")
+    skill_md = d / "SKILL.md"
+    skill_md.write_text(skill_md.read_text() + "\nRun `node scripts/bet.mjs` (uses `scripts/lib/common.mjs`).\n")
+    assert validate.skill_published_files(d) == [
+        "SKILL.md", "package-lock.json", "package.json", "scripts/bet.mjs", "scripts/lib/common.mjs",
+    ]
+    ok, result = check_skill(d)
+    assert ok, result["errors"]
+    warnings = result["warnings"]
+    assert any("scripts/package.json is not published" in w for w in warnings)
+    assert not any("node_modules" in w for w in warnings)
+    assert not any("scripts/bet.mjs is named" in w for w in warnings)
+
+
 def test_a_named_path_reads_as_the_agent_reads_it():
     text = (
         "scripts/a.py, skills/foo/scripts/b.py, ~/skills/foo/scripts/c.py, "
@@ -1556,3 +1582,90 @@ def test_only_that_literal_origin_is_allowed(tmp_path):
     assert len(errors) == 2, errors
     v = _platform_template(tmp_path / "var", 'SITE = "https://stake.com"\nbevo.platform_balance(SITE, "Stake", 1)\n')
     assert len(_url_errors(v)) == 1
+
+
+# --- Node skills: manifest pair and install check ---------------------------------------------
+
+
+def write_node_skill(root: Path, pkg: dict | None = None, lock: bool = True) -> Path:
+    d = write_skill(root)
+    (d / "package.json").write_text(json.dumps(pkg or {"name": "foo", "version": "1.0.0", "dependencies": {}}))
+    if lock:
+        (d / "package-lock.json").write_text('{"lockfileVersion": 3}')
+    return d
+
+
+def fake_npm(bin_dir: Path, size: int = 0, fail: bool = False) -> None:
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    npm = bin_dir / "npm"
+    if fail:
+        body = "echo 'npm error boom' >&2\nexit 1\n"
+    else:
+        body = f"mkdir -p node_modules/x\nhead -c {size} /dev/zero > node_modules/x/blob\n"
+    npm.write_text("#!/bin/sh\n" + body)
+    npm.chmod(0o755)
+
+
+def test_package_json_and_lockfile_must_come_as_a_pair(tmp_path):
+    ok, result = check_skill(write_node_skill(tmp_path / "a"))
+    assert ok, result["errors"]
+    assert result["warnings"] == []
+    ok, result = check_skill(write_node_skill(tmp_path / "b", lock=False))
+    assert not ok and any(e.startswith("package.json: published without package-lock.json") for e in result["errors"])
+    d = write_skill(tmp_path / "c")
+    (d / "package-lock.json").write_text("{}")
+    ok, result = check_skill(d)
+    assert not ok and any(e.startswith("package-lock.json: published without package.json") for e in result["errors"])
+
+
+def test_npm_install_hooks_warn(tmp_path):
+    d = write_node_skill(tmp_path, {"name": "foo", "scripts": {"postinstall": "x", "test": "y"}})
+    ok, result = check_skill(d)
+    assert ok, result["errors"]
+    assert any("scripts.postinstall never runs" in w for w in result["warnings"])
+    assert not any("scripts.test" in w for w in result["warnings"])
+
+
+def install_check(d: Path):
+    return validate.validate_skill(d, set(), json_mode=True, standalone=True, install_check=True)
+
+
+def test_install_check_passes_and_reports_size(tmp_path, monkeypatch):
+    d = write_node_skill(tmp_path / "s")
+    fake_npm(tmp_path / "bin", size=4096)
+    monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}")
+    ok, result = install_check(d)
+    assert ok, result["errors"]
+    assert result["nodeModulesBytes"] >= 4096
+
+
+def test_install_check_fails_over_the_limit(tmp_path, monkeypatch):
+    d = write_node_skill(tmp_path / "s")
+    fake_npm(tmp_path / "bin", size=4096)
+    monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv(validate.NODE_MODULES_LIMIT_ENV, "1000")
+    ok, result = install_check(d)
+    assert not ok and any("over the" in e and "cap" in e for e in result["errors"])
+
+
+def test_install_check_fails_when_npm_fails(tmp_path, monkeypatch):
+    d = write_node_skill(tmp_path / "s")
+    fake_npm(tmp_path / "bin", fail=True)
+    monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}")
+    ok, result = install_check(d)
+    assert not ok and any("npm ci failed" in e and "boom" in e for e in result["errors"])
+
+
+def test_install_check_errors_when_npm_is_missing(tmp_path, monkeypatch):
+    d = write_node_skill(tmp_path / "s")
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+    ok, result = install_check(d)
+    assert not ok and any("npm is not on PATH" in e for e in result["errors"])
+
+
+def test_install_check_skips_skills_without_node(tmp_path, monkeypatch):
+    d = write_skill(tmp_path)
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+    ok, result = install_check(d)
+    assert ok, result["errors"]
+    assert "nodeModulesBytes" not in result
