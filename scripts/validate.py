@@ -63,6 +63,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -82,6 +83,11 @@ MAX_DESCRIPTION = 200  # composed into a 280-char field with a settings clause a
 # checkout that breaks any of these before copying a single file).
 MAX_TREE_FILES = 50
 MAX_TREE_BYTES = 1024 * 1024
+MAX_NODE_MODULES_BYTES = 150 * 1024 * 1024
+NODE_MODULES_LIMIT_ENV = "BUTLER_SKILLS_MAX_NODE_MODULES_BYTES"
+NPM_CI_TIMEOUT_S = 120
+NPM_CI_ARGS = ["ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"]
+NPM_INSTALL_HOOKS = ("preinstall", "install", "postinstall", "prepare")
 TREE_SKIP_NAMES = {".git", "__pycache__"}
 
 REQUIRED_FILES = ("recipe.json", "duty.py", "README.md")
@@ -1650,6 +1656,7 @@ def check_skill_layout(skill_dir: Path, issues: Issues) -> None:
         issues.error("layout", f"{count} files, must be <= {MAX_TREE_FILES}")
     if total > MAX_TREE_BYTES:
         issues.error("layout", f"{total} bytes in total, must be <= {MAX_TREE_BYTES}")
+    check_node_manifests(skill_dir, issues)
     if (skill_dir / "duty.py").exists():
         issues.error(
             "layout",
@@ -1668,6 +1675,108 @@ def check_skill_layout(skill_dir: Path, issues: Issues) -> None:
     readme = skill_dir / "README.md"
     if readme.is_file() and not readme.read_text(encoding="utf-8", errors="replace").strip():
         issues.error("README.md", "must not be empty")
+
+
+def check_node_manifests(skill_dir: Path, issues: Issues) -> None:
+    """package.json and package-lock.json are published as a pair: the butler installs
+    with `npm ci`, which needs both. Install hooks never run (--ignore-scripts)."""
+    pkg = skill_dir / "package.json"
+    lock = skill_dir / "package-lock.json"
+    if pkg.is_file() and not lock.is_file():
+        issues.error(
+            "package.json",
+            "published without package-lock.json — `npm ci` needs the lockfile; commit both",
+        )
+    if lock.is_file() and not pkg.is_file():
+        issues.error("package-lock.json", "published without package.json — commit both or neither")
+    if not pkg.is_file():
+        return
+    try:
+        manifest = json.loads(pkg.read_text(encoding="utf-8", errors="replace"))
+    except ValueError as e:
+        issues.error("package.json", f"is not valid JSON: {e}")
+        return
+    scripts = manifest.get("scripts") if isinstance(manifest, dict) else None
+    if isinstance(scripts, dict):
+        for hook in NPM_INSTALL_HOOKS:
+            if hook in scripts:
+                issues.warn(
+                    "package.json",
+                    f"scripts.{hook} never runs: the butler installs with --ignore-scripts",
+                )
+
+
+def dir_size(path: Path) -> int:
+    total = 0
+    for root, _dirs, names in os.walk(path, followlinks=False):
+        for n in names:
+            p = os.path.join(root, n)
+            try:
+                if not os.path.islink(p):
+                    st = os.lstat(p)
+                    total += max(st.st_size, getattr(st, "st_blocks", 0) * 512)
+            except OSError:
+                pass
+    return total
+
+
+def node_modules_limit() -> int:
+    raw = os.environ.get(NODE_MODULES_LIMIT_ENV)
+    if raw:
+        try:
+            return int(raw)
+        except ValueError:
+            pass
+    return MAX_NODE_MODULES_BYTES
+
+
+def check_node_install(skill_dir: Path, issues: Issues, json_mode: bool = True) -> int | None:
+    """Run the butler's install (`npm ci --omit=dev --ignore-scripts`) on a copy of the
+    manifest pair and cap the size of the node_modules it produces. Returns the size in
+    bytes, or None when the install did not run or failed (an error is recorded)."""
+    if not (skill_dir / "package.json").is_file():
+        return None
+    if not (skill_dir / "package-lock.json").is_file():
+        issues.error("install-check", "package-lock.json is missing; cannot run npm ci")
+        return None
+    npm = shutil.which("npm")
+    if npm is None:
+        issues.error("install-check", "npm is not on PATH; install Node (actions/setup-node) to run the install check")
+        return None
+    with tempfile.TemporaryDirectory(prefix="butler-skills-npm-") as tmp:
+        work = Path(tmp)
+        for name in ("package.json", "package-lock.json"):
+            shutil.copyfile(skill_dir / name, work / name)
+        try:
+            proc = subprocess.run(
+                [npm, *NPM_CI_ARGS], cwd=work, capture_output=True, text=True,
+                timeout=NPM_CI_TIMEOUT_S,
+            )
+        except subprocess.TimeoutExpired:
+            issues.error("install-check", f"npm ci timed out after {NPM_CI_TIMEOUT_S}s")
+            return None
+        except OSError as e:
+            issues.error("install-check", f"could not run npm: {e}")
+            return None
+        if proc.returncode != 0:
+            tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-5:]
+            issues.error(
+                "install-check",
+                f"npm ci failed (exit {proc.returncode}): " + " | ".join(tail),
+            )
+            return None
+        size = dir_size(work / "node_modules")
+    limit = node_modules_limit()
+    mb = size / (1024 * 1024)
+    if not json_mode:
+        print(f"  node_modules after npm ci: {mb:.1f} MB (limit {limit / (1024 * 1024):.0f} MB)")
+    if size > limit:
+        issues.error(
+            "install-check",
+            f"node_modules is {mb:.1f} MB after npm ci, over the {limit / (1024 * 1024):.0f} MB cap; "
+            "drop or replace heavy dependencies, or bundle the script",
+        )
+    return size
 
 
 def check_skill_changelog(skill_dir: Path, version: str | None, issues: Issues) -> None:
@@ -2072,7 +2181,8 @@ def lint_skill_prose(prose: str, issues: Issues, where) -> None:
 
 
 def validate_skill(
-    skill_dir: Path, reserved: set[str], json_mode: bool, standalone: bool = False
+    skill_dir: Path, reserved: set[str], json_mode: bool, standalone: bool = False,
+    install_check: bool = False,
 ) -> tuple[bool, dict]:
     """Validate one skill repository. `standalone=True` takes the name from the
     frontmatter; otherwise the directory is a checkout named after its skills.json
@@ -2152,6 +2262,8 @@ def validate_skill(
 
     check_skill_changelog(skill_dir, version if isinstance(version, str) else None, issues)
 
+    node_modules_bytes = check_node_install(skill_dir, issues, json_mode) if install_check else None
+
     skill_name = name if isinstance(name, str) and name else skill_dir.name
     cost = prompt_cost(skill_name, description if isinstance(description, str) else "", f"skills/{skill_name}/SKILL.md")
     if not json_mode:
@@ -2163,6 +2275,7 @@ def validate_skill(
         "errors": issues.errors,
         "warnings": issues.warnings,
         "promptCost": cost,
+        **({"nodeModulesBytes": node_modules_bytes} if node_modules_bytes is not None else {}),
     }
 
 
@@ -2406,7 +2519,7 @@ def detect_kind(path: Path) -> str:
 
 def validate_path(
     path: Path, reserved: set[str], json_mode: bool,
-    standalone: bool = False, expected_kind: str | None = None,
+    standalone: bool = False, expected_kind: str | None = None, install_check: bool = False,
 ) -> tuple[bool, dict]:
     """Validate one repository as whichever kind it is. `expected_kind` is the listing
     it came from under --all: a templates.json entry must be a template, a skills.json
@@ -2435,7 +2548,7 @@ def validate_path(
         )
         return False, {"template": path.name, "errors": issues.errors, "warnings": issues.warnings}
     if kind == "skill":
-        return validate_skill(path, reserved, json_mode, standalone=standalone)
+        return validate_skill(path, reserved, json_mode, standalone=standalone, install_check=install_check)
     return validate_template(path, reserved, json_mode, standalone=standalone)
 
 
@@ -2452,6 +2565,13 @@ def main() -> int:
         "--standalone",
         action="store_true",
         help="treat each path as a repository checkout: the name comes from recipe.json / SKILL.md, not the directory",
+    )
+    parser.add_argument(
+        "--install-check",
+        action="store_true",
+        help="for each Node skill, run npm ci --omit=dev --ignore-scripts on its manifest pair "
+        f"and fail above {MAX_NODE_MODULES_BYTES // (1024 * 1024)} MB of node_modules "
+        f"(override: {NODE_MODULES_LIMIT_ENV}); needs npm on PATH",
     )
     parser.add_argument("--json", action="store_true", help="print machine-readable JSON output")
     args = parser.parse_args()
@@ -2493,7 +2613,8 @@ def main() -> int:
             if not args.json:
                 print(f"validating {t.relative_to(REPO_ROOT) if t.is_relative_to(REPO_ROOT) else t.name} ...")
             ok, result = validate_path(
-                t, reserved, args.json, standalone=args.standalone, expected_kind=expected_kind
+                t, reserved, args.json, standalone=args.standalone, expected_kind=expected_kind,
+                install_check=args.install_check,
             )
             if expected_kind == "skill" and dependency_errors.get(t.name):
                 result["errors"].extend(dependency_errors[t.name])

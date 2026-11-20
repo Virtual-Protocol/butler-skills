@@ -23,6 +23,10 @@ jobs:
         with:
           python-version: "3.11"
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
       - name: Install pytest
         run: pip install --quiet pytest
 
@@ -38,6 +42,11 @@ jobs:
 
       - name: Validate all templates and skills
         run: python3 scripts/validate.py --all
+
+      - name: Install check for listed Node skills
+        # Runs the butler's `npm ci --omit=dev --ignore-scripts` on each listed skill's
+        # package.json + package-lock.json and fails above 150 MB of node_modules.
+        run: python3 scripts/validate.py --all --install-check
 
       - name: Unit + fixture tests
         run: python3 -m pytest tests -q

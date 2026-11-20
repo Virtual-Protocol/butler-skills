@@ -44,7 +44,12 @@ script named nowhere is a warning. Keep tests out of `scripts/` (they would be p
 **Node scripts.** The npm manifest pair sits at the skill **root**, never under
 `scripts/`: the butler runs `npm ci --omit=dev --ignore-scripts --no-audit --no-fund` in
 the skill directory, and Node resolves a script's imports upward. Pin exact versions and
-keep the dependency closure small (a command times out after 120 s). A script that signs
+keep the dependency closure small (a command times out after 120 s).
+A `package.json` without `package-lock.json` (or the reverse) is an error, and an install
+hook (`preinstall`, `install`, `postinstall`, `prepare`) is a warning: none ever runs under
+`--ignore-scripts`. CI runs that same `npm ci` on every listed skill (`validate.py --all
+--install-check`) and fails when `node_modules` exceeds 150 MB; if a dependency is heavy,
+bundle the script instead. A script that signs
 imports the container's signer (`await import(process.env.BEVO_SIGNER)`: `mainSigner`,
 `agentKey`) and never holds a key; it declares `requires.bins` `["bevo-wallet", "node",
 "npm"]` and `moneyMoving: true` (virtuals-agent `docs/skills-contract.md`). A local
