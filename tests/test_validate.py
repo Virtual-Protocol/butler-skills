@@ -1595,13 +1595,23 @@ def write_node_skill(root: Path, pkg: dict | None = None, lock: bool = True) -> 
     return d
 
 
-def fake_npm(bin_dir: Path, size: int = 0, fail: bool = False) -> None:
+def fake_npm(bin_dir: Path, size: int = 0, fail: bool = False, audit: str = "pass") -> None:
     bin_dir.mkdir(parents=True, exist_ok=True)
     npm = bin_dir / "npm"
     if fail:
         body = "echo 'npm error boom' >&2\nexit 1\n"
     else:
-        body = f"mkdir -p node_modules/x\nhead -c {size} /dev/zero > node_modules/x/blob\n"
+        audits = {
+            "pass": "echo 'audited 3 packages in 1s'\necho '3 packages have verified registry signatures'\n"
+            "echo '2 packages have verified attestations'\nexit 0\n",
+            "invalid": "echo 'audited 3 packages in 1s'\necho '1 package has an invalid registry signature:'\n"
+            "echo 'x@1.0.0 (https://registry.npmjs.org/)'\nexit 1\n",
+            "network": "echo 'npm error code ENOTFOUND' >&2\nexit 1\n",
+        }
+        body = (
+            'if [ "$1" = "audit" ]; then\n' + audits[audit] + "fi\n"
+            f"mkdir -p node_modules/x\nhead -c {size} /dev/zero > node_modules/x/blob\n"
+        )
     npm.write_text("#!/bin/sh\n" + body)
     npm.chmod(0o755)
 
@@ -1637,6 +1647,33 @@ def test_install_check_passes_and_reports_size(tmp_path, monkeypatch):
     ok, result = install_check(d)
     assert ok, result["errors"]
     assert result["nodeModulesBytes"] >= 4096
+
+
+def test_install_check_reports_verified_signature_counts(tmp_path, monkeypatch):
+    d = write_node_skill(tmp_path / "s")
+    fake_npm(tmp_path / "bin", size=4096)
+    monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}")
+    ok, result = install_check(d)
+    assert ok, result["errors"]
+    assert result["verifiedSignatures"] == 3
+    assert result["verifiedAttestations"] == 2
+
+
+def test_install_check_fails_on_invalid_signature(tmp_path, monkeypatch):
+    d = write_node_skill(tmp_path / "s")
+    fake_npm(tmp_path / "bin", size=4096, audit="invalid")
+    monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}")
+    ok, result = install_check(d)
+    assert not ok and any("npm audit signatures failed" in e and "invalid registry signature" in e for e in result["errors"])
+    assert "verifiedSignatures" not in result
+
+
+def test_install_check_errors_clearly_when_registry_is_unreachable(tmp_path, monkeypatch):
+    d = write_node_skill(tmp_path / "s")
+    fake_npm(tmp_path / "bin", size=4096, audit="network")
+    monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}")
+    ok, result = install_check(d)
+    assert not ok and any("registry unreachable" in e for e in result["errors"])
 
 
 def test_install_check_fails_over_the_limit(tmp_path, monkeypatch):

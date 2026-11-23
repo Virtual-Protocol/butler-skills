@@ -87,6 +87,11 @@ MAX_NODE_MODULES_BYTES = 150 * 1024 * 1024
 NODE_MODULES_LIMIT_ENV = "BUTLER_SKILLS_MAX_NODE_MODULES_BYTES"
 NPM_CI_TIMEOUT_S = 120
 NPM_CI_ARGS = ["ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"]
+NPM_AUDIT_TIMEOUT_S = 120
+NPM_AUDIT_ARGS = ["audit", "signatures"]
+NPM_NETWORK_ERROR_RE = re.compile(r"ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|network", re.I)
+NPM_VERIFIED_SIG_RE = re.compile(r"(\d+) packages? ha(?:s|ve) (?:a )?verified registry signatures?")
+NPM_VERIFIED_ATT_RE = re.compile(r"(\d+) packages? ha(?:s|ve) (?:a )?verified attestations?")
 NPM_INSTALL_HOOKS = ("preinstall", "install", "postinstall", "prepare")
 TREE_SKIP_NAMES = {".git", "__pycache__"}
 
@@ -1730,10 +1735,12 @@ def node_modules_limit() -> int:
     return MAX_NODE_MODULES_BYTES
 
 
-def check_node_install(skill_dir: Path, issues: Issues, json_mode: bool = True) -> int | None:
+def check_node_install(skill_dir: Path, issues: Issues, json_mode: bool = True) -> dict | None:
     """Run the butler's install (`npm ci --omit=dev --ignore-scripts`) on a copy of the
-    manifest pair and cap the size of the node_modules it produces. Returns the size in
-    bytes, or None when the install did not run or failed (an error is recorded)."""
+    manifest pair, cap the size of the node_modules it produces, then run
+    `npm audit signatures` on it (registry signatures and provenance attestations).
+    Returns {"nodeModulesBytes", "verifiedSignatures", "verifiedAttestations"}, or None
+    when the install did not run or failed (an error is recorded)."""
     if not (skill_dir / "package.json").is_file():
         return None
     if not (skill_dir / "package-lock.json").is_file():
@@ -1766,6 +1773,7 @@ def check_node_install(skill_dir: Path, issues: Issues, json_mode: bool = True) 
             )
             return None
         size = dir_size(work / "node_modules")
+        signatures, attestations = check_npm_signatures(npm, work, issues, json_mode)
     limit = node_modules_limit()
     mb = size / (1024 * 1024)
     if not json_mode:
@@ -1776,7 +1784,42 @@ def check_node_install(skill_dir: Path, issues: Issues, json_mode: bool = True) 
             f"node_modules is {mb:.1f} MB after npm ci, over the {limit / (1024 * 1024):.0f} MB cap; "
             "drop or replace heavy dependencies, or bundle the script",
         )
-    return size
+    stats = {"nodeModulesBytes": size}
+    if signatures is not None:
+        stats["verifiedSignatures"] = signatures
+        stats["verifiedAttestations"] = attestations
+    return stats
+
+
+def check_npm_signatures(npm: str, work: Path, issues: Issues, json_mode: bool) -> tuple[int | None, int]:
+    try:
+        proc = subprocess.run(
+            [npm, *NPM_AUDIT_ARGS], cwd=work, capture_output=True, text=True,
+            timeout=NPM_AUDIT_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        issues.error("install-check", f"npm audit signatures timed out after {NPM_AUDIT_TIMEOUT_S}s (registry unreachable?)")
+        return None, 0
+    except OSError as e:
+        issues.error("install-check", f"could not run npm audit signatures: {e}")
+        return None, 0
+    out = f"{proc.stdout or ''}\n{proc.stderr or ''}"
+    lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    if proc.returncode != 0:
+        summary = [ln for ln in lines if re.search(r"signature|attestation", ln, re.I)] or lines
+        hint = " (registry unreachable?)" if NPM_NETWORK_ERROR_RE.search(out) else ""
+        issues.error(
+            "install-check",
+            f"npm audit signatures failed (exit {proc.returncode}){hint}: " + " | ".join(summary[-5:]),
+        )
+        return None, 0
+    sig = NPM_VERIFIED_SIG_RE.search(out)
+    att = NPM_VERIFIED_ATT_RE.search(out)
+    signatures = int(sig.group(1)) if sig else 0
+    attestations = int(att.group(1)) if att else 0
+    if not json_mode:
+        print(f"  npm audit signatures: {signatures} verified registry signatures, {attestations} verified attestations")
+    return signatures, attestations
 
 
 def check_skill_changelog(skill_dir: Path, version: str | None, issues: Issues) -> None:
@@ -2262,7 +2305,7 @@ def validate_skill(
 
     check_skill_changelog(skill_dir, version if isinstance(version, str) else None, issues)
 
-    node_modules_bytes = check_node_install(skill_dir, issues, json_mode) if install_check else None
+    install_stats = check_node_install(skill_dir, issues, json_mode) if install_check else None
 
     skill_name = name if isinstance(name, str) and name else skill_dir.name
     cost = prompt_cost(skill_name, description if isinstance(description, str) else "", f"skills/{skill_name}/SKILL.md")
@@ -2275,7 +2318,7 @@ def validate_skill(
         "errors": issues.errors,
         "warnings": issues.warnings,
         "promptCost": cost,
-        **({"nodeModulesBytes": node_modules_bytes} if node_modules_bytes is not None else {}),
+        **(install_stats or {}),
     }
 
 

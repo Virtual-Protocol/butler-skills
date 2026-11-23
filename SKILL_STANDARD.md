@@ -49,7 +49,8 @@ A `package.json` without `package-lock.json` (or the reverse) is an error, and a
 hook (`preinstall`, `install`, `postinstall`, `prepare`) is a warning: none ever runs under
 `--ignore-scripts`. CI runs that same `npm ci` on every listed skill (`validate.py --all
 --install-check`) and fails when `node_modules` exceeds 150 MB; if a dependency is heavy,
-bundle the script instead. A script that signs
+bundle the script instead. The same check runs `npm audit signatures` and fails on any invalid or
+missing registry signature or provenance attestation. A script that signs
 imports the container's signer (`await import(process.env.BEVO_SIGNER)`: `mainSigner`,
 `agentKey`) and never holds a key; it declares `requires.bins` `["bevo-wallet", "node",
 "npm"]` and `moneyMoving: true` (virtuals-agent `docs/skills-contract.md`). A local
