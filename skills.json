@@ -34,7 +34,7 @@
     {
       "name": "prediction-market",
       "repo": "https://github.com/Virtual-Protocol/butler-skill-prediction-market",
-      "ref": "v1.0.1"
+      "ref": "v2.0.0"
     },
     {
       "name": "stable-earn",
