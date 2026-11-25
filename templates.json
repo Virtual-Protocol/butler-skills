@@ -4,12 +4,12 @@
     {
       "name": "copytrade",
       "repo": "https://github.com/Virtual-Protocol/butler-skill-copytrade",
-      "ref": "v15"
+      "ref": "v16"
     },
     {
       "name": "dca",
       "repo": "https://github.com/Virtual-Protocol/butler-skill-dca",
-      "ref": "v15"
+      "ref": "v16"
     },
     {
       "name": "earn-account",
@@ -39,7 +39,7 @@
     {
       "name": "options-order-manager",
       "repo": "https://github.com/mamamatcha/butler-skill-yield-notes",
-      "ref": "v2.17.0",
+      "ref": "v2.18.4",
       "path": "templates/options-order-manager"
     },
     {

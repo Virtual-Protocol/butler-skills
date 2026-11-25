@@ -107,7 +107,7 @@ metadata: {"butler":{"moneyMoving":true,"keywords":["tip","send a tip"],"require
 | `name` | Mastra's rule: `^[a-z0-9]+(-[a-z0-9]+)*$` (lowercase, digits, single hyphens, none leading or trailing), at most 64 characters, and not something YAML reads as a number or date (`123`, `1e5`, `2026-09-21`). In registry mode it must equal the directory — the `skills.json` entry, and the directory the butler installs it in. Not in `schema/reserved-names.json` (which includes `acp-cli` and `duty-code`, the two skills compiled into the butler image). `bevo-` is **refused** — the container's bundled-command namespace |
 | `description` | at most 200 characters, one line. Either a JSON double-quoted string (`description: "Read it: all of it"`) or a plain value YAML reads back verbatim: no `: `, no ` #`, not ending in `:`, not starting with any of `` - ? : , [ ] { } # & * ! \| > ' " % @ ` ``, and not a number, boolean, null or date. The validator's error spells out the quoted form to paste |
 | `version` | semver `X.Y.Z`; bump it for every change — a published `name@version` never changes bytes |
-| `metadata` | ONE line of JSON: `{"butler": {"moneyMoving": <bool>, "keywords": [<non-empty strings>], "requires": {"bins": [<commands>]}}}` — all three fields required; the only optional ones are `maxSteps` and `requires.skills` (below); no other keys anywhere, no duplicated JSON key |
+| `metadata` | ONE line of JSON: `{"butler": {"moneyMoving": <bool>, "keywords": [<non-empty strings>], "requires": {"bins": [<commands>]}}}` — all three fields required; the only optional ones are `maxSteps`, `requires.skills` and `venue` (below); no other keys anywhere, no duplicated JSON key |
 
 The OpenClaw-era fields are refused by name, with where their content goes now:
 `metadata.openclaw`, `metadata.butler.tier` / `modes` / `params` / `web3` / `dutyTemplate`,
@@ -139,6 +139,37 @@ the tombstone). `--standalone` cannot see the listing and does not check it.
 
 Both reach the index row: `maxSteps` when the skill sets it (absent otherwise), and
 `requires` as `{"bins": [...], "skills": [...]}` — `skills` always present, `[]` when none.
+
+### Optional: `venue`
+
+A skill that holds money on an outside venue (Polymarket, Derive, Hyperliquid, outcome.xyz, …) declares how the Butler checks and empties it when a duty wallet is torn down. The block sits in the one-line `metadata` JSON, beside `moneyMoving`:
+
+`"venue":{"id":"polymarket","precheck":["python3","scripts/venue.py","precheck"],"withdraw":["python3","scripts/venue.py","withdraw"]}`
+
+| Field | Rule |
+| --- | --- |
+| `venue` | an object with exactly `id`, `precheck` and `withdraw`; `metadata.butler.moneyMoving` must be `true` |
+| `id` | `^[a-z0-9]+(-[a-z0-9]+)*$`, at most 32 characters |
+| `precheck`, `withdraw` | each an argv array of 1 to 8 strings, each 1 to 200 characters with no control characters. `argv[0]` is listed in `requires.bins` and is not a shell builtin. An element shaped `scripts/<path>.py` is a published file of the skill. Neither array contains `--wallet`, `--json`, `--all` or `--cash` (the Butler appends them). The two arrays differ |
+
+The ids `hyperliquid-perp` and `hyperliquid-spot` are reserved: bevo-server owns them as server venues, and a skill may not declare them.
+
+**How the Butler runs it:** no shell, 120 s timeout. stdout must be exactly one JSON object, at most 64 KiB.
+
+- precheck: argv + `--wallet <walletId> --json`
+- withdraw: argv + `--wallet <walletId> (--all|--cash) --json`
+
+**precheck output:**
+
+`{"venue","readable":bool,"reason":str|null,"freeUsd":num,"inTransitUsd":num,"positions":[{"key","title","valueUsd":num|null,"closable":bool}],"orders":[{"key","title","reservedUsd":num|null}]}`
+
+Amounts are USD and at least 0. The venue is **unreadable** on any of: a non-zero exit, a timeout, bad JSON, `venue` not equal to `id`, `readable:false`, or `freeUsd` / `inTransitUsd` missing or negative. It is **empty** when it is readable, has no positions, no orders, and both amounts are under 0.01. Unreadable never counts as empty.
+
+**withdraw behaviour:** `--cash` cancels every open order and returns all free venue cash to the same sub-wallet on-chain. `--all` additionally market-closes every position first. It is idempotent and re-runnable, and it never sends to any address but the same sub-wallet.
+
+**withdraw output:**
+
+`{"venue","mode":"all"|"cash","moved":[{key,title,valueUsd,txHash|null}],"pending":[{key,title,valueUsd,approvalId|null}],"kept":[{key,title,valueUsd,"reason":"position_kept"|"not_closable"|"close_failed"|"below_minimum"|"refused"|"unreadable"}]}`
 
 ## Body
 

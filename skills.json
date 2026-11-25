@@ -14,12 +14,12 @@
     {
       "name": "butler-polymarket-web",
       "repo": "https://github.com/Virtual-Protocol/butler-skill-polymarket-web",
-      "ref": "v0.2.34"
+      "ref": "v0.2.35"
     },
     {
       "name": "options-trading",
       "repo": "https://github.com/mamamatcha/butler-skill-yield-notes",
-      "ref": "v2.18.1"
+      "ref": "v2.18.4"
     },
     {
       "name": "papertrade-xyz",

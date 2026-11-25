@@ -1449,7 +1449,7 @@ def check_skill_metadata(metadata, issues: Issues, name: str | None = None) -> d
         return None
 
     for key in butler:
-        if key in ("moneyMoving", "keywords", "maxSteps", "requires"):
+        if key in ("moneyMoving", "keywords", "maxSteps", "requires", "venue"):
             continue
         if key in RETIRED_BUTLER_KEYS:
             issues.error(
@@ -1458,7 +1458,7 @@ def check_skill_metadata(metadata, issues: Issues, name: str | None = None) -> d
                 f"({RETIRED_BUTLER_KEYS[key]})",
             )
         else:
-            issues.error(f"metadata.butler.{key}", "unknown key — the block is moneyMoving, keywords, maxSteps, requires")
+            issues.error(f"metadata.butler.{key}", "unknown key — the block is moneyMoving, keywords, maxSteps, requires, venue")
 
     ok = True
     if "moneyMoving" not in butler:
@@ -1593,6 +1593,60 @@ def check_skill_name(name: str, skill_dir: Path, standalone: bool, reserved: set
             f"{name!r} uses the '{CONTAINER_PREFIX}' prefix, which is the container's bundled-command "
             f"namespace — skills may never use it",
         )
+
+
+VENUE_ID_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+VENUE_SERVER_IDS = frozenset({"hyperliquid-perp", "hyperliquid-spot"})
+VENUE_RESERVED_FLAGS = ("--wallet", "--json", "--all", "--cash")
+
+
+def check_skill_venue(venue, bins, issues: Issues, money_moving=None, published=()) -> None:
+    """`metadata.butler.venue`: {"id", "precheck", "withdraw"} — the two commands the butler
+    runs when a duty wallet holding money on an outside venue is torn down. `bins` is
+    requires.bins, `published` the skill's published files."""
+    field = "metadata.butler.venue"
+    if not isinstance(venue, dict):
+        issues.error(field, "must be an object: {\"id\", \"precheck\", \"withdraw\"}")
+        return
+    for key in venue:
+        if key not in ("id", "precheck", "withdraw"):
+            issues.error(f"{field}.{key}", "unknown key — venue holds only id, precheck and withdraw")
+    for key in ("id", "precheck", "withdraw"):
+        if key not in venue:
+            issues.error(f"{field}.{key}", "required field missing")
+    if money_moving is not True:
+        issues.error("metadata.butler.moneyMoving", "must be true — a skill with a venue moves money")
+    vid = venue.get("id")
+    if "id" in venue and (
+        not isinstance(vid, str) or not VENUE_ID_RE.match(vid) or len(vid) > 32
+    ):
+        issues.error(f"{field}.id", "must match ^[a-z0-9]+(-[a-z0-9]+)*$, at most 32 characters")
+    elif vid in VENUE_SERVER_IDS:
+        issues.error(f"{field}.id", f"{vid!r} is reserved — bevo-server owns it as a server venue, so a skill cannot declare it")
+    argvs = {}
+    for key in ("precheck", "withdraw"):
+        argv = venue.get(key)
+        if key not in venue:
+            continue
+        where = f"{field}.{key}"
+        if (
+            not isinstance(argv, list) or not 1 <= len(argv) <= 8
+            or not all(isinstance(a, str) and 1 <= len(a) <= 200 and not re.search(r"[\x00-\x1f\x7f]", a) for a in argv)
+        ):
+            issues.error(where, "must be an array of 1 to 8 strings, each 1 to 200 characters with no control characters")
+            continue
+        argvs[key] = argv
+        if argv[0] not in bins:
+            issues.error(where, f"{argv[0]!r} is not listed in metadata.butler.requires.bins")
+        if argv[0] in SHELL_BUILTINS:
+            issues.error(where, f"{argv[0]!r} is a shell builtin, not a program")
+        for a in argv:
+            if SKILL_SCRIPT_RE.match(a) and a not in published:
+                issues.error(where, f"{a!r} is not a published file of this skill")
+            if a in VENUE_RESERVED_FLAGS:
+                issues.error(where, f"must not contain {a} — the butler appends it")
+    if len(argvs) == 2 and argvs["precheck"] == argvs["withdraw"]:
+        issues.error(field, "precheck and withdraw must differ")
 
 
 def skill_published_files(skill_dir: Path) -> list[str]:
@@ -2273,6 +2327,10 @@ def validate_skill(
         lint_skill_prose("\n".join(keywords), issues, lambda idx: "metadata.butler.keywords")
 
     published = skill_published_files(skill_dir)
+    if butler and "venue" in butler:
+        check_skill_venue(
+            butler["venue"], butler["requires"]["bins"], issues, money_moving, published
+        )
     named = set(SKILL_NAMED_PATH_RE.findall(text))
     for rel in published[1:]:
         if not rel.endswith(".md"):
