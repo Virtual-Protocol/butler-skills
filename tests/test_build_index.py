@@ -542,3 +542,36 @@ def test_malformed_translations_fail_the_build(tmp_path, monkeypatch):
     assert "the last deploy stays live" in str(e.value)
     assert not (tmp_path / "repo" / "dist").exists()
 
+
+
+def _portfolio_skill_repo(root: Path) -> str:
+    shutil.copytree(SKILL_FIXTURES / "valid", root)
+    md = root / "SKILL.md"
+    bins = '"requires":{"bins":["acp","bevo-read","bevo-notify"]'
+    portfolio = {"script": "scripts/portfolio.mjs", "site": "https://outcome.xyz", "name": "Outcome", "chains": ["evm"]}
+    text = md.read_text().replace(bins, bins + '},"portfolio":' + json.dumps(portfolio, separators=(",", ":")), 1)
+    text = text.replace('"portfolio":' + json.dumps(portfolio, separators=(",", ":")) + "}", '"portfolio":' + json.dumps(portfolio, separators=(",", ":")), 1)
+    md.write_text(text + "\n### Portfolio\n\nRun `scripts/portfolio.mjs --wallet <addr>`.\n")
+    (root / "scripts").mkdir()
+    (root / "scripts" / "portfolio.mjs").write_text("// fixture\n")
+    (root / "test").mkdir()
+    (root / "test" / "portfolio.test.mjs").write_text("// fixture\n")
+    git("init", "-q", "-b", "main", cwd=root)
+    git("add", "-A", cwd=root)
+    git("commit", "-q", "-m", "init", cwd=root)
+    return root.as_uri()
+
+
+def test_a_skill_row_carries_its_portfolio_declaration_and_others_are_unchanged(tmp_path, monkeypatch):
+    index = _build(tmp_path, monkeypatch, skills=[
+        {"name": "valid", "repo": _portfolio_skill_repo(tmp_path / "with"), "ref": "main"},
+        {"name": "requires-skill", "repo": _skill_repo(tmp_path / "without", "requires-skill"), "ref": "main"},
+    ])
+    rows = {row["name"]: row for row in index["skills"]}
+    assert rows["valid"]["portfolio"] == {
+        "script": "scripts/portfolio.mjs", "site": "https://outcome.xyz", "name": "Outcome", "chains": ["evm"],
+    }
+    assert "portfolio" not in rows["requires-skill"]
+    skill_schema = json.loads((REPO_ROOT / "schema" / "index.schema.json").read_text())["definitions"]["skill"]
+    for row in rows.values():
+        assert set(skill_schema["required"]) <= set(row) <= set(skill_schema["properties"])

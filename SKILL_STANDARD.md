@@ -107,7 +107,7 @@ metadata: {"butler":{"moneyMoving":true,"keywords":["tip","send a tip"],"require
 | `name` | Mastra's rule: `^[a-z0-9]+(-[a-z0-9]+)*$` (lowercase, digits, single hyphens, none leading or trailing), at most 64 characters, and not something YAML reads as a number or date (`123`, `1e5`, `2026-09-21`). In registry mode it must equal the directory — the `skills.json` entry, and the directory the butler installs it in. Not in `schema/reserved-names.json` (which includes `acp-cli` and `duty-code`, the two skills compiled into the butler image). `bevo-` is **refused** — the container's bundled-command namespace |
 | `description` | at most 200 characters, one line. Either a JSON double-quoted string (`description: "Read it: all of it"`) or a plain value YAML reads back verbatim: no `: `, no ` #`, not ending in `:`, not starting with any of `` - ? : , [ ] { } # & * ! \| > ' " % @ ` ``, and not a number, boolean, null or date. The validator's error spells out the quoted form to paste |
 | `version` | semver `X.Y.Z`; bump it for every change — a published `name@version` never changes bytes |
-| `metadata` | ONE line of JSON: `{"butler": {"moneyMoving": <bool>, "keywords": [<non-empty strings>], "requires": {"bins": [<commands>]}}}` — all three fields required; the only optional ones are `maxSteps`, `requires.skills` and `venue` (below); no other keys anywhere, no duplicated JSON key |
+| `metadata` | ONE line of JSON: `{"butler": {"moneyMoving": <bool>, "keywords": [<non-empty strings>], "requires": {"bins": [<commands>]}}}` — all three fields required; the only optional ones are `maxSteps`, `requires.skills`, `venue` and `portfolio` (below); no other keys anywhere, no duplicated JSON key |
 
 The OpenClaw-era fields are refused by name, with where their content goes now:
 `metadata.openclaw`, `metadata.butler.tier` / `modes` / `params` / `web3` / `dutyTemplate`,
@@ -170,6 +170,84 @@ Amounts are USD and at least 0. The venue is **unreadable** on any of: a non-zer
 **withdraw output:**
 
 `{"venue","mode":"all"|"cash","moved":[{key,title,valueUsd,txHash|null}],"pending":[{key,title,valueUsd,approvalId|null}],"kept":[{key,title,valueUsd,"reason":"position_kept"|"not_closable"|"close_failed"|"below_minimum"|"refused"|"unreadable"}]}`
+
+### Optional: `portfolio`
+
+A skill for a venue where the owner holds positions (Outcome, Polymarket, Derive, …) declares a read-only script the Butler runs to sync what the owner holds there. It is a **separate** key from `venue` — a different script with a different contract — and it does **not** require `moneyMoving`. It sits in the one-line `metadata` JSON:
+
+`"portfolio":{"script":"scripts/portfolio.mjs","site":"https://outcome.xyz","name":"Outcome","chains":["evm"]}`
+
+| Field | Rule |
+| --- | --- |
+| `portfolio` | an object with exactly `script`, `site`, `name` and `chains` |
+| `script` | a published `scripts/**/*.mjs` or `.py` file, named in SKILL.md. Read-only: it never signs, never moves money, never creates a credential |
+| `site` | an https URL. Its host is the identity of the row the app shows, so it is unique across the registry (`validate.py --all` refuses a host two skills declare) |
+| `name` | 1 to 40 characters: the brand name the app shows |
+| `chains` | a non-empty subset of `evm` and `solana`, each at most once: which kinds of wallet the script can read |
+
+The body must also contain a `### Portfolio` subsection (a subsection, so the seven `##` sections stay as they are). It must:
+- name the script, and each exported read function and subcommand, with one example command and one example output;
+- say what `valueUsd` counts, and what it leaves to the wallet's own figures;
+- say what each position and order field means at this venue;
+- list the error codes the script uses;
+- tell chat how to answer "my positions on X": read the stored rows, or run the same script with `--wallet`.
+
+**Command line.** The runtime is chosen by the file extension:
+
+```
+node|python3 "$BEVO_SKILLS_DIR/<skill>/<script>" --wallet <address>
+```
+
+- `--wallet <address>` prints the full envelope below.
+- The subcommands `positions`, `orders` and `balances`, each with `--wallet`, print one read each, so chat can answer a narrow question.
+- The exit code is always 0. The script finishes within 30 s, prints exactly one JSON object to stdout, and never prints a secret.
+
+**Envelope.** One JSON object `{ok, status, data, error}`:
+
+| Output | Meaning |
+| --- | --- |
+| `{"ok":true,"status":"done","data":<Portfolio>}` | the venue was read; an empty account is `valueUsd: 0` |
+| `{"ok":true,"status":"not_used"}` | the venue has no account for this wallet at all |
+| `{"ok":false,"status":"error","data":null,"error":{"code","message","hint"?}}` | the read failed; `status` is `"error"` or absent, `message` is at most 200 characters, `hint` is an optional string |
+
+Error codes a script emits: `RATE_LIMITED`, `VENUE_DOWN`, `NO_CREDENTIAL`, `CREDENTIAL_INVALID`, `BAD_ARGS`, `UNEXPECTED`. The Butler's sync adds `TIMEOUT`, `BAD_OUTPUT`, `DEPS_MISSING`, `SCRIPT_MODIFIED` and `SKILL_MISSING` itself; a script never emits those.
+
+**Portfolio (`portfolio/v1`)** — exactly these keys, no others:
+
+```
+{ wallet, asOf (ISO-8601), currency: "USD", valueUsd (>= 0), availableUsd: number|null,
+  positions: Position[] (at most 50), orders: Order[]|null (at most 50) }
+Position = {id, market, outcome|null, side, size, unit, entryPrice|null, markPrice|null,
+            valueUsd|null, pnlUsd|null, details?: [{label, value}] (at most 8)}
+Order    = {id, market, outcome|null, side: "buy"|"sell", type: "limit"|"stop"|"tp"|"sl"|"other",
+            price|null, size, unit, filled|null, reservedUsd|null, placedAt (ISO-8601)|null}
+```
+
+Field caps, the same as the server's schema (strings are trimmed, then 1 character minimum):
+
+| Field | Cap |
+| --- | --- |
+| `wallet`, `id`, `market`, `details[].value` | string, at most 120 |
+| `outcome` | string, at most 80, or null |
+| `side` (position) | string, at most 20 |
+| `unit` | string, at most 20 |
+| `details[].label` | string, at most 40 |
+| `valueUsd` (portfolio) | number, 0 to 1e15 |
+| `availableUsd`, position `valueUsd` / `pnlUsd` | number, -1e15 to 1e15 (null where the shape allows) |
+| position `size` | number, -1e15 to 1e15 |
+| `entryPrice`, `markPrice`, order `price` | number, 0 to 1e15 (null where the shape allows) |
+| order `size`, `filled`, `reservedUsd` | number, 0 to 1e15 (null where the shape allows) |
+| `asOf`, `placedAt` | ISO-8601 with seconds and a `Z` or `+HH:MM` offset |
+
+`orders: null` means "not read", never "none". Stablecoins count as 1 USD.
+
+**A venue built on another venue reports only its own holdings.** What the base layer already reads for the wallet (cash, perps, orders) is not repeated. Outcome.xyz runs on Hyperliquid, whose balance, perps and orders the owner's wallet read already covers, so its portfolio reports **only the bets held**: one position per outcome held, `availableUsd: null`, `orders: null`, and `valueUsd` the sum of the bet values at mark. Counting the base layer's cash or orders here would sum it twice.
+
+**Ship the read code with tests.** Put the reads in `scripts/lib/portfolio.mjs` (or the language's equivalent): one exported function per read (`getPositions`, `getOpenOrders`, `getBalances`) and a pure `toPortfolio(...)` that maps them into `portfolio/v1`, with the network client injectable. A skill that declares `portfolio` must ship a `test/` (or `tests/`) directory with tests that cover `toPortfolio` with fixtures, with no network: the mapping, an empty account, no account (`not_used`), and a venue 429 or 5xx (`RATE_LIMITED` / `VENUE_DOWN`). `validate.py` checks that the directory holds a file; running the tests is the skill repo's own job.
+
+**Check a captured output:** `python3 validate.py --portfolio-output out.json` validates one captured stdout against the envelope and `portfolio/v1` above (status, field types, the caps, `currency` `"USD"`, `valueUsd` at least 0) and exits non-zero with the problems listed.
+
+The `portfolio` declaration reaches the index row as `portfolio: {script, site, name, chains}`, absent when the skill declares none.
 
 ## Body
 

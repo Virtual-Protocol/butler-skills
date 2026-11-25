@@ -409,8 +409,8 @@ def validate_skills(cloned: list[tuple[dict, Path]]) -> None:
 
 def collect_skill(skill_dir: Path, entry: dict) -> dict:
     """One `skills[]` row, read out of a checkout that already validated. `maxSteps`
-    is on the row only when the skill sets one; `requires.skills` is always there,
-    [] when the skill builds on no other."""
+    is on the row only when the skill sets one, as is `portfolio`; `requires.skills` is
+    always there, [] when the skill builds on no other."""
     v = validator()
     issues = v.Issues()
     fm = v.parse_skill_md((skill_dir / "SKILL.md").read_text(encoding="utf-8"), issues)
@@ -434,6 +434,14 @@ def collect_skill(skill_dir: Path, entry: dict) -> dict:
         "bins": list(butler["requires"]["bins"]),
         "skills": list(butler["requires"].get("skills", [])),
     }
+    if butler.get("portfolio") is not None:
+        portfolio = butler["portfolio"]
+        row["portfolio"] = {
+            "script": portfolio["script"],
+            "site": portfolio["site"],
+            "name": portfolio["name"],
+            "chains": list(portfolio["chains"]),
+        }
     row["source"] = source_block(skill_dir, entry)
     row["files"] = files
     return row

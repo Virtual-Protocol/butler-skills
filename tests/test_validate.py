@@ -1780,3 +1780,280 @@ def test_venue_reserved_flag_fails(tmp_path):
 def test_venue_server_owned_id_is_refused(tmp_path, vid):
     d = _venue_skill(tmp_path, {**_VENUE, "id": vid})
     assert any("bevo-server owns it" in e for e in _venue_errors(d))
+
+
+# portfolio declaration and portfolio/v1 output
+
+_PORTFOLIO = {
+    "script": "scripts/portfolio.mjs",
+    "site": "https://outcome.xyz",
+    "name": "Outcome",
+    "chains": ["evm"],
+}
+_PORTFOLIO_SECTION = "\n### Portfolio\n\nRun `scripts/portfolio.mjs --wallet <addr>` for the bets held.\n"
+
+
+def _portfolio_skill(tmp_path, portfolio=None, money=False, section=True, tests=True, script=True, name="foo"):
+    butler = {
+        "moneyMoving": money,
+        "keywords": ["fixture"],
+        "requires": {"bins": ["acp", "bevo-read", "bevo-notify"]},
+        "portfolio": _PORTFOLIO if portfolio is None else portfolio,
+    }
+    base = VALID_SKILL_BODY if money else procedure_body("1. [ADAPT] Read what the owner holds.\n", moneyish=False)
+    body = base + (_PORTFOLIO_SECTION if section else "")
+    d = write_skill(tmp_path, name, fm={"metadata": json.dumps({"butler": butler}, separators=(",", ":"))}, body=body)
+    if script:
+        (d / "scripts").mkdir(exist_ok=True)
+        (d / "scripts" / "portfolio.mjs").write_text("// fixture\n")
+    if tests:
+        (d / "test").mkdir(exist_ok=True)
+        (d / "test" / "portfolio.test.mjs").write_text("// fixture\n")
+    return d
+
+
+def _portfolio_errors(d):
+    ok, result = validate.validate_skill(d, validate.load_reserved(), json_mode=True, standalone=True)
+    return result["errors"]
+
+
+def test_valid_portfolio_declaration_passes_without_money_moving(tmp_path):
+    assert _portfolio_errors(_portfolio_skill(tmp_path)) == []
+
+
+def test_valid_portfolio_declaration_passes_with_money_moving(tmp_path):
+    assert _portfolio_errors(_portfolio_skill(tmp_path, money=True)) == []
+
+
+@pytest.mark.parametrize("change,needle", [
+    ({"extra": 1}, "portfolio.extra"),
+    ({"script": "scripts/missing.mjs"}, "not a published file"),
+    ({"script": "run.sh"}, "scripts/**/*.mjs or .py"),
+    ({"site": "http://outcome.xyz"}, "https URL"),
+    ({"site": "outcome.xyz"}, "https URL"),
+    ({"name": ""}, "1 to 40"),
+    ({"name": "x" * 41}, "1 to 40"),
+    ({"chains": []}, "non-empty list"),
+    ({"chains": ["btc"]}, "evm and/or solana"),
+    ({"chains": ["evm", "evm"]}, "evm and/or solana"),
+    ({"chains": "evm"}, "non-empty list"),
+])
+def test_portfolio_rule_violations_error(tmp_path, change, needle):
+    errors = _portfolio_errors(_portfolio_skill(tmp_path, {**_PORTFOLIO, **change}))
+    assert any(needle in e for e in errors), errors
+
+
+@pytest.mark.parametrize("key", ["script", "site", "name", "chains"])
+def test_portfolio_missing_key_errors(tmp_path, key):
+    p = {k: v for k, v in _PORTFOLIO.items() if k != key}
+    errors = _portfolio_errors(_portfolio_skill(tmp_path, p))
+    assert any(f"portfolio.{key}" in e and "required" in e for e in errors), errors
+
+
+def test_portfolio_must_be_an_object(tmp_path):
+    errors = _portfolio_errors(_portfolio_skill(tmp_path, ["scripts/portfolio.mjs"]))
+    assert any("metadata.butler.portfolio: must be an object" in e for e in errors)
+
+
+def test_portfolio_script_must_be_named_in_skill_md(tmp_path):
+    d = _portfolio_skill(tmp_path, section=False)
+    (d / "SKILL.md").write_text((d / "SKILL.md").read_text() + "\n### Portfolio\n\nRead it with the script.\n")
+    errors = _portfolio_errors(d)
+    assert any("must be named in SKILL.md" in e for e in errors), errors
+
+
+def test_portfolio_needs_the_subsection(tmp_path):
+    errors = _portfolio_errors(_portfolio_skill(tmp_path, section=False))
+    assert any("### Portfolio" in e for e in errors), errors
+
+
+def test_portfolio_needs_a_test_directory(tmp_path):
+    errors = _portfolio_errors(_portfolio_skill(tmp_path, tests=False))
+    assert any("test/" in e and "portfolio" in e for e in errors), errors
+
+
+def test_portfolio_empty_test_directory_does_not_count(tmp_path):
+    d = _portfolio_skill(tmp_path, tests=False)
+    (d / "test").mkdir()
+    assert any("test/" in e for e in _portfolio_errors(d))
+
+
+def test_portfolio_site_host_must_be_unique_across_the_registry():
+    errors = validate.portfolio_site_errors({
+        "a": "https://outcome.xyz",
+        "b": "https://Outcome.xyz/other",
+        "c": "https://polymarket.com",
+        "d": None,
+    })
+    assert set(errors) == {"a", "b"}
+    assert "also declared by b" in errors["a"][0]
+    assert validate.portfolio_site_errors({"a": "https://x.example", "b": "https://y.example"}) == {}
+
+
+def test_read_portfolio_site_reads_the_frontmatter(tmp_path):
+    assert validate.read_portfolio_site(_portfolio_skill(tmp_path)) == "https://outcome.xyz"
+    assert validate.read_portfolio_site(write_skill(tmp_path, "plain")) is None
+
+
+def _good_portfolio_envelope():
+    return {
+        "ok": True,
+        "status": "done",
+        "data": {
+            "wallet": "0xabc",
+            "asOf": "2026-11-25T10:00:00Z",
+            "currency": "USD",
+            "valueUsd": 12.5,
+            "availableUsd": None,
+            "positions": [{
+                "id": "p1", "market": "Bulgaria v Iceland", "outcome": "Yes", "side": "long",
+                "size": 10, "unit": "shares", "entryPrice": 0.5, "markPrice": 0.55,
+                "valueUsd": 5.5, "pnlUsd": 0.5, "details": [{"label": "Ends", "value": "2026-12-01"}],
+            }],
+            "orders": None,
+        },
+    }
+
+
+def _write_envelope(tmp_path, envelope):
+    f = tmp_path / "out.json"
+    f.write_text(json.dumps(envelope))
+    return f
+
+
+def _run_main(argv, capsys):
+    old = sys.argv
+    sys.argv = ["validate.py", *argv]
+    try:
+        rc = validate.main()
+    finally:
+        sys.argv = old
+    return rc, capsys.readouterr().out
+
+
+def test_portfolio_output_accepts_good_envelopes(tmp_path, capsys):
+    assert validate.check_portfolio_output(_good_portfolio_envelope()) == []
+    assert validate.check_portfolio_output({"ok": True, "status": "not_used"}) == []
+    assert validate.check_portfolio_output({"ok": False, "error": {"code": "VENUE_DOWN", "message": "down"}}) == []
+    rc, out = _run_main(["--portfolio-output", str(_write_envelope(tmp_path, _good_portfolio_envelope()))], capsys)
+    assert rc == 0 and "OK" in out
+
+
+def _mutated(path, value):
+    env = _good_portfolio_envelope()
+    target = env
+    *head, last = path
+    for k in head:
+        target = target[k]
+    if value is KeyError:
+        del target[last]
+    else:
+        target[last] = value
+    return env
+
+
+@pytest.mark.parametrize("path,value,needle", [
+    (("data", "currency"), "EUR", "data.currency"),
+    (("data", "valueUsd"), -1, "data.valueUsd"),
+    (("data", "valueUsd"), True, "data.valueUsd"),
+    (("data", "valueUsd"), "5", "data.valueUsd"),
+    (("data", "asOf"), "yesterday", "data.asOf"),
+    (("data", "wallet"), KeyError, "data.wallet"),
+    (("data", "positions"), "none", "data.positions"),
+    (("data", "positions"), [_good_portfolio_envelope()["data"]["positions"][0]] * 51, "at most 50"),
+    (("data", "orders"), [{}] * 51, "at most 50"),
+    (("data", "extra"), 1, "data.extra: unknown key"),
+    (("data", "positions", 0, "details"), [{"label": "a", "value": "b"}] * 9, "at most 8"),
+    (("data", "positions", 0, "size"), "10", "positions[0].size"),
+    (("data", "positions", 0, "valueUsd"), KeyError, "positions[0].valueUsd"),
+    (("status",), "pending", "envelope.status"),
+    (("ok",), "yes", "envelope.ok"),
+])
+def test_portfolio_output_rejects_bad_envelopes(path, value, needle):
+    errors = validate.check_portfolio_output(_mutated(path, value))
+    assert any(needle in e for e in errors), errors
+
+
+def test_portfolio_output_checks_orders():
+    env = _good_portfolio_envelope()
+    order = {
+        "id": "o1", "market": "m", "outcome": None, "side": "buy", "type": "limit",
+        "price": 0.4, "size": 3, "unit": "shares", "filled": None, "reservedUsd": 1.2, "placedAt": None,
+    }
+    env["data"]["orders"] = [order]
+    assert validate.check_portfolio_output(env) == []
+    env["data"]["orders"] = [{**order, "side": "hold", "type": "market"}]
+    errors = validate.check_portfolio_output(env)
+    assert any("orders[0].side" in e for e in errors) and any("orders[0].type" in e for e in errors)
+
+
+def test_portfolio_output_checks_error_envelopes():
+    assert validate.check_portfolio_output({"ok": False}) != []
+    bad_code = validate.check_portfolio_output({"ok": False, "error": {"code": "TIMEOUT", "message": "x"}})
+    assert any("error.code" in e for e in bad_code)
+    assert validate.check_portfolio_output([]) == ["envelope: must be a JSON object"]
+
+
+@pytest.mark.parametrize("path,cap", [
+    (("data", "wallet"), 120),
+    (("data", "positions", 0, "id"), 120),
+    (("data", "positions", 0, "market"), 120),
+    (("data", "positions", 0, "outcome"), 80),
+    (("data", "positions", 0, "side"), 20),
+    (("data", "positions", 0, "unit"), 20),
+    (("data", "positions", 0, "details", 0, "label"), 40),
+    (("data", "positions", 0, "details", 0, "value"), 120),
+])
+def test_portfolio_output_string_caps_match_the_server(path, cap):
+    assert validate.check_portfolio_output(_mutated(path, "x" * cap)) == []
+    errors = validate.check_portfolio_output(_mutated(path, "x" * (cap + 1)))
+    assert any(".".join(str(k) for k in path[-1:]) in e for e in errors), errors
+
+
+@pytest.mark.parametrize("field,cap", [("id", 120), ("market", 120), ("outcome", 80), ("unit", 20)])
+def test_portfolio_output_order_string_caps_match_the_server(field, cap):
+    order = {
+        "id": "o1", "market": "m", "outcome": None, "side": "buy", "type": "limit",
+        "price": 0.4, "size": 3, "unit": "shares", "filled": None, "reservedUsd": 1.2, "placedAt": None,
+    }
+    env = _good_portfolio_envelope()
+    env["data"]["orders"] = [{**order, field: "x" * cap}]
+    assert validate.check_portfolio_output(env) == []
+    env["data"]["orders"] = [{**order, field: "x" * (cap + 1)}]
+    assert any(f"orders[0].{field}" in e for e in validate.check_portfolio_output(env))
+
+
+def test_portfolio_output_number_bounds_and_timestamps_match_the_server():
+    assert validate.check_portfolio_output(_mutated(("data", "valueUsd"), 1e15)) == []
+    assert validate.check_portfolio_output(_mutated(("data", "valueUsd"), 1e15 * 10)) != []
+    assert validate.check_portfolio_output(_mutated(("data", "positions", 0, "entryPrice"), -0.1)) != []
+    assert validate.check_portfolio_output(_mutated(("data", "positions", 0, "pnlUsd"), -1e15)) == []
+    assert validate.check_portfolio_output(_mutated(("data", "positions", 0, "size"), 2e15)) != []
+    assert validate.check_portfolio_output(_mutated(("data", "asOf"), "2026-11-25T10:00:00+08:00")) == []
+    assert validate.check_portfolio_output(_mutated(("data", "asOf"), "2026-11-25")) != []
+    assert validate.check_portfolio_output(_mutated(("data", "asOf"), "2026-11-25T10:00:00")) != []
+
+
+def test_portfolio_output_accepts_the_reference_error_envelope():
+    env = {
+        "ok": False, "status": "error", "data": None,
+        "error": {"code": "BAD_ARGS", "message": "missing --wallet", "hint": "pass --wallet <address>"},
+    }
+    assert validate.check_portfolio_output(env) == []
+    env["error"]["hint"] = 5
+    assert any("error.hint" in e for e in validate.check_portfolio_output(env))
+    env["error"]["hint"] = "ok"
+    env["status"] = "done"
+    assert any("envelope.status" in e for e in validate.check_portfolio_output(env))
+
+
+def test_portfolio_output_cli_rejects_a_bad_envelope_and_bad_files(tmp_path, capsys):
+    bad = _write_envelope(tmp_path, _mutated(("data", "currency"), "EUR"))
+    rc, out = _run_main(["--portfolio-output", str(bad)], capsys)
+    assert rc == 1 and "data.currency" in out
+    junk = tmp_path / "junk.json"
+    junk.write_text("not json")
+    rc, out = _run_main(["--portfolio-output", str(junk)], capsys)
+    assert rc == 1 and "not readable JSON" in out
+    rc, out = _run_main(["--portfolio-output", str(tmp_path / "absent.json"), "--json"], capsys)
+    assert rc == 1 and json.loads(out)["ok"] is False
