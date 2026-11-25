@@ -1556,3 +1556,77 @@ def test_only_that_literal_origin_is_allowed(tmp_path):
     assert len(errors) == 2, errors
     v = _platform_template(tmp_path / "var", 'SITE = "https://stake.com"\nbevo.platform_balance(SITE, "Stake", 1)\n')
     assert len(_url_errors(v)) == 1
+
+
+# venue lifecycle contract
+
+_VENUE = {
+    "id": "polymarket",
+    "precheck": ["python3", "scripts/venue.py", "precheck"],
+    "withdraw": ["python3", "scripts/venue.py", "withdraw"],
+}
+
+
+def _venue_skill(tmp_path, venue=None, money=True, bins=("acp", "bevo-read", "bevo-notify", "python3")):
+    butler = {
+        "moneyMoving": money,
+        "keywords": ["fixture"],
+        "requires": {"bins": list(bins)},
+        "venue": venue if venue is not None else _VENUE,
+    }
+    d = write_skill(tmp_path, "foo", fm={"metadata": json.dumps({"butler": butler}, separators=(",", ":"))})
+    (d / "scripts").mkdir(exist_ok=True)
+    (d / "scripts" / "venue.py").write_text("# fixture\n")
+    return d
+
+
+def _venue_errors(d):
+    ok, result = validate.validate_skill(d, validate.load_reserved(), json_mode=True, standalone=True)
+    return [e for e in result["errors"] if "venue" in e or "moneyMoving" in e]
+
+
+def test_valid_venue_block_passes():
+    ok, result = run_skill("venue-ok")
+    assert ok, result["errors"]
+
+
+def test_venue_bad_fixture_fails_on_unknown_key_and_missing_bin():
+    ok, result = run_skill("venue-bad")
+    assert not ok
+    assert any("venue.extra" in e for e in result["errors"])
+    assert any("requires.bins" in e and "python3" in e for e in result["errors"])
+
+
+def test_venue_valid_block_in_tmp_skill_has_no_venue_errors(tmp_path):
+    assert _venue_errors(_venue_skill(tmp_path)) == []
+
+
+def test_venue_bin_missing_from_requires_fails(tmp_path):
+    d = _venue_skill(tmp_path, bins=("acp", "bevo-read", "bevo-notify"))
+    assert any("not listed in metadata.butler.requires.bins" in e for e in _venue_errors(d))
+
+
+def test_venue_unpublished_script_fails(tmp_path):
+    v = {**_VENUE, "precheck": ["python3", "scripts/missing.py", "precheck"]}
+    assert any("not a published file" in e for e in _venue_errors(_venue_skill(tmp_path, v)))
+
+
+def test_venue_requires_money_moving(tmp_path):
+    d = _venue_skill(tmp_path, money=False)
+    assert any("moneyMoving" in e and "venue" in e for e in _venue_errors(d))
+
+
+def test_venue_unknown_key_fails(tmp_path):
+    d = _venue_skill(tmp_path, {**_VENUE, "extra": 1})
+    assert any("venue.extra" in e for e in _venue_errors(d))
+
+
+def test_venue_reserved_flag_fails(tmp_path):
+    v = {**_VENUE, "withdraw": ["python3", "scripts/venue.py", "withdraw", "--all"]}
+    assert any("--all" in e for e in _venue_errors(_venue_skill(tmp_path, v)))
+
+
+@pytest.mark.parametrize("vid", ["hyperliquid-perp", "hyperliquid-spot"])
+def test_venue_server_owned_id_is_refused(tmp_path, vid):
+    d = _venue_skill(tmp_path, {**_VENUE, "id": vid})
+    assert any("bevo-server owns it" in e for e in _venue_errors(d))
