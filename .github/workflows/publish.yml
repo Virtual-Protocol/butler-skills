@@ -35,6 +35,13 @@ jobs:
         with:
           python-version: "3.11"
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Install check for listed Node skills
+        run: python3 scripts/validate.py --all --install-check
+
       # ONE channel. A Pages deploy replaces the WHOLE site, so this single run
       # produces the whole registry: dist/index.json (the moving pointer) plus
       # dist/templates/<name>/<version>/ and dist/skills/<name>/<version>/ (the

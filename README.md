@@ -501,7 +501,7 @@ the network; a handful of `--all`/registry-mode tests build a real, throwaway gi
 | `schema/recipe.schema.json` | the `recipe.json` contract |
 | `schema/index.schema.json` | the published `index.json` contract (schemaVersion 3) |
 | `schema/reserved-names.json` | names a template or skill may never use |
-| `scripts/validate.py` | the validator for both kinds (also published standalone, stdlib-only) |
+| `scripts/validate.py` | the validator for both kinds (also published standalone, stdlib-only); `--install-check` also runs `npm ci --omit=dev --ignore-scripts` for each Node skill and caps `node_modules` at 150 MB, then runs `npm audit signatures` and fails on invalid or missing registry signatures or attestations |
 | `scripts/build_index.py` | clones every entry, validates every skill (any error fails the build; templates are validated only on a PR here and by their own CI), writes `dist/` |
 | `scripts/check_registry.py` | checks the `templates.json` and `skills.json` listings themselves, and `i18n/descriptions.json` against them |
 | `scripts/new_skill.py` | prints the exact commands to start and register a template or skill |

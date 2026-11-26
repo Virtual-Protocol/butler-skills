@@ -47,6 +47,10 @@
     "ko": "Derive, Paradex 또는 Rysk에서 옵션을 거래해요 - 현금 담보 풋을 매도해 놀고 있는 USDC로 수익을 내고, 콜이나 풋을 매수하고, 만기 전에 청산하고, USDC와 포지션을 확인하거나 출금해요.",
     "zh": "在 Derive、Paradex 或 Rysk 上交易期权：卖出现金担保看跌期权，让闲置的 USDC 赚取收益；买入看涨或看跌期权，到期前平仓；查看或提取 USDC 和持仓。"
   },
+  "outcome-xyz": {
+    "ko": "Outcome.xyz 예측 시장(Hyperliquid HIP-4)에서 베팅해요: 시장 찾기, Hyperliquid 입금·출금, 거래 키 설정, 지정가 주문 넣기·취소, 포지션 확인.",
+    "zh": "在 Outcome.xyz 预测市场（Hyperliquid HIP-4）下注：查找市场、Hyperliquid 充值或提现、设置交易密钥、挂出或撤销限价单、查看持仓。"
+  },
   "papertrade-farm": {
     "ko": "Papertrade에서 PAPER를 파밍해요: 롱과 숏을 하나씩 들고, 가격이 정한 만큼 움직이면 둘 다 청산하고, 정해 둔 손실 한도를 다 쓸 때까지 반복해요.",
     "zh": "在 Papertrade 上挖 PAPER：同时持有一笔多单和一笔空单，价格变动达到设定幅度时两边一起平仓，循环往复，直到设定的亏损额度用完。"

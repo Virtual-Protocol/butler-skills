@@ -60,15 +60,19 @@ from __future__ import annotations
 import ast
 import argparse
 import json
+import math
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
 from collections import deque
 from contextlib import ExitStack
+from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 REGISTRY_PATH = REPO_ROOT / "templates.json"
@@ -82,6 +86,16 @@ MAX_DESCRIPTION = 200  # composed into a 280-char field with a settings clause a
 # checkout that breaks any of these before copying a single file).
 MAX_TREE_FILES = 50
 MAX_TREE_BYTES = 1024 * 1024
+MAX_NODE_MODULES_BYTES = 150 * 1024 * 1024
+NODE_MODULES_LIMIT_ENV = "BUTLER_SKILLS_MAX_NODE_MODULES_BYTES"
+NPM_CI_TIMEOUT_S = 120
+NPM_CI_ARGS = ["ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"]
+NPM_AUDIT_TIMEOUT_S = 120
+NPM_AUDIT_ARGS = ["audit", "signatures"]
+NPM_NETWORK_ERROR_RE = re.compile(r"ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|network", re.I)
+NPM_VERIFIED_SIG_RE = re.compile(r"(\d+) packages? ha(?:s|ve) (?:a )?verified registry signatures?")
+NPM_VERIFIED_ATT_RE = re.compile(r"(\d+) packages? ha(?:s|ve) (?:a )?verified attestations?")
+NPM_INSTALL_HOOKS = ("preinstall", "install", "postinstall", "prepare")
 TREE_SKIP_NAMES = {".git", "__pycache__"}
 
 REQUIRED_FILES = ("recipe.json", "duty.py", "README.md")
@@ -1250,16 +1264,22 @@ RETIRED_REQUIRES_KEYS = {
 SKILL_REFERENCE_RE = re.compile(
     r"^references/(?:[A-Za-z0-9_-][A-Za-z0-9._-]*/)*[A-Za-z0-9_-][A-Za-z0-9._-]*\.md$"
 )
-# A butler writes a script as a plain file, never executable, and runs it with python3
-# where it is installed: a helper the model would otherwise retype into /tmp each use.
+# A butler writes a script as a plain file, never executable, and runs it with python3 or
+# node where it is installed: a helper the model would otherwise retype into /tmp each use.
+# Mirrors virtuals-agent src/integrations/hub/store.ts `isSafeSkillPath`.
 SKILL_SCRIPT_RE = re.compile(
-    r"^scripts/(?:[A-Za-z0-9_-][A-Za-z0-9._-]*/)*[A-Za-z0-9_-][A-Za-z0-9._-]*\.py$"
+    r"^scripts/(?:(?!node_modules/)[A-Za-z0-9_-][A-Za-z0-9._-]*/)*[A-Za-z0-9_-][A-Za-z0-9._-]*\.(?:py|mjs)$"
 )
+SKILL_SCRIPT_EXTS = (".py", ".mjs")
+# A skill with Node scripts carries its npm manifest pair at the ROOT (never under scripts/,
+# which Mastra scans every turn); the butler runs `npm ci` beside it and Node resolves the
+# scripts' imports upward. node_modules itself is never published.
+SKILL_ROOT_MANIFESTS = ("package.json", "package-lock.json")
 # How the agent reads a bundled path off the text for a link install (url-install.ts
 # BUNDLED_RE): as prose spells it, or from the workspace (`skills/<name>/`, `~/`, `$HOME/`).
 SKILL_NAMED_PATH_RE = re.compile(
     r"(?<![\w./~$-])(?:(?:~|\$HOME)/skills/[a-z0-9-]+/|skills/[a-z0-9-]+/)?"
-    r"((?:references|scripts)/[\w./-]+\.(?:md|py))\b"
+    r"((?:references|scripts)/[\w./-]+\.(?:md|py|mjs))\b"
 )
 
 
@@ -1432,7 +1452,7 @@ def check_skill_metadata(metadata, issues: Issues, name: str | None = None) -> d
         return None
 
     for key in butler:
-        if key in ("moneyMoving", "keywords", "maxSteps", "requires", "venue"):
+        if key in ("moneyMoving", "keywords", "maxSteps", "requires", "venue", "portfolio"):
             continue
         if key in RETIRED_BUTLER_KEYS:
             issues.error(
@@ -1441,7 +1461,7 @@ def check_skill_metadata(metadata, issues: Issues, name: str | None = None) -> d
                 f"({RETIRED_BUTLER_KEYS[key]})",
             )
         else:
-            issues.error(f"metadata.butler.{key}", "unknown key — the block is moneyMoving, keywords, maxSteps, requires, venue")
+            issues.error(f"metadata.butler.{key}", "unknown key — the block is moneyMoving, keywords, maxSteps, requires, venue, portfolio")
 
     ok = True
     if "moneyMoving" not in butler:
@@ -1580,7 +1600,10 @@ def check_skill_name(name: str, skill_dir: Path, standalone: bool, reserved: set
 
 VENUE_ID_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 VENUE_SERVER_IDS = frozenset({"hyperliquid-perp", "hyperliquid-spot"})
-VENUE_RESERVED_FLAGS = ("--wallet", "--json", "--all", "--cash")
+VENUE_RESERVED_FLAGS = ("--walletid", "--address", "--json", "--all", "--cash", "--wallet")
+VENUE_ARGV_SCRIPT_RE = re.compile(
+    r"^scripts/(?:(?!node_modules/)[A-Za-z0-9_-][A-Za-z0-9._-]*/)*[A-Za-z0-9_-][A-Za-z0-9._-]*\.(?:py|mjs|js)$"
+)
 
 
 def check_skill_venue(venue, bins, issues: Issues, money_moving=None, published=()) -> None:
@@ -1624,7 +1647,7 @@ def check_skill_venue(venue, bins, issues: Issues, money_moving=None, published=
         if argv[0] in SHELL_BUILTINS:
             issues.error(where, f"{argv[0]!r} is a shell builtin, not a program")
         for a in argv:
-            if SKILL_SCRIPT_RE.match(a) and a not in published:
+            if VENUE_ARGV_SCRIPT_RE.match(a) and a not in published:
                 issues.error(where, f"{a!r} is not a published file of this skill")
             if a in VENUE_RESERVED_FLAGS:
                 issues.error(where, f"must not contain {a} — the butler appends it")
@@ -1632,17 +1655,274 @@ def check_skill_venue(venue, bins, issues: Issues, money_moving=None, published=
         issues.error(field, "precheck and withdraw must differ")
 
 
+PORTFOLIO_KEYS = ("script", "site", "name", "chains")
+PORTFOLIO_CHAINS = ("evm", "solana")
+PORTFOLIO_SCRIPT_CODES = ("RATE_LIMITED", "VENUE_DOWN", "NO_CREDENTIAL", "CREDENTIAL_INVALID", "BAD_ARGS", "UNEXPECTED")
+PORTFOLIO_MAX_POSITIONS = 50
+PORTFOLIO_MAX_ORDERS = 50
+PORTFOLIO_MAX_DETAILS = 8
+PORTFOLIO_ORDER_TYPES = ("limit", "stop", "tp", "sl", "other")
+PORTFOLIO_SUBSECTION_RE = re.compile(r"^###[ \t]+Portfolio[ \t]*$", re.MULTILINE)
+
+
+def portfolio_site_host(site) -> str | None:
+    """The host of an https `site`, lowercased, or None when it is not one."""
+    if not isinstance(site, str) or re.search(r"[\x00-\x20\x7f]", site):
+        return None
+    try:
+        parts = urlsplit(site)
+        host = parts.hostname
+        parts.port
+    except ValueError:
+        return None
+    if parts.scheme != "https" or not host or parts.username or parts.password:
+        return None
+    return host.lower()
+
+
+def check_skill_portfolio(portfolio, skill_dir: Path, body: str, issues: Issues, published=()) -> None:
+    """`metadata.butler.portfolio`: {"script", "site", "name", "chains"} — the read-only
+    script the butler runs to sync what the owner holds on this venue. Separate from
+    `venue` and independent of moneyMoving."""
+    field = "metadata.butler.portfolio"
+    if not isinstance(portfolio, dict):
+        issues.error(field, 'must be an object: {"script", "site", "name", "chains"}')
+        return
+    for key in portfolio:
+        if key not in PORTFOLIO_KEYS:
+            issues.error(f"{field}.{key}", "unknown key — portfolio holds only script, site, name and chains")
+    for key in PORTFOLIO_KEYS:
+        if key not in portfolio:
+            issues.error(f"{field}.{key}", "required field missing")
+    script = portfolio.get("script")
+    if "script" in portfolio:
+        if not isinstance(script, str) or not SKILL_SCRIPT_RE.match(script):
+            issues.error(f"{field}.script", "must be a scripts/**/*.mjs or .py path")
+        elif script not in published:
+            issues.error(f"{field}.script", f"{script!r} is not a published file of this skill")
+        elif body.count(script) == 0:
+            issues.error(f"{field}.script", f"{script!r} must be named in SKILL.md")
+    if "site" in portfolio and portfolio_site_host(portfolio["site"]) is None:
+        issues.error(f"{field}.site", "must be an https URL with a host")
+    if "name" in portfolio:
+        pname = portfolio["name"]
+        if not isinstance(pname, str) or not 1 <= len(pname) <= 40 or re.search(r"[\x00-\x1f\x7f]", pname):
+            issues.error(f"{field}.name", "must be 1 to 40 characters with no control characters")
+    if "chains" in portfolio:
+        chains = portfolio["chains"]
+        if (
+            not isinstance(chains, list) or not chains
+            or not all(isinstance(c, str) and c in PORTFOLIO_CHAINS for c in chains)
+            or len(set(chains)) != len(chains)
+        ):
+            issues.error(f"{field}.chains", "must be a non-empty list of evm and/or solana, each at most once")
+    if not PORTFOLIO_SUBSECTION_RE.search(body):
+        issues.error("sections", "a skill that declares metadata.butler.portfolio needs a `### Portfolio` subsection in SKILL.md")
+    has_tests = any(
+        (skill_dir / d).is_dir() and not (skill_dir / d).is_symlink()
+        and any(f.is_file() for f in (skill_dir / d).rglob("*"))
+        for d in ("test", "tests")
+    )
+    if not has_tests:
+        issues.error(field, "a skill that declares portfolio must ship a test/ (or tests/) directory covering the mapping")
+
+
+def portfolio_site_errors(sites: dict[str, str | None]) -> dict[str, list[str]]:
+    """Registry mode: `sites` maps skill name to its declared portfolio site. A host may
+    belong to one skill only, since it is the identity of the row the app shows."""
+    by_host: dict[str, list[str]] = {}
+    for name, site in sites.items():
+        host = portfolio_site_host(site)
+        if host:
+            by_host.setdefault(host, []).append(name)
+    out: dict[str, list[str]] = {}
+    for host, names in by_host.items():
+        if len(names) > 1:
+            for name in names:
+                others = ", ".join(sorted(n for n in names if n != name))
+                out.setdefault(name, []).append(
+                    f"metadata.butler.portfolio.site: host {host!r} is also declared by {others} — a portfolio site is unique across the registry"
+                )
+    return out
+
+
+def read_portfolio_site(skill_dir: Path) -> str | None:
+    skill_md = skill_dir / "SKILL.md"
+    if not skill_md.is_file():
+        return None
+    fm = parse_skill_md(skill_md.read_text(encoding="utf-8", errors="replace"), Issues())
+    metadata = fm.get("metadata") if fm else None
+    butler = metadata.get("butler") if isinstance(metadata, dict) else None
+    portfolio = butler.get("portfolio") if isinstance(butler, dict) else None
+    site = portfolio.get("site") if isinstance(portfolio, dict) else None
+    return site if isinstance(site, str) else None
+
+
+def _is_num(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+PORTFOLIO_BOUND = 1e15
+PORTFOLIO_ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$")
+
+
+def _str(maximum: int):
+    return lambda v: isinstance(v, str) and 1 <= len(v.strip()) <= maximum
+
+
+def _num(lo: float, hi: float = PORTFOLIO_BOUND):
+    return lambda v: _is_num(v) and lo <= v <= hi
+
+
+_usd = _num(-PORTFOLIO_BOUND)
+_nonneg = _num(0)
+
+
+def _check_fields(obj, where: str, spec: dict, errors: list[str]) -> None:
+    """`spec` maps key to (required, predicate, description)."""
+    if not isinstance(obj, dict):
+        errors.append(f"{where}: must be an object")
+        return
+    for key in obj:
+        if key not in spec:
+            errors.append(f"{where}.{key}: unknown key")
+    for key, (required, pred, desc) in spec.items():
+        if key not in obj:
+            if required:
+                errors.append(f"{where}.{key}: required field missing")
+        elif not pred(obj[key]):
+            errors.append(f"{where}.{key}: must be {desc}")
+
+
+def _opt(pred):
+    return lambda v: v is None or pred(v)
+
+
+def _is_iso(v) -> bool:
+    if not isinstance(v, str):
+        return False
+    if not PORTFOLIO_ISO_RE.match(v):
+        return False
+    try:
+        datetime.fromisoformat(v.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return True
+
+
+def check_portfolio_output(envelope) -> list[str]:
+    """A captured stdout of a portfolio script against `portfolio/v1`: the envelope
+    {ok, status, data, error}, and for `done` a Portfolio within the caps."""
+    errors: list[str] = []
+    if not isinstance(envelope, dict):
+        return ["envelope: must be a JSON object"]
+    for key in envelope:
+        if key not in ("ok", "status", "data", "error"):
+            errors.append(f"envelope.{key}: unknown key")
+    ok = envelope.get("ok")
+    if not isinstance(ok, bool):
+        return [*errors, "envelope.ok: must be true or false"]
+    if not ok:
+        err = envelope.get("error")
+        if not isinstance(err, dict):
+            return [*errors, "envelope.error: required when ok is false: {code, message}"]
+        _check_fields(err, "envelope.error", {
+            "code": (True, lambda v: v in PORTFOLIO_SCRIPT_CODES, "one of " + ", ".join(PORTFOLIO_SCRIPT_CODES)),
+            "message": (True, lambda v: isinstance(v, str) and len(v) <= 200, "a string of at most 200 characters"),
+            "hint": (False, lambda v: isinstance(v, str), "a string"),
+        }, errors)
+        if envelope.get("status") not in (None, "error"):
+            errors.append('envelope.status: must be "error" or absent when ok is false')
+        if envelope.get("data") is not None:
+            errors.append("envelope.data: must be absent when ok is false")
+        return errors
+    status = envelope.get("status")
+    if status not in ("done", "not_used"):
+        return [*errors, 'envelope.status: must be "done" or "not_used" when ok is true']
+    if envelope.get("error") is not None:
+        errors.append("envelope.error: must be absent when ok is true")
+    if status == "not_used":
+        if envelope.get("data") is not None:
+            errors.append("envelope.data: must be absent when status is not_used")
+        return errors
+
+    _check_fields(envelope.get("data"), "data", {
+        "wallet": (True, _str(120), "a non-empty string of at most 120 characters"),
+        "asOf": (True, _is_iso, "an ISO-8601 timestamp"),
+        "currency": (True, lambda v: v == "USD", '"USD"'),
+        "valueUsd": (True, _nonneg, "a number from 0 to 1e15"),
+        "availableUsd": (True, _opt(_usd), "a number within +-1e15 or null"),
+        "positions": (True, lambda v: isinstance(v, list), "an array"),
+        "orders": (True, _opt(lambda v: isinstance(v, list)), "an array or null"),
+    }, errors)
+    data = envelope.get("data")
+    if not isinstance(data, dict):
+        return errors
+    positions = data.get("positions")
+    if isinstance(positions, list):
+        if len(positions) > PORTFOLIO_MAX_POSITIONS:
+            errors.append(f"data.positions: at most {PORTFOLIO_MAX_POSITIONS} entries, got {len(positions)}")
+        for i, p in enumerate(positions[:PORTFOLIO_MAX_POSITIONS]):
+            where = f"data.positions[{i}]"
+            _check_fields(p, where, {
+                "id": (True, _str(120), "a non-empty string of at most 120 characters"),
+                "market": (True, _str(120), "a non-empty string of at most 120 characters"),
+                "outcome": (True, _opt(_str(80)), "a non-empty string of at most 80 characters or null"),
+                "side": (True, _str(20), "a non-empty string of at most 20 characters"),
+                "size": (True, _usd, "a number within +-1e15"),
+                "unit": (True, _str(20), "a non-empty string of at most 20 characters"),
+                "entryPrice": (True, _opt(_nonneg), "a number from 0 to 1e15 or null"),
+                "markPrice": (True, _opt(_nonneg), "a number from 0 to 1e15 or null"),
+                "valueUsd": (True, _opt(_usd), "a number within +-1e15 or null"),
+                "pnlUsd": (True, _opt(_usd), "a number within +-1e15 or null"),
+                "details": (False, lambda v: isinstance(v, list), "an array"),
+            }, errors)
+            details = p.get("details") if isinstance(p, dict) else None
+            if isinstance(details, list):
+                if len(details) > PORTFOLIO_MAX_DETAILS:
+                    errors.append(f"{where}.details: at most {PORTFOLIO_MAX_DETAILS} entries, got {len(details)}")
+                for j, d in enumerate(details[:PORTFOLIO_MAX_DETAILS]):
+                    _check_fields(d, f"{where}.details[{j}]", {
+                        "label": (True, _str(40), "a non-empty string of at most 40 characters"),
+                        "value": (True, _str(120), "a non-empty string of at most 120 characters"),
+                    }, errors)
+    orders = data.get("orders")
+    if isinstance(orders, list):
+        if len(orders) > PORTFOLIO_MAX_ORDERS:
+            errors.append(f"data.orders: at most {PORTFOLIO_MAX_ORDERS} entries, got {len(orders)}")
+        for i, o in enumerate(orders[:PORTFOLIO_MAX_ORDERS]):
+            _check_fields(o, f"data.orders[{i}]", {
+                "id": (True, _str(120), "a non-empty string of at most 120 characters"),
+                "market": (True, _str(120), "a non-empty string of at most 120 characters"),
+                "outcome": (True, _opt(_str(80)), "a non-empty string of at most 80 characters or null"),
+                "side": (True, lambda v: v in ("buy", "sell"), '"buy" or "sell"'),
+                "type": (True, lambda v: v in PORTFOLIO_ORDER_TYPES, "one of " + ", ".join(PORTFOLIO_ORDER_TYPES)),
+                "price": (True, _opt(_nonneg), "a number from 0 to 1e15 or null"),
+                "size": (True, _nonneg, "a number from 0 to 1e15"),
+                "unit": (True, _str(20), "a non-empty string of at most 20 characters"),
+                "filled": (True, _opt(_nonneg), "a number from 0 to 1e15 or null"),
+                "reservedUsd": (True, _opt(_nonneg), "a number from 0 to 1e15 or null"),
+                "placedAt": (True, _opt(_is_iso), "an ISO-8601 timestamp or null"),
+            }, errors)
+    return errors
+
+
 def skill_published_files(skill_dir: Path) -> list[str]:
-    """What a skill publishes: SKILL.md, then every references/**/*.md and
-    scripts/**/*.py whose path is a plain URL path, sorted. Everything else in the
-    repo stays in the repo."""
-    found: list[str] = []
+    """What a skill publishes: SKILL.md, then the root package.json / package-lock.json
+    and every references/**/*.md and scripts/**/*.{py,mjs} whose path is a plain URL
+    path, sorted. Everything else in the repo stays in the repo."""
+    found: list[str] = [
+        m for m in SKILL_ROOT_MANIFESTS
+        if (skill_dir / m).is_file() and not (skill_dir / m).is_symlink()
+    ]
     for sub, shape in (("references", SKILL_REFERENCE_RE), ("scripts", SKILL_SCRIPT_RE)):
         top = skill_dir / sub
         if not top.is_dir() or top.is_symlink():
             continue
         for root, dirs, names in os.walk(top, followlinks=False):
-            dirs[:] = [d for d in dirs if not (Path(root) / d).is_symlink()]
+            dirs[:] = [
+                d for d in dirs if d != "node_modules" and not (Path(root) / d).is_symlink()
+            ]
             for n in names:
                 p = Path(root) / n
                 if p.is_symlink() or not p.is_file():
@@ -1662,6 +1942,8 @@ def check_skill_layout(skill_dir: Path, issues: Issues) -> None:
     count = 0
     total = 0
     for p, rel in iter_tree(skill_dir):
+        if "node_modules" in rel.split("/"):
+            continue  # what a local `npm ci` installed; gitignored, never published
         if p.is_symlink():
             issues.error("layout", f"symlink not allowed: {rel}")
             continue
@@ -1674,12 +1956,13 @@ def check_skill_layout(skill_dir: Path, issues: Issues) -> None:
         if p.is_file():
             count += 1
             total += p.stat().st_size
-            for sub, ext, shape, kind in (("references", ".md", SKILL_REFERENCE_RE, "reference"),
-                                          ("scripts", ".py", SKILL_SCRIPT_RE, "script")):
+            for sub, exts, shape, kind in (("references", (".md",), SKILL_REFERENCE_RE, "reference"),
+                                           ("scripts", SKILL_SCRIPT_EXTS, SKILL_SCRIPT_RE, "script")):
                 if not rel.startswith(sub + "/"):
                     continue
-                if not rel.endswith(ext):
-                    issues.warn("layout", f"{rel} is not published — only {sub}/**/*{ext} reach the butler")
+                if not rel.endswith(exts):
+                    shown = ", ".join(f"{sub}/**/*{e}" for e in exts)
+                    issues.warn("layout", f"{rel} is not published — only {shown} reach the butler")
                 elif not shape.match(rel):
                     issues.error(
                         "layout",
@@ -1690,6 +1973,7 @@ def check_skill_layout(skill_dir: Path, issues: Issues) -> None:
         issues.error("layout", f"{count} files, must be <= {MAX_TREE_FILES}")
     if total > MAX_TREE_BYTES:
         issues.error("layout", f"{total} bytes in total, must be <= {MAX_TREE_BYTES}")
+    check_node_manifests(skill_dir, issues)
     if (skill_dir / "duty.py").exists():
         issues.error(
             "layout",
@@ -1699,7 +1983,8 @@ def check_skill_layout(skill_dir: Path, issues: Issues) -> None:
     if (skill_dir / "assets").is_dir():
         issues.warn(
             "layout",
-            "assets/ is not published — only SKILL.md, references/**/*.md and scripts/**/*.py reach the butler",
+            "assets/ is not published — only SKILL.md, references/**/*.md, scripts/**/*.{py,mjs} "
+            "and a root package.json / package-lock.json reach the butler",
         )
     for tool in TOOLING_FILES:
         if (skill_dir / tool).is_file():
@@ -1707,6 +1992,146 @@ def check_skill_layout(skill_dir: Path, issues: Issues) -> None:
     readme = skill_dir / "README.md"
     if readme.is_file() and not readme.read_text(encoding="utf-8", errors="replace").strip():
         issues.error("README.md", "must not be empty")
+
+
+def check_node_manifests(skill_dir: Path, issues: Issues) -> None:
+    """package.json and package-lock.json are published as a pair: the butler installs
+    with `npm ci`, which needs both. Install hooks never run (--ignore-scripts)."""
+    pkg = skill_dir / "package.json"
+    lock = skill_dir / "package-lock.json"
+    if pkg.is_file() and not lock.is_file():
+        issues.error(
+            "package.json",
+            "published without package-lock.json — `npm ci` needs the lockfile; commit both",
+        )
+    if lock.is_file() and not pkg.is_file():
+        issues.error("package-lock.json", "published without package.json — commit both or neither")
+    if not pkg.is_file():
+        return
+    try:
+        manifest = json.loads(pkg.read_text(encoding="utf-8", errors="replace"))
+    except ValueError as e:
+        issues.error("package.json", f"is not valid JSON: {e}")
+        return
+    scripts = manifest.get("scripts") if isinstance(manifest, dict) else None
+    if isinstance(scripts, dict):
+        for hook in NPM_INSTALL_HOOKS:
+            if hook in scripts:
+                issues.warn(
+                    "package.json",
+                    f"scripts.{hook} never runs: the butler installs with --ignore-scripts",
+                )
+
+
+def dir_size(path: Path) -> int:
+    total = 0
+    for root, _dirs, names in os.walk(path, followlinks=False):
+        for n in names:
+            p = os.path.join(root, n)
+            try:
+                if not os.path.islink(p):
+                    st = os.lstat(p)
+                    total += max(st.st_size, getattr(st, "st_blocks", 0) * 512)
+            except OSError:
+                pass
+    return total
+
+
+def node_modules_limit() -> int:
+    raw = os.environ.get(NODE_MODULES_LIMIT_ENV)
+    if raw:
+        try:
+            return int(raw)
+        except ValueError:
+            pass
+    return MAX_NODE_MODULES_BYTES
+
+
+def check_node_install(skill_dir: Path, issues: Issues, json_mode: bool = True) -> dict | None:
+    """Run the butler's install (`npm ci --omit=dev --ignore-scripts`) on a copy of the
+    manifest pair, cap the size of the node_modules it produces, then run
+    `npm audit signatures` on it (registry signatures and provenance attestations).
+    Returns {"nodeModulesBytes", "verifiedSignatures", "verifiedAttestations"}, or None
+    when the install did not run or failed (an error is recorded)."""
+    if not (skill_dir / "package.json").is_file():
+        return None
+    if not (skill_dir / "package-lock.json").is_file():
+        issues.error("install-check", "package-lock.json is missing; cannot run npm ci")
+        return None
+    npm = shutil.which("npm")
+    if npm is None:
+        issues.error("install-check", "npm is not on PATH; install Node (actions/setup-node) to run the install check")
+        return None
+    with tempfile.TemporaryDirectory(prefix="butler-skills-npm-") as tmp:
+        work = Path(tmp)
+        for name in ("package.json", "package-lock.json"):
+            shutil.copyfile(skill_dir / name, work / name)
+        try:
+            proc = subprocess.run(
+                [npm, *NPM_CI_ARGS], cwd=work, capture_output=True, text=True,
+                timeout=NPM_CI_TIMEOUT_S,
+            )
+        except subprocess.TimeoutExpired:
+            issues.error("install-check", f"npm ci timed out after {NPM_CI_TIMEOUT_S}s")
+            return None
+        except OSError as e:
+            issues.error("install-check", f"could not run npm: {e}")
+            return None
+        if proc.returncode != 0:
+            tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-5:]
+            issues.error(
+                "install-check",
+                f"npm ci failed (exit {proc.returncode}): " + " | ".join(tail),
+            )
+            return None
+        size = dir_size(work / "node_modules")
+        signatures, attestations = check_npm_signatures(npm, work, issues, json_mode)
+    limit = node_modules_limit()
+    mb = size / (1024 * 1024)
+    if not json_mode:
+        print(f"  node_modules after npm ci: {mb:.1f} MB (limit {limit / (1024 * 1024):.0f} MB)")
+    if size > limit:
+        issues.error(
+            "install-check",
+            f"node_modules is {mb:.1f} MB after npm ci, over the {limit / (1024 * 1024):.0f} MB cap; "
+            "drop or replace heavy dependencies, or bundle the script",
+        )
+    stats = {"nodeModulesBytes": size}
+    if signatures is not None:
+        stats["verifiedSignatures"] = signatures
+        stats["verifiedAttestations"] = attestations
+    return stats
+
+
+def check_npm_signatures(npm: str, work: Path, issues: Issues, json_mode: bool) -> tuple[int | None, int]:
+    try:
+        proc = subprocess.run(
+            [npm, *NPM_AUDIT_ARGS], cwd=work, capture_output=True, text=True,
+            timeout=NPM_AUDIT_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        issues.error("install-check", f"npm audit signatures timed out after {NPM_AUDIT_TIMEOUT_S}s (registry unreachable?)")
+        return None, 0
+    except OSError as e:
+        issues.error("install-check", f"could not run npm audit signatures: {e}")
+        return None, 0
+    out = f"{proc.stdout or ''}\n{proc.stderr or ''}"
+    lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    if proc.returncode != 0:
+        summary = [ln for ln in lines if re.search(r"signature|attestation", ln, re.I)] or lines
+        hint = " (registry unreachable?)" if NPM_NETWORK_ERROR_RE.search(out) else ""
+        issues.error(
+            "install-check",
+            f"npm audit signatures failed (exit {proc.returncode}){hint}: " + " | ".join(summary[-5:]),
+        )
+        return None, 0
+    sig = NPM_VERIFIED_SIG_RE.search(out)
+    att = NPM_VERIFIED_ATT_RE.search(out)
+    signatures = int(sig.group(1)) if sig else 0
+    attestations = int(att.group(1)) if att else 0
+    if not json_mode:
+        print(f"  npm audit signatures: {signatures} verified registry signatures, {attestations} verified attestations")
+    return signatures, attestations
 
 
 def check_skill_changelog(skill_dir: Path, version: str | None, issues: Issues) -> None:
@@ -2111,7 +2536,8 @@ def lint_skill_prose(prose: str, issues: Issues, where) -> None:
 
 
 def validate_skill(
-    skill_dir: Path, reserved: set[str], json_mode: bool, standalone: bool = False
+    skill_dir: Path, reserved: set[str], json_mode: bool, standalone: bool = False,
+    install_check: bool = False,
 ) -> tuple[bool, dict]:
     """Validate one skill repository. `standalone=True` takes the name from the
     frontmatter; otherwise the directory is a checkout named after its skills.json
@@ -2163,6 +2589,8 @@ def validate_skill(
         check_skill_venue(
             butler["venue"], butler["requires"]["bins"], issues, money_moving, published
         )
+    if butler and "portfolio" in butler:
+        check_skill_portfolio(butler["portfolio"], skill_dir, fm["_body"], issues, published)
     named = set(SKILL_NAMED_PATH_RE.findall(text))
     for rel in published[1:]:
         if not rel.endswith(".md"):
@@ -2195,6 +2623,8 @@ def validate_skill(
 
     check_skill_changelog(skill_dir, version if isinstance(version, str) else None, issues)
 
+    install_stats = check_node_install(skill_dir, issues, json_mode) if install_check else None
+
     skill_name = name if isinstance(name, str) and name else skill_dir.name
     cost = prompt_cost(skill_name, description if isinstance(description, str) else "", f"skills/{skill_name}/SKILL.md")
     if not json_mode:
@@ -2206,6 +2636,7 @@ def validate_skill(
         "errors": issues.errors,
         "warnings": issues.warnings,
         "promptCost": cost,
+        **(install_stats or {}),
     }
 
 
@@ -2449,7 +2880,7 @@ def detect_kind(path: Path) -> str:
 
 def validate_path(
     path: Path, reserved: set[str], json_mode: bool,
-    standalone: bool = False, expected_kind: str | None = None,
+    standalone: bool = False, expected_kind: str | None = None, install_check: bool = False,
 ) -> tuple[bool, dict]:
     """Validate one repository as whichever kind it is. `expected_kind` is the listing
     it came from under --all: a templates.json entry must be a template, a skills.json
@@ -2478,7 +2909,7 @@ def validate_path(
         )
         return False, {"template": path.name, "errors": issues.errors, "warnings": issues.warnings}
     if kind == "skill":
-        return validate_skill(path, reserved, json_mode, standalone=standalone)
+        return validate_skill(path, reserved, json_mode, standalone=standalone, install_check=install_check)
     return validate_template(path, reserved, json_mode, standalone=standalone)
 
 
@@ -2496,16 +2927,49 @@ def main() -> int:
         action="store_true",
         help="treat each path as a repository checkout: the name comes from recipe.json / SKILL.md, not the directory",
     )
+    parser.add_argument(
+        "--install-check",
+        action="store_true",
+        help="for each Node skill, run npm ci --omit=dev --ignore-scripts on its manifest pair "
+        f"and fail above {MAX_NODE_MODULES_BYTES // (1024 * 1024)} MB of node_modules "
+        f"(override: {NODE_MODULES_LIMIT_ENV}); needs npm on PATH",
+    )
     parser.add_argument("--json", action="store_true", help="print machine-readable JSON output")
+    parser.add_argument(
+        "--portfolio-output",
+        metavar="file",
+        help="validate a captured portfolio script stdout (one JSON envelope) against portfolio/v1",
+    )
     args = parser.parse_args()
 
     if args.all and args.standalone:
         parser.error("--all is registry mode; it cannot be combined with --standalone")
 
+    portfolio_ok = True
+    portfolio_errors: list[str] = []
+    if args.portfolio_output:
+        try:
+            captured = json.loads(Path(args.portfolio_output).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            portfolio_errors = [f"{args.portfolio_output}: not readable JSON: {e}"]
+        else:
+            portfolio_errors = check_portfolio_output(captured)
+        portfolio_ok = not portfolio_errors
+        if not args.json:
+            print(f"validating portfolio output {args.portfolio_output} ...")
+            for e in portfolio_errors:
+                print(f"  ERROR {e}")
+            if portfolio_ok:
+                print("  OK")
+        if not args.paths and not args.all:
+            if args.json:
+                print(json.dumps({"ok": portfolio_ok, "portfolioOutput": {"errors": portfolio_errors}}, indent=2))
+            return 0 if portfolio_ok else 1
+
     reserved = load_reserved()
 
     results = []
-    all_ok = True
+    all_ok = portfolio_ok
     with ExitStack() as stack:
         targets: list[tuple[Path, str | None]] = []
         # --all only: requires.skills problems across the listing, by skill name.
@@ -2518,6 +2982,8 @@ def main() -> int:
             skill_dirs = clone_registry_skills(work_dir / "skills")
             targets.extend((d, "skill") for d in skill_dirs)
             dependency_errors = check_listed_skill_dependencies(skill_dirs)
+            for name, msgs in portfolio_site_errors({d.name: read_portfolio_site(d) for d in skill_dirs}).items():
+                dependency_errors.setdefault(name, []).extend(msgs)
         for s in args.paths:
             targets.append((Path(s).resolve(), None))
 
@@ -2536,7 +3002,8 @@ def main() -> int:
             if not args.json:
                 print(f"validating {t.relative_to(REPO_ROOT) if t.is_relative_to(REPO_ROOT) else t.name} ...")
             ok, result = validate_path(
-                t, reserved, args.json, standalone=args.standalone, expected_kind=expected_kind
+                t, reserved, args.json, standalone=args.standalone, expected_kind=expected_kind,
+                install_check=args.install_check,
             )
             if expected_kind == "skill" and dependency_errors.get(t.name):
                 result["errors"].extend(dependency_errors[t.name])
@@ -2552,7 +3019,10 @@ def main() -> int:
                     print("  OK")
 
     if args.json:
-        print(json.dumps({"ok": all_ok, "results": results}, indent=2))
+        out = {"ok": all_ok, "results": results}
+        if args.portfolio_output:
+            out["portfolioOutput"] = {"errors": portfolio_errors}
+        print(json.dumps(out, indent=2))
 
     return 0 if all_ok else 1
 
