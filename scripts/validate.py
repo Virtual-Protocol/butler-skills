@@ -1600,7 +1600,7 @@ def check_skill_name(name: str, skill_dir: Path, standalone: bool, reserved: set
 
 VENUE_ID_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 VENUE_SERVER_IDS = frozenset({"hyperliquid-perp", "hyperliquid-spot"})
-VENUE_RESERVED_FLAGS = ("--wallet", "--address", "--json", "--all", "--cash")
+VENUE_RESERVED_FLAGS = ("--wallet-id", "--address", "--json", "--all", "--cash", "--wallet")
 VENUE_ARGV_SCRIPT_RE = re.compile(
     r"^scripts/(?:(?!node_modules/)[A-Za-z0-9_-][A-Za-z0-9._-]*/)*[A-Za-z0-9_-][A-Za-z0-9._-]*\.(?:py|mjs|js)$"
 )

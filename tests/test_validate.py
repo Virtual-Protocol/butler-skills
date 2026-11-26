@@ -1778,7 +1778,7 @@ def test_venue_unknown_key_fails(tmp_path):
     assert any("venue.extra" in e for e in _venue_errors(d))
 
 
-@pytest.mark.parametrize("flag", ["--all", "--address"])
+@pytest.mark.parametrize("flag", ["--all", "--address", "--wallet-id", "--wallet"])
 def test_venue_reserved_flag_fails(tmp_path, flag):
     v = {**_VENUE, "withdraw": ["python3", "scripts/venue.py", "withdraw", flag]}
     assert any(flag in e for e in _venue_errors(_venue_skill(tmp_path, v)))
