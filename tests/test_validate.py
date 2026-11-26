@@ -1761,6 +1761,13 @@ def test_venue_unpublished_script_fails(tmp_path):
     assert any("not a published file" in e for e in _venue_errors(_venue_skill(tmp_path, v)))
 
 
+@pytest.mark.parametrize("script", ["scripts/missing.mjs", "scripts/missing.js"])
+def test_venue_unpublished_node_script_fails(tmp_path, script):
+    v = {**_VENUE, "precheck": ["node", script, "precheck"]}
+    d = _venue_skill(tmp_path, v, bins=("acp", "bevo-read", "bevo-notify", "python3", "node"))
+    assert any("not a published file" in e and script in e for e in _venue_errors(d))
+
+
 def test_venue_requires_money_moving(tmp_path):
     d = _venue_skill(tmp_path, money=False)
     assert any("moneyMoving" in e and "venue" in e for e in _venue_errors(d))
@@ -1771,9 +1778,10 @@ def test_venue_unknown_key_fails(tmp_path):
     assert any("venue.extra" in e for e in _venue_errors(d))
 
 
-def test_venue_reserved_flag_fails(tmp_path):
-    v = {**_VENUE, "withdraw": ["python3", "scripts/venue.py", "withdraw", "--all"]}
-    assert any("--all" in e for e in _venue_errors(_venue_skill(tmp_path, v)))
+@pytest.mark.parametrize("flag", ["--all", "--address"])
+def test_venue_reserved_flag_fails(tmp_path, flag):
+    v = {**_VENUE, "withdraw": ["python3", "scripts/venue.py", "withdraw", flag]}
+    assert any(flag in e for e in _venue_errors(_venue_skill(tmp_path, v)))
 
 
 @pytest.mark.parametrize("vid", ["hyperliquid-perp", "hyperliquid-spot"])

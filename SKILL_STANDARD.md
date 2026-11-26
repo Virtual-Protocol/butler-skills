@@ -150,20 +150,24 @@ A skill that holds money on an outside venue (Polymarket, Derive, Hyperliquid, o
 | --- | --- |
 | `venue` | an object with exactly `id`, `precheck` and `withdraw`; `metadata.butler.moneyMoving` must be `true` |
 | `id` | `^[a-z0-9]+(-[a-z0-9]+)*$`, at most 32 characters |
-| `precheck`, `withdraw` | each an argv array of 1 to 8 strings, each 1 to 200 characters with no control characters. `argv[0]` is listed in `requires.bins` and is not a shell builtin. An element shaped `scripts/<path>.py` is a published file of the skill. Neither array contains `--wallet`, `--json`, `--all` or `--cash` (the Butler appends them). The two arrays differ |
+| `precheck`, `withdraw` | each an argv array of 1 to 8 strings, each 1 to 200 characters with no control characters. `argv[0]` is listed in `requires.bins` and is not a shell builtin. An element shaped `scripts/<path>.py`, `.mjs` or `.js` is a published file of the skill (only `.py` and `.mjs` can be published). Neither array contains `--wallet`, `--address`, `--json`, `--all` or `--cash` (the Butler appends them). The two arrays differ |
 
 The ids `hyperliquid-perp` and `hyperliquid-spot` are reserved: bevo-server owns them as server venues, and a skill may not declare them.
 
 **How the Butler runs it:** no shell, 120 s timeout. stdout must be exactly one JSON object, at most 64 KiB.
 
-- precheck: argv + `--wallet <walletId> --json`
-- withdraw: argv + `--wallet <walletId> (--all|--cash) --json`
+- precheck: argv + `--wallet <walletId> --address <address> --json`
+- withdraw: argv + `--wallet <walletId> --address <address> (--all|--cash) --json`
+
+`--wallet` is the Butler wallet's id, the one bevo-server signs with; `--address` is its public address, for reads.
 
 **precheck output:**
 
 `{"venue","readable":bool,"reason":str|null,"freeUsd":num,"inTransitUsd":num,"positions":[{"key","title","valueUsd":num|null,"closable":bool}],"orders":[{"key","title","reservedUsd":num|null}]}`
 
 Amounts are USD and at least 0. The venue is **unreadable** on any of: a non-zero exit, a timeout, bad JSON, `venue` not equal to `id`, `readable:false`, or `freeUsd` / `inTransitUsd` missing or negative. It is **empty** when it is readable, has no positions, no orders, and both amounts are under 0.01. Unreadable never counts as empty.
+
+A venue that lives inside another venue's account (Outcome inside Hyperliquid, say) reports in `freeUsd` only the cash that is its own, and 0 for the shared account's cash, so a teardown never counts the same dollars twice.
 
 **withdraw behaviour:** `--cash` cancels every open order and returns all free venue cash to the same sub-wallet on-chain. `--all` additionally market-closes every position first. It is idempotent and re-runnable, and it never sends to any address but the same sub-wallet.
 
@@ -190,16 +194,16 @@ The body must also contain a `### Portfolio` subsection (a subsection, so the se
 - say what `valueUsd` counts, and what it leaves to the wallet's own figures;
 - say what each position and order field means at this venue;
 - list the error codes the script uses;
-- tell chat how to answer "my positions on X": read the stored rows, or run the same script with `--wallet`.
+- tell chat how to answer "my positions on X": read the stored rows, or run the same script with `--address`.
 
 **Command line.** The runtime is chosen by the file extension:
 
 ```
-node|python3 "$BEVO_SKILLS_DIR/<skill>/<script>" --wallet <address>
+node|python3 "$BEVO_SKILLS_DIR/<skill>/<script>" [--wallet <walletId>] --address <address>
 ```
 
-- `--wallet <address>` prints the full envelope below.
-- The subcommands `positions`, `orders` and `balances`, each with `--wallet`, print one read each, so chat can answer a narrow question.
+- `--address <address>` prints the full envelope below. The Butler also passes `--wallet <walletId>` for a Butler wallet (none for the owner's main wallet), so the script must accept it.
+- The subcommands `positions`, `orders` and `balances`, each with `--address`, print one read each, so chat can answer a narrow question.
 - The exit code is always 0. The script finishes within 30 s, prints exactly one JSON object to stdout, and never prints a secret.
 
 **Envelope.** One JSON object `{ok, status, data, error}`:

@@ -1600,7 +1600,10 @@ def check_skill_name(name: str, skill_dir: Path, standalone: bool, reserved: set
 
 VENUE_ID_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 VENUE_SERVER_IDS = frozenset({"hyperliquid-perp", "hyperliquid-spot"})
-VENUE_RESERVED_FLAGS = ("--wallet", "--json", "--all", "--cash")
+VENUE_RESERVED_FLAGS = ("--wallet", "--address", "--json", "--all", "--cash")
+VENUE_ARGV_SCRIPT_RE = re.compile(
+    r"^scripts/(?:(?!node_modules/)[A-Za-z0-9_-][A-Za-z0-9._-]*/)*[A-Za-z0-9_-][A-Za-z0-9._-]*\.(?:py|mjs|js)$"
+)
 
 
 def check_skill_venue(venue, bins, issues: Issues, money_moving=None, published=()) -> None:
@@ -1644,7 +1647,7 @@ def check_skill_venue(venue, bins, issues: Issues, money_moving=None, published=
         if argv[0] in SHELL_BUILTINS:
             issues.error(where, f"{argv[0]!r} is a shell builtin, not a program")
         for a in argv:
-            if SKILL_SCRIPT_RE.match(a) and a not in published:
+            if VENUE_ARGV_SCRIPT_RE.match(a) and a not in published:
                 issues.error(where, f"{a!r} is not a published file of this skill")
             if a in VENUE_RESERVED_FLAGS:
                 issues.error(where, f"must not contain {a} — the butler appends it")
