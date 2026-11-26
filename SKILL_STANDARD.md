@@ -167,7 +167,9 @@ The ids `hyperliquid-perp` and `hyperliquid-spot` are reserved: bevo-server owns
 
 Amounts are USD and at least 0. The venue is **unreadable** on any of: a non-zero exit, a timeout, bad JSON, `venue` not equal to `id`, `readable:false`, or `freeUsd` / `inTransitUsd` missing or negative. It is **empty** when it is readable, has no positions, no orders, and both amounts are under 0.01. Unreadable never counts as empty.
 
-A venue that lives inside another venue's account (Outcome inside Hyperliquid, say) reports in `freeUsd` only the cash that is its own, and 0 for the shared account's cash, so a teardown never counts the same dollars twice.
+A venue that lives inside another venue's account (Outcome inside Hyperliquid, say) reports in `freeUsd` only the cash that is its own, and 0 for the shared account's cash, so a teardown never counts the same dollars twice. Its withdraw likewise moves no cash: that belongs to the shared account's venue.
+
+precheck may also report `held` rows, `"held":[{"key","title","valueUsd":num|null}]` (at most 200): value kept in the wallet that never blocks a delete. precheck depends on no installed package (no `node_modules`, no pip dependency) and gets no signer. withdraw signs only as the wallet the Butler pins with `--walletid` / `--address`, never the owner's main wallet. A venue `id` never changes once published.
 
 **withdraw behaviour:** `--cash` cancels every open order and returns all free venue cash to the same sub-wallet on-chain. `--all` additionally market-closes every position first. It is idempotent and re-runnable, and it never sends to any address but the same sub-wallet.
 
