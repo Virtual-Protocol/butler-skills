@@ -150,16 +150,16 @@ A skill that holds money on an outside venue (Polymarket, Derive, Hyperliquid, o
 | --- | --- |
 | `venue` | an object with exactly `id`, `precheck` and `withdraw`; `metadata.butler.moneyMoving` must be `true` |
 | `id` | `^[a-z0-9]+(-[a-z0-9]+)*$`, at most 32 characters |
-| `precheck`, `withdraw` | each an argv array of 1 to 8 strings, each 1 to 200 characters with no control characters. `argv[0]` is listed in `requires.bins` and is not a shell builtin. An element shaped `scripts/<path>.py`, `.mjs` or `.js` is a published file of the skill (only `.py` and `.mjs` can be published). Neither array contains `--wallet-id`, `--address`, `--json`, `--all` or `--cash` (the Butler appends them), nor the retired `--wallet`. The two arrays differ |
+| `precheck`, `withdraw` | each an argv array of 1 to 8 strings, each 1 to 200 characters with no control characters. `argv[0]` is listed in `requires.bins` and is not a shell builtin. An element shaped `scripts/<path>.py`, `.mjs` or `.js` is a published file of the skill (only `.py` and `.mjs` can be published). Neither array contains `--walletid`, `--address`, `--json`, `--all` or `--cash` (the Butler appends them), nor the retired `--wallet`. The two arrays differ |
 
 The ids `hyperliquid-perp` and `hyperliquid-spot` are reserved: bevo-server owns them as server venues, and a skill may not declare them.
 
 **How the Butler runs it:** no shell, 120 s timeout. stdout must be exactly one JSON object, at most 64 KiB.
 
-- precheck: argv + `--wallet-id <walletId> --address <address> --json`
-- withdraw: argv + `--wallet-id <walletId> --address <address> (--all|--cash) --json`
+- precheck: argv + `--walletid <walletId> --address <address> --json`
+- withdraw: argv + `--walletid <walletId> --address <address> (--all|--cash) --json`
 
-`--wallet-id` is the Butler wallet's id, the one bevo-server signs with; `--address` is its public address, for reads.
+`--walletid` is the Butler wallet's id, the one bevo-server signs with; `--address` is its public address, for reads.
 
 **precheck output:**
 
@@ -199,10 +199,10 @@ The body must also contain a `### Portfolio` subsection (a subsection, so the se
 **Command line.** The runtime is chosen by the file extension:
 
 ```
-node|python3 "$BEVO_SKILLS_DIR/<skill>/<script>" [--wallet-id <walletId>] --address <address>
+node|python3 "$BEVO_SKILLS_DIR/<skill>/<script>" [--walletid <walletId>] --address <address>
 ```
 
-- `--address <address>` prints the full envelope below. The Butler also passes `--wallet-id <walletId>` for a Butler wallet (none for the owner's main wallet), so the script must accept it.
+- `--address <address>` prints the full envelope below. The Butler also passes `--walletid <walletId>` for a Butler wallet (none for the owner's main wallet), so the script must accept it.
 - The subcommands `positions`, `orders` and `balances`, each with `--address`, print one read each, so chat can answer a narrow question.
 - The exit code is always 0. The script finishes within 30 s, prints exactly one JSON object to stdout, and never prints a secret.
 
