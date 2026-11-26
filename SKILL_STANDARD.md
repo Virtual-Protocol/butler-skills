@@ -163,7 +163,7 @@ The ids `hyperliquid-perp` and `hyperliquid-spot` are reserved: bevo-server owns
 
 **precheck output:**
 
-`{"venue","readable":bool,"reason":str|null,"freeUsd":num,"inTransitUsd":num,"positions":[{"key","title","valueUsd":num|null,"closable":bool}],"orders":[{"key","title","reservedUsd":num|null}]}`
+`{"venue","readable":bool,"reason":str|null,"freeUsd":num,"inTransitUsd":num,"positions":[{"key","title","valueUsd":num|null,"closable":bool}],"orders":[{"key","title","reservedUsd":num|null}],"held"?:[{"key","title","valueUsd":num|null}]}`
 
 Amounts are USD and at least 0. The venue is **unreadable** on any of: a non-zero exit, a timeout, bad JSON, `venue` not equal to `id`, `readable:false`, or `freeUsd` / `inTransitUsd` missing or negative. It is **empty** when it is readable, has no positions, no orders, and both amounts are under 0.01. Unreadable never counts as empty.
 
