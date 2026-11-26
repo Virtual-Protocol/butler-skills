@@ -169,6 +169,8 @@ Amounts are USD and at least 0. The venue is **unreadable** on any of: a non-zer
 
 A venue that lives inside another venue's account (Outcome inside Hyperliquid, say) reports in `freeUsd` only the cash that is its own, and 0 for the shared account's cash, so a teardown never counts the same dollars twice. Its withdraw likewise moves no cash: that belongs to the shared account's venue.
 
+A `key` names the thing itself, not the skill's view of it. Orders and tokens that live on Hyperliquid use Hyperliquid's own ids: an order is `oid:<order id>`, a spot token or outcome share is `spot:<coin>` (`spot:#114930`). bevo-server reads the same wallet's Hyperliquid orders and tokens under those keys, and a delete's summary counts one key once; any other key shows the same order or bet twice.
+
 precheck may also report `held` rows, `"held":[{"key","title","valueUsd":num|null}]` (at most 200): value kept in the wallet that never blocks a delete. precheck depends on no installed package (no `node_modules`, no pip dependency) and gets no signer. withdraw signs only as the wallet the Butler pins with `--walletid` / `--address`, never the owner's main wallet. A venue `id` never changes once published.
 
 **withdraw behaviour:** `--cash` cancels every open order and returns all free venue cash to the same sub-wallet on-chain. `--all` additionally market-closes every position first. It is idempotent and re-runnable, and it never sends to any address but the same sub-wallet.
