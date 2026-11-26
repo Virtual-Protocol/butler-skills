@@ -24,7 +24,7 @@
     {
       "name": "outcome-xyz",
       "repo": "https://github.com/Virtual-Protocol/butler-skill-outcome-xyz",
-      "ref": "v2.3.0"
+      "ref": "v2.3.1"
     },
     {
       "name": "papertrade-xyz",
